@@ -50,11 +50,9 @@ export const metadata: Metadata = {
     follow: true,
     googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
   },
-  icons: {
-    icon: '/lkc-logo.png',
-    shortcut: '/lkc-logo.png',
-    apple: '/lkc-logo.png',
-  },
+  // Favicon dùng file-convention của App Router: src/app/icon.png + apple-icon.png.
+  // Next.js tự thêm hash vào URL (vd /icon.png?<hash>) nên khi đổi icon, trình duyệt
+  // bị buộc tải lại — tránh kẹt cache favicon cũ (quả địa cầu) như trước.
 }
 
 // Khai báo "đây là tổ chức tài chính gì" cho Google (rich results / Knowledge panel).
