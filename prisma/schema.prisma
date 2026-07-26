@@ -13,54 +13,9 @@ model User {
   password  String
   role      Role     @default(ADMIN)
   createdAt DateTime @default(now())
-
-  uploads UploadBatch[]
-}
-
-model Trader {
-  id        String   @id @default(cuid())
-  name      String
-  team      String?
-  accountId String?  @unique
-  active    Boolean  @default(true)
-  joinedAt  DateTime @default(now())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  entries WeeklyEntry[]
-}
-
-model WeeklyEntry {
-  id          String   @id @default(cuid())
-  traderId    String
-  year        Int
-  week        Int
-  rawData     Json
-  uploadBatch String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  trader Trader       @relation(fields: [traderId], references: [id], onDelete: Cascade)
-  batch  UploadBatch? @relation(fields: [uploadBatch], references: [id])
-
-  @@unique([traderId, year, week])
-}
-
-model UploadBatch {
-  id         String   @id @default(cuid())
-  fileName   String
-  year       Int
-  week       Int
-  rowCount   Int
-  uploadedBy String
-  createdAt  DateTime @default(now())
-
-  uploader User          @relation(fields: [uploadedBy], references: [id])
-  entries  WeeklyEntry[]
 }
 
 enum Role {
   ADMIN
   MANAGER
-  TRADER
 }
