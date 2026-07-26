@@ -1,11 +1,8 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { usePathname } from 'next/navigation'
 import { X, MessageCircle, Mail, Phone } from 'lucide-react'
 import { FLOATING_CONTACTS } from '@/features/landing/data'
-
-const DASHBOARD_PATHS = ['/traders', '/upload', '/reports']
 
 // Official Zalo app icon (source: Wikimedia Commons — Icon_of_Zalo.svg, viewBox 0 0 50 50)
 function ZaloIcon({ size = 36 }: { size?: number } = {}) {
@@ -59,7 +56,6 @@ function ContactIcon({ id, color }: { id: string; color: string }) {
 }
 
 export function FloatingContact() {
-  const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const [zaloOpen, setZaloOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -85,8 +81,6 @@ export function FloatingContact() {
     if (zaloHideTimer.current) clearTimeout(zaloHideTimer.current)
     zaloHideTimer.current = setTimeout(() => setZaloOpen(false), 180)
   }
-
-  if (DASHBOARD_PATHS.some(p => pathname?.startsWith(p))) return null
 
   return (
     <div ref={ref} className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
