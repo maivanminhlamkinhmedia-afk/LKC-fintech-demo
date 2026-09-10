@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Menu, X } from 'lucide-react'
+import { LogIn, Menu, X } from 'lucide-react'
 import { Logo } from './Logo'
 import { NAV_LINKS } from '@/features/landing/data'
 
@@ -33,10 +33,16 @@ export function Navbar() {
             ))}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Link
+              href="/dang-nhap"
+              className="hidden md:flex h-9 px-4 items-center gap-2 rounded-full border border-white/30 text-white text-sm font-semibold hover:bg-white/10 transition-colors"
+            >
+              <LogIn size={15} /> Đăng nhập
+            </Link>
             <Link
               href="/san-pham"
-              className="hidden md:flex h-9 px-5 items-center rounded-full bg-white text-[#1B4FA0] text-sm font-semibold hover:bg-white/90 transition-opacity cursor-pointer"
+              className="hidden lg:flex h-9 px-5 items-center rounded-full bg-white text-[#1B4FA0] text-sm font-semibold hover:bg-white/90 transition-opacity cursor-pointer"
             >
               Bắt đầu đầu tư
             </Link>
@@ -70,9 +76,16 @@ export function Navbar() {
               </Link>
             ))}
             <Link
+              href="/dang-nhap"
+              onClick={() => setMobileOpen(false)}
+              className="mt-2 h-12 flex items-center justify-center gap-2 rounded-full border border-white/30 text-white font-semibold"
+            >
+              <LogIn size={17} /> Đăng nhập hệ thống
+            </Link>
+            <Link
               href="/san-pham"
               onClick={() => setMobileOpen(false)}
-              className="mt-4 h-12 flex items-center justify-center rounded-full bg-white text-[#1B4FA0] font-semibold"
+              className="h-12 flex items-center justify-center rounded-full bg-white text-[#1B4FA0] font-semibold"
             >
               Bắt đầu đầu tư →
             </Link>

@@ -6,16 +6,109 @@ datasource db {
   provider = "mysql"
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String
-  password  String
-  role      Role     @default(ADMIN)
-  createdAt DateTime @default(now())
-}
-
 enum Role {
+  SUPER_ADMIN
   ADMIN
   MANAGER
+  SALES_MANAGER
+  SALES
+  CREATOR
+  ANALYST
+  EMPLOYEE
+  CLIENT
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum CustomerStatus {
+  LEAD
+  PROSPECT
+  ACTIVE
+  DORMANT
+  CLOSED
+}
+
+model User {
+  id          String     @id @default(cuid())
+  email       String     @unique
+  name        String
+  password    String
+  phone       String?
+  role        Role       @default(CLIENT)
+  status      UserStatus @default(ACTIVE)
+  lastLoginAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  customerProfile   CustomerProfile?
+  assignedCustomers CustomerProfile[] @relation("AssignedSales")
+  salesTeamsManaged SalesTeam[]       @relation("SalesTeamManager")
+  salesMemberships  SalesTeamMember[]
+  auditLogs         AuditLog[]        @relation("AuditActor")
+
+  @@index([role, status])
+}
+
+model CustomerProfile {
+  id              String         @id @default(cuid())
+  userId          String         @unique
+  assignedSalesId String?
+  customerCode    String         @unique
+  status          CustomerStatus @default(LEAD)
+  source          String?
+  note            String?        @db.Text
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  user          User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedSales User? @relation("AssignedSales", fields: [assignedSalesId], references: [id], onDelete: SetNull)
+
+  @@index([assignedSalesId, status])
+}
+
+model SalesTeam {
+  id        String   @id @default(cuid())
+  name      String
+  managerId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  manager User              @relation("SalesTeamManager", fields: [managerId], references: [id], onDelete: Restrict)
+  members SalesTeamMember[]
+
+  @@index([managerId])
+}
+
+model SalesTeamMember {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  team SalesTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
 }

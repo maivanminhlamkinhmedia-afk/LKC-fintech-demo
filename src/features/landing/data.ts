@@ -1,8 +1,14 @@
 import {
-  TrendingUp, Shield, Users, Globe, Layers,
-  Phone, Mail, MapPin,
-  Building2, PieChart, Coins,
-  MessageSquare,
+  TrendingUp,
+  Shield,
+  Users,
+  Globe,
+  Layers,
+  Phone,
+  Mail,
+  Building2,
+  PieChart,
+  Coins,
 } from 'lucide-react'
 
 export const NAV_LINKS = [
