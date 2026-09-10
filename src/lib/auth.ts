@@ -54,19 +54,41 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id
-        token.role = user.role
-      }
+  async jwt({ token, user }) {
+    if (user) {
+      token.id = user.id
+      token.role = user.role
       return token
-    },
-    async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id ?? ''
-        session.user.role = (token.role ?? 'CLIENT') as AppRole
+    }
+
+    if (token.id) {
+      const currentUser = await prisma.user.findUnique({
+        where: { id: token.id },
+        select: {
+          role: true,
+          status: true,
+        },
+      })
+
+      if (!currentUser || currentUser.status !== 'ACTIVE') {
+        token.id = ''
+        token.role = 'CLIENT'
+        return token
       }
-      return session
-    },
+
+      token.role = currentUser.role as AppRole
+    }
+
+    return token
   },
+
+  async session({ session, token }) {
+    if (session.user) {
+      session.user.id = token.id ?? ''
+      session.user.role = (token.role ?? 'CLIENT') as AppRole
+    }
+
+    return session
+  },
+},
 }
