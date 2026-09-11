@@ -33,6 +33,36 @@ enum CustomerStatus {
   CLOSED
 }
 
+enum CustomerPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum CustomerActivityType {
+  NOTE
+  CALL
+  EMAIL
+  MEETING
+  MESSAGE
+  STATUS_CHANGE
+  ASSIGNMENT
+}
+
+enum CustomerTaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum CustomerTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
 model User {
   id          String     @id @default(cuid())
   email       String     @unique
@@ -47,28 +77,42 @@ model User {
 
   customerProfile   CustomerProfile?
   assignedCustomers CustomerProfile[] @relation("AssignedSales")
+
   salesTeamsManaged SalesTeam[]       @relation("SalesTeamManager")
   salesMemberships  SalesTeamMember[]
-  auditLogs         AuditLog[]        @relation("AuditActor")
+
+  customerActivities    CustomerActivity[] @relation("CustomerActivityActor")
+  customerTasksAssigned CustomerTask[]     @relation("CustomerTaskAssignee")
+  customerTasksCreated  CustomerTask[]     @relation("CustomerTaskCreator")
+
+  auditLogs AuditLog[] @relation("AuditActor")
 
   @@index([role, status])
 }
 
 model CustomerProfile {
-  id              String         @id @default(cuid())
-  userId          String         @unique
+  id              String           @id @default(cuid())
+  userId          String           @unique
   assignedSalesId String?
-  customerCode    String         @unique
-  status          CustomerStatus @default(LEAD)
+  customerCode    String           @unique
+  status          CustomerStatus   @default(LEAD)
+  priority        CustomerPriority @default(MEDIUM)
   source          String?
-  note            String?        @db.Text
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  note            String?          @db.Text
+  lastContactAt   DateTime?
+  nextContactAt   DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   user          User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   assignedSales User? @relation("AssignedSales", fields: [assignedSalesId], references: [id], onDelete: SetNull)
 
+  activities CustomerActivity[]
+  tasks      CustomerTask[]
+
   @@index([assignedSalesId, status])
+  @@index([priority, status])
+  @@index([nextContactAt])
 }
 
 model SalesTeam {
@@ -95,6 +139,45 @@ model SalesTeamMember {
 
   @@unique([teamId, userId])
   @@index([userId])
+}
+
+model CustomerActivity {
+  id         String               @id @default(cuid())
+  customerId String
+  actorId    String?
+  type       CustomerActivityType
+  title      String
+  content    String?              @db.Text
+  createdAt  DateTime             @default(now())
+
+  customer CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  actor    User?           @relation("CustomerActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model CustomerTask {
+  id           String               @id @default(cuid())
+  customerId   String
+  assignedToId String?
+  createdById  String
+  title        String
+  description  String?              @db.Text
+  status       CustomerTaskStatus   @default(TODO)
+  priority     CustomerTaskPriority @default(MEDIUM)
+  dueAt        DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  customer   CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assignedTo User?           @relation("CustomerTaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy  User            @relation("CustomerTaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([customerId, status])
+  @@index([assignedToId, status, dueAt])
+  @@index([createdById])
 }
 
 model AuditLog {

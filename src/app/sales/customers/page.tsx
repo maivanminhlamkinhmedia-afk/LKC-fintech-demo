@@ -1,33 +1,13 @@
+import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { requirePermission } from '@/lib/authz'
+import { customerSalesScope } from '@/features/crm/access'
 
 export default async function SalesCustomersPage() {
   const session = await requirePermission('sales:read')
-  const role = session.user.role
-
-  const where =
-    role === 'SUPER_ADMIN' ||
-    role === 'ADMIN' ||
-    role === 'MANAGER'
-      ? {}
-      : role === 'SALES_MANAGER'
-        ? {
-            assignedSales: {
-              salesMemberships: {
-                some: {
-                  team: {
-                    managerId: session.user.id,
-                  },
-                },
-              },
-            },
-          }
-        : {
-            assignedSalesId: session.user.id,
-          }
 
   const customers = await prisma.customerProfile.findMany({
-    where,
+    where: customerSalesScope(session.user),
     include: {
       user: true,
       assignedSales: true,
@@ -40,11 +20,13 @@ export default async function SalesCustomersPage() {
 
   return (
     <section>
-      <h1 className="text-3xl font-bold">Khách hàng Sales</h1>
+      <h1 className="text-3xl font-bold">
+        Khách hàng Sales
+      </h1>
 
       <p className="mt-2 text-slate-500">
-        Sales chỉ thấy khách được giao; Quản lý Sales chỉ thấy khách
-        thuộc đội mình phụ trách.
+        Quản lý hồ sơ khách hàng, lịch sử tương tác và
+        follow-up.
       </p>
 
       <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -74,9 +56,21 @@ export default async function SalesCustomersPage() {
             </p>
 
             <p className="mt-2 text-xs text-slate-500">
-              Sales phụ trách:{' '}
-              {customer.assignedSales?.name ?? 'Chưa phân công'}
+              Priority: {customer.priority}
             </p>
+
+            <p className="mt-1 text-xs text-slate-500">
+              Sales phụ trách:{' '}
+              {customer.assignedSales?.name ??
+                'Chưa phân công'}
+            </p>
+
+            <Link
+              href={`/sales/customers/${customer.id}`}
+              className="mt-5 inline-flex rounded-xl bg-[#1B4FA0] px-4 py-2 text-sm font-semibold text-white"
+            >
+              Xem CRM
+            </Link>
           </article>
         ))}
       </div>
