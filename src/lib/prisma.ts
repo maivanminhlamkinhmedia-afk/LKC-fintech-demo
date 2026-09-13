@@ -17,6 +17,9 @@ function createAdapter() {
     password: decodeURIComponent(url.password),
     database: url.pathname.replace(/^\//, ""),
     connectionLimit: 5,
+    allowPublicKeyRetrieval:
+  url.hostname === 'localhost' ||
+  url.hostname === '127.0.0.1',
   });
 }
 

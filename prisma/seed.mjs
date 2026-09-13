@@ -18,6 +18,9 @@ const adapter = new PrismaMariaDb({
   password: decodeURIComponent(url.password),
   database: url.pathname.replace(/^\//, ""),
   connectionLimit: 5,
+  allowPublicKeyRetrieval:
+  url.hostname === "localhost" ||
+  url.hostname === "127.0.0.1",
 });
 
 const prisma = new PrismaClient({ adapter });
@@ -43,11 +46,12 @@ try {
   for (const [email, name, role] of demo) {
     const user = await prisma.user.upsert({
       where: { email },
-      update: {
-        name,
-        role,
-        status: "ACTIVE",
-      },
+     update: {
+  name,
+  role,
+  status: "ACTIVE",
+  password: hash,
+},
       create: {
         email,
         name,

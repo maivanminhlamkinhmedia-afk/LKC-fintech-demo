@@ -1,14 +1,10 @@
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
+
 import "./globals.css"
 import { FloatingContact } from '@/features/landing/components/FloatingContact'
 import { SITE } from '@/lib/seo'
 
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin", "vietnamese"],
-  weight: ["300", "400", "500", "600", "700"],
-})
+
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE.url),
@@ -71,7 +67,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="vi" className={inter.variable}>
+    <html lang="vi">
       <body className="min-h-full flex flex-col antialiased bg-white text-[#0A1628]">
         <script
           type="application/ld+json"

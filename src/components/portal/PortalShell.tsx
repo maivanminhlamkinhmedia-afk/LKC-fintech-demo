@@ -18,7 +18,15 @@ export function PortalShell({
     { href: '/dashboard', label: 'Tổng quan', show: true },
     { href: '/dashboard/chart', label: 'Biểu đồ & chỉ báo', show: hasPermission(user.role, 'chart:use') },
     { href: '/client', label: 'Tài khoản của tôi', show: hasPermission(user.role, 'account:self') },
-    { href: '/sales/customers', label: 'Khách hàng Sales', show: hasPermission(user.role, 'sales:read') },
+    { href: '/sales', label: 'Sales CRM', show: hasPermission(user.role, 'sales:read') },
+
+{ href: '/sales/customers', label: 'Khách hàng Sales', show: hasPermission(user.role, 'sales:read') },
+
+{
+  href: '/sales/assignment',
+  label: 'Phân công khách',
+  show: ['SUPER_ADMIN', 'ADMIN', 'SALES_MANAGER'].includes(user.role),
+},
     { href: '/creator', label: 'Khu người tạo', show: hasPermission(user.role, 'content:write') },
     { href: '/admin/users', label: 'Quản lý User', show: hasPermission(user.role, 'users:read') },
     { href: '/kien-thuc', label: 'Kiến thức', show: hasPermission(user.role, 'learning:use') },
