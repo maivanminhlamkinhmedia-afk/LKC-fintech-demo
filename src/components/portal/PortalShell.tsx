@@ -27,6 +27,11 @@ export function PortalShell({
   label: 'Phân công khách',
   show: ['SUPER_ADMIN', 'ADMIN', 'SALES_MANAGER'].includes(user.role),
 },
+    {
+      href: '/sales/teams',
+      label: 'Đội ngũ Sales',
+      show: ['SUPER_ADMIN', 'ADMIN', 'SALES_MANAGER'].includes(user.role),
+    },
     { href: '/creator', label: 'Khu người tạo', show: hasPermission(user.role, 'content:write') },
     { href: '/admin/users', label: 'Quản lý User', show: hasPermission(user.role, 'users:read') },
     { href: '/kien-thuc', label: 'Kiến thức', show: hasPermission(user.role, 'learning:use') },
