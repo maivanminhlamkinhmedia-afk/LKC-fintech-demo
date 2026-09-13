@@ -18,7 +18,9 @@ const adapter = new PrismaMariaDb({
   password: decodeURIComponent(url.password),
   database: url.pathname.replace(/^\//, ""),
   connectionLimit: 5,
-  allowPublicKeyRetrieval: true,
+  allowPublicKeyRetrieval:
+  url.hostname === "localhost" ||
+  url.hostname === "127.0.0.1",
 });
 
 const prisma = new PrismaClient({ adapter });
