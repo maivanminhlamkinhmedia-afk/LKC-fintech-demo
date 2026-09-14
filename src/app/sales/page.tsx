@@ -2,6 +2,8 @@ import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { requirePermission } from '@/lib/authz'
 import { customerSalesScope } from '@/features/crm/access'
+import { getContactHealth } from '@/features/crm/contact-health'
+import { ContactHealthSummary } from '@/features/crm/components/ContactHealthSummary'
 
 export default async function SalesDashboardPage() {
   const session = await requirePermission('sales:read')
@@ -14,9 +16,9 @@ export default async function SalesDashboardPage() {
     prospects,
     active,
     highPriority,
-    overdueFollowups,
     openTasks,
     overdueTasks,
+    contactHealth,
   ] = await Promise.all([
     prisma.customerProfile.count({
       where: scope,
@@ -53,18 +55,6 @@ export default async function SalesDashboardPage() {
       },
     }),
 
-    prisma.customerProfile.count({
-      where: {
-        ...scope,
-        nextContactAt: {
-          lt: now,
-        },
-        status: {
-          not: 'CLOSED',
-        },
-      },
-    }),
-
     prisma.customerTask.count({
       where: {
         status: {
@@ -89,6 +79,7 @@ export default async function SalesDashboardPage() {
         },
       },
     }),
+    getContactHealth(session.user, now),
   ])
 
   const canAssign = [
@@ -103,7 +94,6 @@ export default async function SalesDashboardPage() {
     ['Prospect', prospects],
     ['Active', active],
     ['Ưu tiên cao', highPriority],
-    ['Follow-up quá hạn', overdueFollowups],
     ['Task đang mở', openTasks],
     ['Task quá hạn', overdueTasks],
   ]
@@ -140,6 +130,8 @@ export default async function SalesDashboardPage() {
           </div>
         ))}
       </div>
+
+      <ContactHealthSummary counts={contactHealth} />
 
       <div className="mt-8 grid gap-4 md:grid-cols-2">
         <Link

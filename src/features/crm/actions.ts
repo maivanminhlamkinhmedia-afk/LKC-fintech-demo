@@ -119,9 +119,6 @@ export async function updateCustomerProfile(
 
   const source = optionalText(formData.get('source'))
   const note = optionalText(formData.get('note'))
-  const nextContactAt = vietnamDateTime(
-    formData.get('nextContactAt'),
-  )
 
   if (source && source.length > 120) {
     throw new Error('Nguồn khách quá dài')
@@ -158,7 +155,6 @@ export async function updateCustomerProfile(
         priority,
         source,
         note,
-        nextContactAt,
       },
     })
 

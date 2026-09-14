@@ -10,6 +10,7 @@ import { getCustomerActivityTimeline } from '@/features/crm/activity-queries'
 import { ActivityTimeline } from '@/features/crm/components/ActivityTimeline'
 import { CreateInteractionForm } from '@/features/crm/components/CreateInteractionForm'
 import { TaskStatusForm } from '@/features/crm/components/TaskStatusForm'
+import { ContactPlanning } from '@/features/crm/components/ContactPlanning'
 import {
   createCustomerTask,
   updateCustomerProfile,
@@ -24,26 +25,6 @@ const formatter = new Intl.DateTimeFormat('vi-VN', {
 function formatDate(value: Date | null) {
   if (!value) return '—'
   return formatter.format(value)
-}
-
-function toVietnamDateTimeLocal(value: Date | null) {
-  if (!value) return ''
-
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Ho_Chi_Minh',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(value)
-
-  const map = Object.fromEntries(
-    parts.map((part) => [part.type, part.value]),
-  )
-
-  return `${map.year}-${map.month}-${map.day}T${map.hour}:${map.minute}`
 }
 
 export default async function CustomerCRMPage({
@@ -92,6 +73,7 @@ export default async function CustomerCRMPage({
   const { filters, invalidKeys } = parseActivityFilters(await searchParams)
   const timeline = await getCustomerActivityTimeline(session.user, customer.id, filters)
   if (!timeline) notFound()
+  const now = new Date()
 
   return (
     <section className="space-y-8">
@@ -152,6 +134,14 @@ export default async function CustomerCRMPage({
         </div>
       </div>
 
+      <ContactPlanning
+        customerId={customer.id}
+        lastContactAt={customer.lastContactAt}
+        nextContactAt={customer.nextContactAt}
+        canWrite={hasPermission(session.user.role, 'sales:write')}
+        now={now}
+      />
+
       <div className="grid gap-8 xl:grid-cols-2">
         <form
           action={updateCustomerProfile}
@@ -211,21 +201,6 @@ export default async function CustomerCRMPage({
                 name="source"
                 defaultValue={customer.source ?? ''}
                 placeholder="Facebook, Referral, Website..."
-                className="w-full rounded-xl border px-3 py-2"
-              />
-            </label>
-
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-500">
-                Follow-up tiếp theo
-              </span>
-
-              <input
-                name="nextContactAt"
-                type="datetime-local"
-                defaultValue={toVietnamDateTimeLocal(
-                  customer.nextContactAt,
-                )}
                 className="w-full rounded-xl border px-3 py-2"
               />
             </label>
