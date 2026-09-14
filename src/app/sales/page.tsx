@@ -181,6 +181,19 @@ export default async function SalesDashboardPage() {
           </p>
         </Link>
 
+        <Link
+          href="/sales/reports"
+          className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+        >
+          <h2 className="text-lg font-semibold">
+            Báo cáo CRM
+          </h2>
+
+          <p className="mt-2 text-sm text-slate-500">
+            Xem danh mục khách hàng, khối lượng công việc và hoạt động theo kỳ.
+          </p>
+        </Link>
+
         {canAssign && (
           <Link
             href="/sales/assignment"
