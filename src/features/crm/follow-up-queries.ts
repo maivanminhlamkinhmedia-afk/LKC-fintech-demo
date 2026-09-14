@@ -12,7 +12,7 @@ import {
 type CRMUser = { id: string; role: AppRole }
 
 const taskSummarySelect = {
-  id: true, title: true, status: true, priority: true, dueAt: true,
+  id: true, title: true, status: true, priority: true, dueAt: true, updatedAt: true,
   assignedTo: { select: { id: true, name: true } },
   customer: { select: {
     id: true, customerCode: true, status: true, priority: true,

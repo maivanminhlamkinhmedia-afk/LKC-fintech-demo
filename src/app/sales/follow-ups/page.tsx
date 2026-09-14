@@ -10,6 +10,8 @@ import {
 import { getFollowUpFilterOptions, getFollowUpWorkbench } from '@/features/crm/follow-up-queries'
 import { FollowUpFiltersForm } from '@/features/crm/components/FollowUpFiltersForm'
 import { TaskStatusForm } from '@/features/crm/components/TaskStatusForm'
+import { TaskPlanningForm } from '@/features/crm/components/TaskPlanningForm'
+import { canPlanTask } from '@/features/crm/task-plan-validation'
 
 const metricLabels = [
   ['open', 'Task đang mở'],
@@ -100,6 +102,11 @@ export default async function SalesFollowUpsPage({ searchParams }: {
               </div>
             </dl>
             {canChangeStatus && <TaskStatusForm taskId={task.id} status={task.status} />}
+            {canPlanTask(task.status) ? canChangeStatus && (
+              <TaskPlanningForm taskId={task.id} title={task.title} priority={task.priority} dueAt={task.dueAt} updatedAt={task.updatedAt} />
+            ) : (
+              <p data-task-plan-readonly="" className="mt-4 text-xs text-slate-500">Task đã hoàn tất hoặc hủy: kế hoạch chỉ đọc.</p>
+            )}
           </article>
         ))}
       </div>
