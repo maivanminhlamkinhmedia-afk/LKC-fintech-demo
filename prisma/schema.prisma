@@ -138,6 +138,7 @@ model SalesTeamMember {
   user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
+  @@unique([userId])
   @@index([userId])
 }
 
