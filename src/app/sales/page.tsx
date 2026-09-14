@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/authz'
 import { customerSalesScope } from '@/features/crm/access'
 import { getContactHealth } from '@/features/crm/contact-health'
 import { ContactHealthSummary } from '@/features/crm/components/ContactHealthSummary'
+import { canReadCRMAudit } from '@/features/crm/audit-access'
 
 export default async function SalesDashboardPage() {
   const session = await requirePermission('sales:read')
@@ -185,6 +186,18 @@ export default async function SalesDashboardPage() {
             Xem danh mục khách hàng, khối lượng công việc và hoạt động theo kỳ.
           </p>
         </Link>
+
+        {canReadCRMAudit(session.user.role) && (
+          <Link
+            href="/sales/audit"
+            data-audit-link=""
+            prefetch={false}
+            className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+          >
+            <h2 className="text-lg font-semibold">Nhật ký thao tác CRM</h2>
+            <p className="mt-2 text-sm text-slate-500">Tra cứu nhật ký quản trị CRM chỉ đọc và các tóm tắt được phép.</p>
+          </Link>
+        )}
 
         {canAssign && (
           <Link

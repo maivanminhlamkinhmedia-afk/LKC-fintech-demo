@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { signOut } from 'next-auth/react'
 import type { AppRole } from '@/lib/roles'
 import { ROLE_LABELS, hasPermission } from '@/lib/roles'
+import { canReadCRMAudit } from '@/features/crm/audit-access'
 
 export function PortalShell({
   children,
@@ -24,6 +25,7 @@ export function PortalShell({
     { href: '/sales/pipeline', label: 'Pipeline khách hàng', show: hasPermission(user.role, 'sales:read') },
     { href: '/sales/follow-ups', label: 'Follow-ups', show: hasPermission(user.role, 'sales:read') },
     { href: '/sales/reports', label: 'Báo cáo CRM', show: hasPermission(user.role, 'sales:read') },
+    { href: '/sales/audit', label: 'Nhật ký thao tác CRM', show: canReadCRMAudit(user.role) },
 
 {
   href: '/sales/assignment',
@@ -50,7 +52,7 @@ export function PortalShell({
         </div>
         <nav className="mt-6 space-y-1">
           {links.map((link) => (
-            <Link key={link.href} href={link.href} className={`block rounded-xl px-4 py-3 text-sm ${pathname === link.href ? 'bg-[#2BAD97] text-white' : 'text-white/75 hover:bg-white/10 hover:text-white'}`}>
+            <Link key={link.href} href={link.href} prefetch={link.href === '/sales/audit' ? false : undefined} data-audit-link={link.href === '/sales/audit' ? '' : undefined} className={`block rounded-xl px-4 py-3 text-sm ${pathname === link.href ? 'bg-[#2BAD97] text-white' : 'text-white/75 hover:bg-white/10 hover:text-white'}`}>
               {link.label}
             </Link>
           ))}
