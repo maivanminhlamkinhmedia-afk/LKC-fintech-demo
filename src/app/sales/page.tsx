@@ -155,6 +155,19 @@ export default async function SalesDashboardPage() {
           </p>
         </Link>
 
+        <Link
+          href="/sales/pipeline"
+          className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+        >
+          <h2 className="text-lg font-semibold">
+            Pipeline khách hàng
+          </h2>
+
+          <p className="mt-2 text-sm text-slate-500">
+            Lọc khách hàng và theo dõi tiến trình theo trạng thái.
+          </p>
+        </Link>
+
         {canAssign && (
           <Link
             href="/sales/assignment"
@@ -166,6 +179,21 @@ export default async function SalesDashboardPage() {
 
             <p className="mt-2 text-sm text-slate-500">
               Chuyển khách hàng cho Sales phù hợp.
+            </p>
+          </Link>
+        )}
+
+        {canAssign && (
+          <Link
+            href="/sales/teams"
+            className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+          >
+            <h2 className="text-lg font-semibold">
+              Đội ngũ Sales
+            </h2>
+
+            <p className="mt-2 text-sm text-slate-500">
+              Xem đội Sales, quản lý và thành viên trong phạm vi truy cập.
             </p>
           </Link>
         )}
