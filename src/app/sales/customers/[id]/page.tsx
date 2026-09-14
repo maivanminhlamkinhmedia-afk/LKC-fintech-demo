@@ -10,6 +10,8 @@ import { getCustomerActivityTimeline } from '@/features/crm/activity-queries'
 import { ActivityTimeline } from '@/features/crm/components/ActivityTimeline'
 import { CreateInteractionForm } from '@/features/crm/components/CreateInteractionForm'
 import { TaskStatusForm } from '@/features/crm/components/TaskStatusForm'
+import { TaskPlanningForm } from '@/features/crm/components/TaskPlanningForm'
+import { canPlanTask } from '@/features/crm/task-plan-validation'
 import { ContactPlanning } from '@/features/crm/components/ContactPlanning'
 import {
   createCustomerTask,
@@ -321,6 +323,7 @@ export default async function CustomerCRMPage({
               {customer.tasks.map((task) => (
                 <article
                   key={task.id}
+                  data-task-id={task.id}
                   className="rounded-xl border p-4"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -354,6 +357,11 @@ export default async function CustomerCRMPage({
 
                   {hasPermission(session.user.role, 'sales:write') && (
                     <TaskStatusForm taskId={task.id} status={task.status} />
+                  )}
+                  {canPlanTask(task.status) ? hasPermission(session.user.role, 'sales:write') && (
+                    <TaskPlanningForm taskId={task.id} title={task.title} priority={task.priority} dueAt={task.dueAt} updatedAt={task.updatedAt} />
+                  ) : (
+                    <p data-task-plan-readonly="" className="mt-4 text-xs text-slate-500">Task đã hoàn tất hoặc hủy: kế hoạch chỉ đọc.</p>
                   )}
                 </article>
               ))}
