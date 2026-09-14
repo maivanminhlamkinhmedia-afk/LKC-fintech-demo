@@ -21,6 +21,7 @@ export function PortalShell({
     { href: '/sales', label: 'Sales CRM', show: hasPermission(user.role, 'sales:read') },
 
 { href: '/sales/customers', label: 'Khách hàng Sales', show: hasPermission(user.role, 'sales:read') },
+    { href: '/sales/pipeline', label: 'Pipeline khách hàng', show: hasPermission(user.role, 'sales:read') },
 
 {
   href: '/sales/assignment',
