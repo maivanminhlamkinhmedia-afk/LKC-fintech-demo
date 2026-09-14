@@ -80,6 +80,7 @@ async function activeSalesManager(tx: Prisma.TransactionClient, managerId: strin
 }
 
 function refreshTeams(teamId?: string) {
+  revalidatePath('/sales/follow-ups')
   revalidatePath('/sales/teams')
   if (teamId) revalidatePath(`/sales/teams/${teamId}`)
 }

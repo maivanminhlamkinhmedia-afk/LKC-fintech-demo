@@ -21,6 +21,7 @@ function singleText(formData: FormData, name: string) {
 }
 
 function refreshPipeline(customerId: string) {
+  revalidatePath('/sales/follow-ups')
   revalidatePath('/sales')
   revalidatePath('/sales/pipeline')
   revalidatePath('/sales/customers')

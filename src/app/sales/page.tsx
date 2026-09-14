@@ -168,6 +168,19 @@ export default async function SalesDashboardPage() {
           </p>
         </Link>
 
+        <Link
+          href="/sales/follow-ups"
+          className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+        >
+          <h2 className="text-lg font-semibold">
+            Follow-up Workbench
+          </h2>
+
+          <p className="mt-2 text-sm text-slate-500">
+            Theo dõi hạn công việc, lọc task và cập nhật trạng thái.
+          </p>
+        </Link>
+
         {canAssign && (
           <Link
             href="/sales/assignment"
