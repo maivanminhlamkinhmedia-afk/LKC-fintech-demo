@@ -20,14 +20,6 @@ const CUSTOMER_PRIORITIES = [
   'HIGH',
 ] as const
 
-const ACTIVITY_TYPES = [
-  'NOTE',
-  'CALL',
-  'EMAIL',
-  'MEETING',
-  'MESSAGE',
-] as const
-
 const TASK_PRIORITIES = [
   'LOW',
   'MEDIUM',
@@ -191,94 +183,6 @@ export async function updateCustomerProfile(
         metadata: {
           status,
           priority,
-        },
-      },
-    })
-  })
-
-  refreshCustomer(customerId)
-}
-
-export async function addCustomerActivity(
-  formData: FormData,
-) {
-  const session = await requirePermission('sales:write')
-
-  const customerId = requiredText(
-    formData.get('customerId'),
-    'Customer ID',
-  )
-
-  const type = enumValue(
-    formData.get('type'),
-    ACTIVITY_TYPES,
-    'Loại hoạt động',
-  )
-
-  const title = requiredText(
-    formData.get('title'),
-    'Tiêu đề',
-  )
-
-  const content = optionalText(formData.get('content'))
-
-  if (title.length > 160) {
-    throw new Error('Tiêu đề quá dài')
-  }
-
-  if (content && content.length > 5000) {
-    throw new Error('Nội dung quá dài')
-  }
-
-  const customer = await prisma.customerProfile.findFirst({
-    where: {
-      id: customerId,
-      ...customerSalesScope(session.user),
-    },
-    select: {
-      id: true,
-    },
-  })
-
-  if (!customer) {
-    throw new Error(
-      'Không tìm thấy khách hàng hoặc bạn không có quyền truy cập',
-    )
-  }
-
-  const now = new Date()
-  const isContact = type !== 'NOTE'
-
-  await prisma.$transaction(async (tx) => {
-    await tx.customerActivity.create({
-      data: {
-        customerId,
-        actorId: session.user.id,
-        type,
-        title,
-        content,
-      },
-    })
-
-    if (isContact) {
-      await tx.customerProfile.update({
-        where: {
-          id: customerId,
-        },
-        data: {
-          lastContactAt: now,
-        },
-      })
-    }
-
-    await tx.auditLog.create({
-      data: {
-        actorId: session.user.id,
-        action: 'CUSTOMER_ACTIVITY_CREATE',
-        entityType: 'CustomerProfile',
-        entityId: customerId,
-        metadata: {
-          type,
         },
       },
     })

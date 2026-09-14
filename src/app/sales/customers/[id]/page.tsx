@@ -4,9 +4,13 @@ import { prisma } from '@/lib/prisma'
 import { requirePermission } from '@/lib/authz'
 import { hasPermission } from '@/lib/roles'
 import { customerSalesScope } from '@/features/crm/access'
+import type { CRMSearchParams } from '@/features/crm/customer-filters'
+import { parseActivityFilters } from '@/features/crm/activity-filters'
+import { getCustomerActivityTimeline } from '@/features/crm/activity-queries'
+import { ActivityTimeline } from '@/features/crm/components/ActivityTimeline'
+import { CreateInteractionForm } from '@/features/crm/components/CreateInteractionForm'
 import { TaskStatusForm } from '@/features/crm/components/TaskStatusForm'
 import {
-  addCustomerActivity,
   createCustomerTask,
   updateCustomerProfile,
 } from '@/features/crm/actions'
@@ -44,8 +48,10 @@ function toVietnamDateTimeLocal(value: Date | null) {
 
 export default async function CustomerCRMPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<CRMSearchParams>
 }) {
   const session = await requirePermission('sales:read')
   const { id } = await params
@@ -58,15 +64,6 @@ export default async function CustomerCRMPage({
     include: {
       user: true,
       assignedSales: true,
-      activities: {
-        include: {
-          actor: true,
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-        take: 100,
-      },
       tasks: {
         include: {
           assignedTo: true,
@@ -91,6 +88,10 @@ export default async function CustomerCRMPage({
   if (!customer) {
     notFound()
   }
+
+  const { filters, invalidKeys } = parseActivityFilters(await searchParams)
+  const timeline = await getCustomerActivityTimeline(session.user, customer.id, filters)
+  if (!timeline) notFound()
 
   return (
     <section className="space-y-8">
@@ -248,118 +249,11 @@ export default async function CustomerCRMPage({
           </button>
         </form>
 
-        <form
-          action={addCustomerActivity}
-          className="rounded-2xl bg-white p-6 shadow-sm"
-        >
-          <input
-            type="hidden"
-            name="customerId"
-            value={customer.id}
-          />
-
-          <h2 className="text-xl font-bold">
-            Thêm tương tác
-          </h2>
-
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-500">
-                Loại tương tác
-              </span>
-
-              <select
-                name="type"
-                defaultValue="NOTE"
-                className="w-full rounded-xl border px-3 py-2"
-              >
-                <option value="NOTE">Ghi chú</option>
-                <option value="CALL">Cuộc gọi</option>
-                <option value="EMAIL">Email</option>
-                <option value="MEETING">Cuộc họp</option>
-                <option value="MESSAGE">Tin nhắn</option>
-              </select>
-            </label>
-
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-500">
-                Tiêu đề
-              </span>
-
-              <input
-                name="title"
-                required
-                placeholder="Ví dụ: Gọi trao đổi danh mục"
-                className="w-full rounded-xl border px-3 py-2"
-              />
-            </label>
-          </div>
-
-          <label className="mt-4 block text-sm">
-            <span className="mb-1 block text-slate-500">
-              Nội dung
-            </span>
-
-            <textarea
-              name="content"
-              rows={5}
-              placeholder="Nội dung trao đổi..."
-              className="w-full rounded-xl border px-3 py-2"
-            />
-          </label>
-
-          <button className="mt-4 rounded-xl bg-[#2BAD97] px-5 py-2.5 font-semibold text-white">
-            Lưu tương tác
-          </button>
-        </form>
+        {hasPermission(session.user.role, 'sales:write') && <CreateInteractionForm customerId={customer.id} />}
       </div>
 
       <div className="grid gap-8 xl:grid-cols-2">
-        <div className="rounded-2xl bg-white p-6 shadow-sm">
-          <h2 className="text-xl font-bold">
-            Timeline hoạt động
-          </h2>
-
-          <div className="mt-5 space-y-4">
-            {customer.activities.length === 0 && (
-              <p className="text-sm text-slate-500">
-                Chưa có hoạt động.
-              </p>
-            )}
-
-            {customer.activities.map((activity) => (
-              <div
-                key={activity.id}
-                className="border-l-2 border-slate-200 pl-4"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold">
-                    {activity.type}
-                  </span>
-
-                  <span className="text-xs text-slate-400">
-                    {formatDate(activity.createdAt)}
-                  </span>
-                </div>
-
-                <p className="mt-2 font-semibold">
-                  {activity.title}
-                </p>
-
-                {activity.content && (
-                  <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">
-                    {activity.content}
-                  </p>
-                )}
-
-                <p className="mt-2 text-xs text-slate-400">
-                  Thực hiện bởi:{' '}
-                  {activity.actor?.name ?? 'Hệ thống'}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
+        <ActivityTimeline customerId={customer.id} filters={filters} invalidKeys={invalidKeys} timeline={timeline} />
 
         <div className="space-y-6">
           <form
