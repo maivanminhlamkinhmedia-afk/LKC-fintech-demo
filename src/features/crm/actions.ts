@@ -1,5 +1,6 @@
 'use server'
 
+import { CustomerTaskStatus, Prisma } from '@prisma/client'
 import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/prisma'
 import { requirePermission } from '@/lib/authz'
@@ -34,12 +35,17 @@ const TASK_PRIORITIES = [
   'URGENT',
 ] as const
 
-const TASK_STATUSES = [
-  'TODO',
-  'IN_PROGRESS',
-  'DONE',
-  'CANCELLED',
-] as const
+export type TaskStatusState = {
+  kind: 'idle' | 'success' | 'error'
+  message: string
+}
+
+class TaskStatusError extends Error {}
+
+function singleTaskField(formData: FormData, name: string) {
+  const values = formData.getAll(name)
+  return values.length === 1 && typeof values[0] === 'string' ? values[0] : null
+}
 
 function requiredText(
   value: FormDataEntryValue | null,
@@ -94,6 +100,7 @@ function vietnamDateTime(
 function refreshCustomer(customerId: string) {
   revalidatePath('/sales/customers')
   revalidatePath(`/sales/customers/${customerId}`)
+  revalidatePath('/sales/follow-ups')
 }
 
 export async function updateCustomerProfile(
@@ -362,76 +369,73 @@ export async function createCustomerTask(
 }
 
 export async function updateCustomerTaskStatus(
+  _previousState: TaskStatusState,
   formData: FormData,
-) {
+): Promise<TaskStatusState> {
   const session = await requirePermission('sales:write')
 
-  const taskId = requiredText(
-    formData.get('taskId'),
-    'Task ID',
-  )
-
-  const status = enumValue(
-    formData.get('status'),
-    TASK_STATUSES,
-    'Trạng thái task',
-  )
-
-  const task = await prisma.customerTask.findUnique({
-    where: {
-      id: taskId,
-    },
-    select: {
-      id: true,
-      customerId: true,
-    },
-  })
-
-  if (!task) {
-    throw new Error('Không tìm thấy task')
+  if (!(formData instanceof FormData)) {
+    return { kind: 'error', message: 'Dữ liệu cập nhật công việc không hợp lệ.' }
   }
-
-  const customer = await prisma.customerProfile.findFirst({
-    where: {
-      id: task.customerId,
-      ...customerSalesScope(session.user),
-    },
-    select: {
-      id: true,
-    },
-  })
-
-  if (!customer) {
-    throw new Error(
-      'Bạn không có quyền cập nhật task này',
-    )
+  const taskId = singleTaskField(formData, 'taskId')
+  const rawStatus = singleTaskField(formData, 'status')
+  if (!taskId || !/^[A-Za-z0-9_-]{1,191}$/.test(taskId)) {
+    return { kind: 'error', message: 'Mã công việc không hợp lệ.' }
   }
+  if (!rawStatus || !Object.values(CustomerTaskStatus).includes(rawStatus as CustomerTaskStatus)) {
+    return { kind: 'error', message: 'Trạng thái công việc không hợp lệ.' }
+  }
+  const status = rawStatus as CustomerTaskStatus
+  const scope = customerSalesScope(session.user)
 
-  await prisma.$transaction(async (tx) => {
-    await tx.customerTask.update({
-      where: {
-        id: taskId,
-      },
-      data: {
-        status,
-        completedAt:
-          status === 'DONE' ? new Date() : null,
-      },
-    })
+  let result: { customerId: string; changed: boolean }
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const task = await tx.customerTask.findFirst({
+        where: { AND: [{ id: taskId }, { customer: { is: scope } }] },
+        select: { id: true, customerId: true, status: true, updatedAt: true },
+      })
+      if (!task) {
+        throw new TaskStatusError('Không tìm thấy công việc hoặc bạn không có quyền truy cập.')
+      }
+      if (task.status === status) return { customerId: task.customerId, changed: false }
 
-    await tx.auditLog.create({
-      data: {
-        actorId: session.user.id,
-        action: 'CUSTOMER_TASK_STATUS_UPDATE',
-        entityType: 'CustomerTask',
-        entityId: taskId,
-        metadata: {
-          status,
-          customerId: task.customerId,
+      // Recheck scope and the version read in this transaction at the write boundary.
+      // Ownership/customer fields from the form are never read or written here.
+      const updated = await tx.customerTask.updateMany({
+        where: { AND: [
+          { id: task.id, customerId: task.customerId, status: task.status, updatedAt: task.updatedAt },
+          { customer: { is: scope } },
+        ] },
+        data: { status, completedAt: status === CustomerTaskStatus.DONE ? new Date() : null },
+      })
+      if (updated.count !== 1) {
+        throw new TaskStatusError('Công việc đã thay đổi. Vui lòng tải lại trang và thử lại.')
+      }
+      await tx.auditLog.create({
+        data: {
+          actorId: session.user.id,
+          action: 'CUSTOMER_TASK_STATUS_UPDATE',
+          entityType: 'CustomerTask',
+          entityId: task.id,
+          metadata: { status, previousStatus: task.status, customerId: task.customerId },
         },
-      },
-    })
-  })
+      })
+      return { customerId: task.customerId, changed: true }
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  } catch (error) {
+    if (error instanceof TaskStatusError) return { kind: 'error', message: error.message }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && ['P2034', 'P2025'].includes(error.code)) {
+      return { kind: 'error', message: 'Dữ liệu vừa thay đổi. Vui lòng tải lại trang và thử lại.' }
+    }
+    throw error
+  }
 
-  refreshCustomer(task.customerId)
+  refreshCustomer(result.customerId)
+  revalidatePath('/sales')
+  revalidatePath('/sales/pipeline')
+  return {
+    kind: 'success',
+    message: result.changed ? 'Đã cập nhật trạng thái công việc.' : 'Trạng thái công việc không thay đổi.',
+  }
 }

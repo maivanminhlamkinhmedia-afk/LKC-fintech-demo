@@ -25,6 +25,7 @@ function requiredId(
 }
 
 function refreshAssignment(customerId: string) {
+  revalidatePath('/sales/follow-ups')
   revalidatePath('/sales')
   revalidatePath('/sales/assignment')
   revalidatePath('/sales/customers')

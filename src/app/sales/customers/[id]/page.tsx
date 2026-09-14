@@ -2,12 +2,13 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { requirePermission } from '@/lib/authz'
+import { hasPermission } from '@/lib/roles'
 import { customerSalesScope } from '@/features/crm/access'
+import { TaskStatusForm } from '@/features/crm/components/TaskStatusForm'
 import {
   addCustomerActivity,
   createCustomerTask,
   updateCustomerProfile,
-  updateCustomerTaskStatus,
 } from '@/features/crm/actions'
 
 const formatter = new Intl.DateTimeFormat('vi-VN', {
@@ -482,35 +483,9 @@ export default async function CustomerCRMPage({
                     </p>
                   )}
 
-                  <form
-                    action={updateCustomerTaskStatus}
-                    className="mt-4 flex gap-2"
-                  >
-                    <input
-                      type="hidden"
-                      name="taskId"
-                      value={task.id}
-                    />
-
-                    <select
-                      name="status"
-                      defaultValue={task.status}
-                      className="rounded-lg border px-2 py-1.5 text-sm"
-                    >
-                      <option value="TODO">TODO</option>
-                      <option value="IN_PROGRESS">
-                        IN_PROGRESS
-                      </option>
-                      <option value="DONE">DONE</option>
-                      <option value="CANCELLED">
-                        CANCELLED
-                      </option>
-                    </select>
-
-                    <button className="rounded-lg border px-3 py-1.5 text-sm font-medium">
-                      Cập nhật
-                    </button>
-                  </form>
+                  {hasPermission(session.user.role, 'sales:write') && (
+                    <TaskStatusForm taskId={task.id} status={task.status} />
+                  )}
                 </article>
               ))}
             </div>
