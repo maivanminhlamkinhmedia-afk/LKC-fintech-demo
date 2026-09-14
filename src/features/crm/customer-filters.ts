@@ -3,6 +3,7 @@ import { CustomerPriority, CustomerStatus, CustomerTaskStatus, type Prisma } fro
 export const CUSTOMER_STATUSES = Object.values(CustomerStatus)
 export const CUSTOMER_PRIORITIES = Object.values(CustomerPriority)
 export const FOLLOW_UP_FILTERS = ['overdue', 'today', 'upcoming', 'none'] as const
+export type FollowUpFilter = (typeof FOLLOW_UP_FILTERS)[number]
 export const TASK_FILTERS = ['open', 'overdue'] as const
 export const CUSTOMER_PAGE_SIZE = 30
 export const PIPELINE_COLUMN_LIMIT = 30
@@ -73,6 +74,31 @@ export function vietnamDayBounds(now: Date) {
   return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) }
 }
 
+// The existing CRM-007 windows intentionally overlap: today includes both past
+// and future contacts; upcoming begins at now, not at tomorrow's midnight.
+function contactWindow(followUp: FollowUpFilter, now: Date): { gte?: Date; lt?: Date } | null {
+  if (followUp === 'overdue') return { lt: now }
+  if (followUp === 'today') {
+    const { start, end } = vietnamDayBounds(now)
+    return { gte: start, lt: end }
+  }
+  if (followUp === 'upcoming') return { gte: now }
+  return null
+}
+
+export function customerFollowUpWhere(followUp: FollowUpFilter, now: Date): Prisma.CustomerProfileWhereInput {
+  return { nextContactAt: contactWindow(followUp, now) }
+}
+
+export function contactStates(value: Date | null, now: Date): FollowUpFilter[] {
+  return FOLLOW_UP_FILTERS.filter((followUp) => {
+    const window = contactWindow(followUp, now)
+    if (window === null) return value === null
+    return value !== null && (!window.gte || value.getTime() >= window.gte.getTime())
+      && (!window.lt || value.getTime() < window.lt.getTime())
+  })
+}
+
 export function customerFilterWhere(filters: CustomerFilters, now: Date): Prisma.CustomerProfileWhereInput {
   const clauses: Prisma.CustomerProfileWhereInput[] = []
   if (filters.q) {
@@ -88,13 +114,7 @@ export function customerFilterWhere(filters: CustomerFilters, now: Date): Prisma
   if (filters.priority) clauses.push({ priority: filters.priority })
   if (filters.salesId) clauses.push({ assignedSalesId: filters.salesId })
   if (filters.teamId) clauses.push({ assignedSales: { salesMemberships: { some: { teamId: filters.teamId } } } })
-  if (filters.followUp === 'overdue') clauses.push({ nextContactAt: { lt: now } })
-  if (filters.followUp === 'today') {
-    const { start, end } = vietnamDayBounds(now)
-    clauses.push({ nextContactAt: { gte: start, lt: end } })
-  }
-  if (filters.followUp === 'upcoming') clauses.push({ nextContactAt: { gte: now } })
-  if (filters.followUp === 'none') clauses.push({ nextContactAt: null })
+  if (filters.followUp) clauses.push(customerFollowUpWhere(filters.followUp, now))
   if (filters.task) {
     clauses.push({ tasks: { some: {
       status: { in: [CustomerTaskStatus.TODO, CustomerTaskStatus.IN_PROGRESS] },
