@@ -1,5 +1,5 @@
 -- AlterTable
-ALTER TABLE `customerprofile` ADD COLUMN `lastContactAt` DATETIME(3) NULL,
+ALTER TABLE `CustomerProfile` ADD COLUMN `lastContactAt` DATETIME(3) NULL,
     ADD COLUMN `nextContactAt` DATETIME(3) NULL,
     ADD COLUMN `priority` ENUM('LOW', 'MEDIUM', 'HIGH') NOT NULL DEFAULT 'MEDIUM';
 
