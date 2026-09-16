@@ -7,16 +7,34 @@ jobs:
   debug:
     runs-on: ubuntu-latest
     steps:
-      - name: Read app stderr.log
+      - name: Test FTPS read write delete
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq lftp
-          OPTS="set ftp:ssl-force true; set ftp:ssl-protect-data true; set ssl:verify-certificate no; set ftp:use-mlsd true;"
-          echo "=== files in app root (look for log files) ==="
-          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "ftp://$FTP_SERVER" -e "$OPTS ls -la; bye" 2>&1 || true
-          echo ""
-          echo "=== stderr.log (tail 150) ==="
-          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "ftp://$FTP_SERVER" -e "$OPTS cat stderr.log; bye" 2>&1 | tail -150 || true
+          set -e
+
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lftp
+
+          printf 'GitHub FTPS write test\n' > ftp-write-test.txt
+
+          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "ftp://$FTP_SERVER" -e "
+            set ftp:ssl-force true;
+            set ftp:ssl-protect-data true;
+            set ssl:verify-certificate no;
+            set ftp:use-mlsd true;
+            set ftp:passive-mode true;
+            set net:max-retries 2;
+            set net:persist-retries 2;
+            set net:timeout 20;
+            set net:reconnect-interval-base 5;
+            set cmd:fail-exit true;
+
+            ls -la;
+            put ftp-write-test.txt -o __github_ftp_write_test.txt;
+            ls -la __github_ftp_write_test.txt;
+            rm __github_ftp_write_test.txt;
+            bye
+          "
