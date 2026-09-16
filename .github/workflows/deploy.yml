@@ -30,6 +30,7 @@ jobs:
       - name: Build (standalone)
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+          DATABASE_URL: "mysql://build:build@127.0.0.1:3306/build"
           # Sheet công khai — set ở build để trang Góc nhìn prerender đúng dữ liệu.
           GOOGLE_SHEET_ID: 1_cPgwf2e7ChPpl8azuNh2K1ki-oBp98Nwd2jqfpRHqY
           GOOGLE_SHEET_NEWS_TAB: News
