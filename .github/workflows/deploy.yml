@@ -102,10 +102,10 @@ jobs:
             set cmd:fail-exit true;
             mirror -R --continue --verbose=1 --delete --no-perms --no-symlinks .next/standalone/.next/ .next/;
             mirror -R --continue --verbose=1 --delete --no-perms --no-symlinks .next/standalone/public/ public/;
-            mirror -R --continue --verbose=1 --ignore-time --no-perms --no-symlinks .next/standalone/node_modules/ node_modules/;
+            mirror -R --continue --verbose=1 --delete --no-perms --no-symlinks prisma/ prisma/;
+            put prisma.config.ts -o prisma.config.ts;
+            put package-lock.json -o package-lock.json;
             put .next/standalone/server.js -o server.js;
             put .next/standalone/package.json -o package.json;
-            mkdir -f tmp;
-            put .next/standalone/tmp/restart.txt -o tmp/restart.txt;
             bye
           "
