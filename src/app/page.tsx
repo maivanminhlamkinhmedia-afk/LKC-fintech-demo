@@ -34,20 +34,19 @@ export default function HomePage() {
             backgroundSize: '60px 60px',
           }}
         />
-        <div
-          className="absolute inset-0 flex"
-          style={{
-            width: `${SLIDES.length * 100}%`,
-            transform: `translate3d(-${(slide * 100) / SLIDES.length}%, 0, 0)`,
-            transition: 'transform 320ms cubic-bezier(0.22, 1, 0.36, 1)',
-          }}
-        >
+        <div className="absolute inset-0">
           {SLIDES.map((s, i) => (
-            <div key={i} className="relative h-full flex items-center overflow-hidden" style={{ width: `${100 / SLIDES.length}%` }}>
+            <div
+              key={i}
+              aria-hidden={i !== slide}
+              className={`absolute inset-0 h-full flex items-center overflow-hidden transition-opacity duration-200 ease-out ${
+                i === slide ? 'opacity-100 z-[1]' : 'opacity-0 pointer-events-none z-0'
+              }`}
+            >
               <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute top-1/4 left-1/6 w-[500px] h-[500px] rounded-full blur-[35px] md:blur-[90px] opacity-25"
+                <div className="absolute top-1/4 left-1/6 w-[500px] h-[500px] rounded-full blur-none md:blur-[80px] opacity-25"
                   style={{ background: `radial-gradient(circle, ${s.orb1}, transparent)` }} />
-                <div className="absolute bottom-1/4 right-1/6 w-[400px] h-[400px] rounded-full blur-[30px] md:blur-[80px] opacity-20"
+                <div className="absolute bottom-1/4 right-1/6 w-[400px] h-[400px] rounded-full blur-none md:blur-[70px] opacity-20"
                   style={{ background: `radial-gradient(circle, ${s.orb2}, transparent)` }} />
               </div>
               <div className="relative z-10 w-full">
