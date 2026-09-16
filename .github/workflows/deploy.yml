@@ -77,35 +77,73 @@ jobs:
           mkdir -p .next/standalone/tmp
           echo "deployed $GITHUB_SHA at $(date -u +%FT%TZ)" > .next/standalone/tmp/restart.txt
 
-      - name: Deploy to cPanel via FTPS (lftp, auto-reconnect)
-        env:
-          FTP_SERVER: ${{ secrets.FTP_SERVER }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+      - name: Package standalone archive
         run: |
-          set -e
-          sudo apt-get update -qq && sudo apt-get install -y -qq lftp
-          # lftp: tự reconnect khi server ngắt (FIN packet), so sánh theo size
-          # nên bỏ qua file đã upload -> tiếp tục từ chỗ dở, không làm lại từ đầu.
-          # Account FTP đã giới hạn trong thư mục app -> upload thẳng vào "./".
-          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" "ftp://$FTP_SERVER" -e "
-            set ftp:ssl-force true;
-            set ftp:ssl-protect-data true;
-            set ssl:verify-certificate no;
-            set net:max-retries 30;
-            set net:persist-retries 30;
-            set net:timeout 60;
-            set net:reconnect-interval-base 10;
-            set ftp:use-mlsd true;
-            set ftp:passive-mode true;
-            set mirror:parallel-transfer-count 1;
-            set cmd:fail-exit true;
-            mirror -R --continue --verbose=1 --delete --no-perms --no-symlinks .next/standalone/.next/ .next/;
-            mirror -R --continue --verbose=1 --delete --no-perms --no-symlinks .next/standalone/public/ public/;
-            mirror -R --continue --verbose=1 --delete --no-perms --no-symlinks prisma/ prisma/;
-            put prisma.config.ts -o prisma.config.ts;
-            put package-lock.json -o package-lock.json;
-            put .next/standalone/server.js -o server.js;
-            put .next/standalone/package.json -o package.json;
-            bye
-          "
+          set -euo pipefail
+
+          rm -rf .next/standalone/tmp
+          rm -rf .next/standalone/prisma
+
+          cp -r prisma .next/standalone/prisma
+          cp prisma.config.ts .next/standalone/prisma.config.ts
+
+          tar -C .next/standalone -czf lkc-deploy.tar.gz .
+
+          ls -lh lkc-deploy.tar.gz
+
+      - name: Deploy to cPanel via SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan -p 22 -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+          scp \
+            -P 22 \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=4 \
+            lkc-deploy.tar.gz \
+            "$SSH_USER@$SSH_HOST:/home/$SSH_USER/lkc-deploy.tar.gz"
+
+          ssh \
+            -p 22 \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=4 \
+            "$SSH_USER@$SSH_HOST" '
+              set -e
+
+              APP="/home/edpmjmha/lkcfintech.com.vn/deploy"
+              ARCHIVE="/home/edpmjmha/lkc-deploy.tar.gz"
+
+              tar -tzf "$ARCHIVE" >/dev/null
+
+              rm -rf \
+                "$APP/.next" \
+                "$APP/public" \
+                "$APP/node_modules" \
+                "$APP/prisma"
+
+              rm -f \
+                "$APP/server.js" \
+                "$APP/package.json" \
+                "$APP/prisma.config.ts"
+
+              tar -xzf "$ARCHIVE" -C "$APP"
+              rm -f "$ARCHIVE"
+
+              mkdir -p "$APP/tmp"
+              printf "deployed at %s\n" "$(date -u +%FT%TZ)" > "$APP/tmp/restart.txt"
+            '
