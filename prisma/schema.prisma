@@ -63,6 +63,69 @@ enum CustomerTaskPriority {
   URGENT
 }
 
+enum ArticleType {
+  NEWS
+  MARKET_UPDATE
+  ANALYSIS
+  EDUCATION
+  RESEARCH
+  OPINION
+}
+
+enum ArticleStatus {
+  DRAFT
+  SUBMITTED
+  EDITORIAL_REVIEW
+  CHANGES_REQUESTED
+  FACT_CHECK
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  CORRECTED
+  ARCHIVED
+}
+
+enum ReviewDecision {
+  COMMENT
+  REQUEST_CHANGES
+  APPROVE
+  REJECT
+}
+
+enum SourceType {
+  WEBSITE
+  REPORT
+  EXCHANGE
+  REGULATOR
+  COMPANY
+  DATA_PROVIDER
+  INTERNAL
+  OTHER
+}
+
+enum InstrumentType {
+  INDEX
+  EQUITY
+  FUTURE
+  ETF
+  FUND
+  BOND
+  COMMODITY
+  FX
+  CRYPTO
+  OTHER
+}
+
+enum PublicationEventType {
+  SUBMITTED
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  UNPUBLISHED
+  CORRECTED
+  ARCHIVED
+}
+
 model User {
   id          String     @id @default(cuid())
   email       String     @unique
@@ -86,6 +149,19 @@ model User {
   customerTasksCreated  CustomerTask[]     @relation("CustomerTaskCreator")
 
   auditLogs AuditLog[] @relation("AuditActor")
+
+  authorProfile             AuthorProfile?      @relation("AuthorProfileUser")
+  articlesAuthored          Article[]           @relation("ArticleAuthor")
+  articlesEdited            Article[]           @relation("ArticleEditor")
+  articleVersionsCreated    ArticleVersion[]    @relation("ArticleVersionCreator")
+  sourceReferencesCreated   SourceReference[]   @relation("SourceReferenceCreator")
+  articleDisclosuresCreated ArticleDisclosure[] @relation("ArticleDisclosureCreator")
+  articleReviews            ArticleReview[]     @relation("ArticleReviewer")
+  editorialCommentsAuthored EditorialComment[]  @relation("EditorialCommentAuthor")
+  editorialCommentsResolved EditorialComment[]  @relation("EditorialCommentResolver")
+  mediaAssetsUploaded       MediaAsset[]        @relation("MediaAssetUploader")
+  correctionNoticesCreated  CorrectionNotice[]  @relation("CorrectionNoticeCreator")
+  publicationEvents         PublicationEvent[]  @relation("PublicationEventActor")
 
   @@index([role, status])
 }
@@ -195,4 +271,330 @@ model AuditLog {
 
   @@index([actorId, createdAt])
   @@index([entityType, entityId])
+}
+
+model Article {
+  id                  String        @id @default(cuid())
+  title               String
+  slug                String        @unique
+  excerpt             String        @db.Text
+  /// Authoritative editor document; raw HTML is not stored as the source of truth.
+  contentJson         Json
+  /// Derived plain text for search/indexing; future writers must keep it in sync.
+  contentText         String        @db.LongText
+  editorSchemaVersion Int           @default(1)
+  articleType         ArticleType
+  status              ArticleStatus @default(DRAFT)
+  authorId            String
+  editorId            String?
+  categoryId          String?
+  coverMediaId        String?
+  seoTitle            String?
+  seoDescription      String?       @db.Text
+  featured            Boolean       @default(false)
+  submittedAt         DateTime?
+  approvedAt          DateTime?
+  scheduledAt         DateTime?
+  publishedAt         DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  author     User             @relation("ArticleAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  editor     User?            @relation("ArticleEditor", fields: [editorId], references: [id], onDelete: SetNull)
+  category   ArticleCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  coverMedia MediaAsset?      @relation("ArticleCoverMedia", fields: [coverMediaId], references: [id], onDelete: SetNull)
+
+  versions          ArticleVersion[]
+  topics            ArticleTopicMapping[]
+  tags              ArticleTagMapping[]
+  instruments       ArticleInstrument[]
+  sources           SourceReference[]
+  disclosures       ArticleDisclosure[]
+  reviews           ArticleReview[]
+  editorialComments EditorialComment[]
+  corrections       CorrectionNotice[]
+  publicationEvents PublicationEvent[]
+
+  @@index([status])
+  @@index([articleType])
+  @@index([authorId])
+  @@index([editorId])
+  @@index([categoryId])
+  @@index([coverMediaId])
+  @@index([publishedAt])
+  @@index([scheduledAt])
+  @@index([createdAt])
+}
+
+/// Append-only historical snapshots by convention; future writers must prohibit updates/deletes.
+model ArticleVersion {
+  id                  String   @id @default(cuid())
+  articleId           String
+  versionNumber       Int
+  title               String
+  excerpt             String   @db.Text
+  contentJson         Json
+  contentText         String   @db.LongText
+  editorSchemaVersion Int      @default(1)
+  createdById         String
+  changeSummary       String?  @db.Text
+  createdAt           DateTime @default(now())
+
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
+  createdBy User    @relation("ArticleVersionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([articleId, versionNumber])
+  @@index([articleId, createdAt])
+  @@index([createdById])
+}
+
+model AuthorProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  displayName String
+  slug        String   @unique
+  jobTitle    String?
+  bio         String?  @db.Text
+  avatarUrl   String?  @db.Text
+  expertise   String?  @db.Text
+  publicEmail String?
+  isPublic    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation("AuthorProfileUser", fields: [userId], references: [id], onDelete: Restrict)
+}
+
+model ArticleCategory {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?  @db.Text
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  articles Article[]
+
+  @@index([isActive, sortOrder])
+}
+
+model ArticleTopic {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  articles ArticleTopicMapping[]
+
+  @@index([isActive])
+}
+
+model ArticleTag {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  articles ArticleTagMapping[]
+}
+
+model ArticleTopicMapping {
+  articleId String
+  topicId   String
+
+  article Article      @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  topic   ArticleTopic @relation(fields: [topicId], references: [id], onDelete: Restrict)
+
+  // The composite primary key also enforces uniqueness of each mapping.
+  @@id([articleId, topicId])
+  @@index([topicId])
+}
+
+model ArticleTagMapping {
+  articleId String
+  tagId     String
+
+  article Article    @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag     ArticleTag @relation(fields: [tagId], references: [id], onDelete: Restrict)
+
+  @@id([articleId, tagId])
+  @@index([tagId])
+}
+
+model FinancialInstrument {
+  id             String         @id @default(cuid())
+  /// Authoritative identity, deterministically generated by future application logic.
+  /// Examples: VNINDEX, HOSE:VNM, HNX:SHS, NASDAQ:AAPL, FX:USDVND, CRYPTO:BTCUSD.
+  canonicalKey   String         @unique
+  symbol         String
+  name           String
+  instrumentType InstrumentType
+  exchange       String?
+  countryCode    String?
+  currency       String?
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  articles ArticleInstrument[]
+
+  @@index([symbol, exchange])
+  @@index([instrumentType, isActive])
+}
+
+model ArticleInstrument {
+  articleId    String
+  instrumentId String
+  isPrimary    Boolean @default(false)
+
+  article    Article             @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  instrument FinancialInstrument @relation(fields: [instrumentId], references: [id], onDelete: Restrict)
+
+  @@id([articleId, instrumentId])
+  @@index([instrumentId])
+  @@index([articleId, isPrimary])
+}
+
+model SourceReference {
+  id            String     @id @default(cuid())
+  articleId     String
+  sourceType    SourceType
+  title         String
+  publisher     String?
+  url           String?    @db.Text
+  publishedAt   DateTime?
+  accessedAt    DateTime?
+  dataTimestamp DateTime?
+  note          String?    @db.Text
+  createdById   String
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
+  createdBy User    @relation("SourceReferenceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([articleId])
+  @@index([sourceType])
+  @@index([createdById])
+}
+
+model ArticleDisclosure {
+  id           String   @id @default(cuid())
+  articleId    String
+  statement    String   @db.Text
+  conflictType String?
+  isPublic     Boolean  @default(true)
+  createdById  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
+  createdBy User    @relation("ArticleDisclosureCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([articleId])
+  @@index([createdById])
+}
+
+/// Append-only workflow history by convention; never overwrite a prior decision.
+model ArticleReview {
+  id         String         @id @default(cuid())
+  articleId  String
+  reviewerId String
+  decision   ReviewDecision
+  comment    String?        @db.Text
+  fromStatus ArticleStatus?
+  toStatus   ArticleStatus?
+  createdAt  DateTime       @default(now())
+
+  article  Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
+  reviewer User    @relation("ArticleReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([articleId])
+  @@index([reviewerId])
+  @@index([createdAt])
+}
+
+model EditorialComment {
+  id           String    @id @default(cuid())
+  articleId    String
+  authorId     String
+  body         String    @db.Text
+  resolvedAt   DateTime?
+  resolvedById String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  article    Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
+  author     User    @relation("EditorialCommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  resolvedBy User?   @relation("EditorialCommentResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([articleId, resolvedAt])
+  @@index([authorId])
+  @@index([resolvedById])
+}
+
+model MediaAsset {
+  id               String   @id @default(cuid())
+  filename         String
+  originalFilename String
+  url              String   @db.Text
+  mimeType         String
+  sizeBytes        Int
+  width            Int?
+  height           Int?
+  altText          String?  @db.Text
+  caption          String?  @db.Text
+  uploadedById     String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  uploadedBy    User      @relation("MediaAssetUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  coverArticles Article[] @relation("ArticleCoverMedia")
+
+  @@index([uploadedById])
+  @@index([createdAt])
+}
+
+/// Public correction history, separate from internal revision snapshots.
+/// Append-only by convention; future writers must prohibit updates/deletes.
+model CorrectionNotice {
+  id          String   @id @default(cuid())
+  articleId   String
+  summary     String   @db.Text
+  details     String?  @db.Text
+  publishedAt DateTime
+  createdById String
+  createdAt   DateTime @default(now())
+
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
+  createdBy User    @relation("CorrectionNoticeCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([articleId, publishedAt])
+  @@index([createdById])
+}
+
+/// Append-only publication history. A null actor supports system events;
+/// Restrict preserves attribution when an actor is present.
+model PublicationEvent {
+  id           String               @id @default(cuid())
+  articleId    String
+  eventType    PublicationEventType
+  actorId      String?
+  scheduledFor DateTime?
+  occurredAt   DateTime             @default(now())
+  metadata     Json?
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
+  actor   User?   @relation("PublicationEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([articleId, occurredAt])
+  @@index([actorId])
+  @@index([eventType])
+  @@index([scheduledFor])
 }
