@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: "mysql://build:build@127.0.0.1:3306/build"
+      GOOGLE_SHEET_ID: "1_cPgwf2e7ChPpl8azuNh2K1ki-oBp98Nwd2jqfpRHqY"
+      GOOGLE_SHEET_NEWS_TAB: "News"
+      GOOGLE_SHEET_VIDEOS_TAB: "Videos"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma validate
+        run: npx prisma validate
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: TypeScript
+        run: npx tsc --noEmit --incremental false
+
+      - name: Production build
+        run: npm run build
