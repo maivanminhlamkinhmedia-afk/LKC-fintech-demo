@@ -25,11 +25,25 @@ export type Permission =
   | 'chart:use'
   | 'learning:use'
   | 'account:self'
+  | 'cms:access'
+  | 'cms:article:create'
+  | 'cms:article:read:own'
+  | 'cms:article:read:any'
+  | 'cms:article:update:own'
+  | 'cms:article:update:any'
+  | 'cms:article:submit'
+  | 'cms:article:review'
+  | 'cms:article:approve'
+  | 'cms:article:publish'
+  | 'cms:admin'
 
 const ALL_PERMISSIONS: Permission[] = [
   'admin:access', 'users:read', 'users:write', 'sales:read', 'sales:write',
   'content:read', 'content:write', 'analysis:read', 'analysis:write',
   'chart:use', 'learning:use', 'account:self',
+  'cms:access', 'cms:article:create', 'cms:article:read:own', 'cms:article:read:any',
+  'cms:article:update:own', 'cms:article:update:any', 'cms:article:submit',
+  'cms:article:review', 'cms:article:approve', 'cms:article:publish', 'cms:admin',
 ]
 
 export const ROLE_PERMISSIONS: Record<AppRole, readonly Permission[]> = {
@@ -38,7 +52,11 @@ export const ROLE_PERMISSIONS: Record<AppRole, readonly Permission[]> = {
   MANAGER: ['users:read', 'sales:read', 'content:read', 'analysis:read', 'chart:use', 'learning:use'],
   SALES_MANAGER: ['sales:read', 'sales:write', 'users:read', 'chart:use', 'learning:use'],
   SALES: ['sales:read', 'sales:write', 'chart:use', 'learning:use'],
-  CREATOR: ['content:read', 'content:write', 'analysis:read', 'chart:use', 'learning:use'],
+  CREATOR: [
+    'content:read', 'content:write', 'analysis:read', 'chart:use', 'learning:use',
+    'cms:access', 'cms:article:create', 'cms:article:read:own',
+    'cms:article:update:own', 'cms:article:submit',
+  ],
   ANALYST: ['analysis:read', 'analysis:write', 'content:read', 'chart:use', 'learning:use'],
   EMPLOYEE: ['content:read', 'chart:use', 'learning:use'],
   CLIENT: ['chart:use', 'learning:use', 'account:self'],
