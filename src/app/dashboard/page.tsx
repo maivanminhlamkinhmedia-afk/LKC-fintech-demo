@@ -9,7 +9,7 @@ export default async function DashboardPage() {
     ['Biểu đồ & chỉ báo', '/dashboard/chart', hasPermission(role, 'chart:use')],
     ['Tài khoản của tôi', '/client', hasPermission(role, 'account:self')],
     ['Quản lý khách hàng Sales', '/sales/customers', hasPermission(role, 'sales:read')],
-    ['Khu người tạo nội dung', '/creator', hasPermission(role, 'content:write')],
+    ['Khu người tạo nội dung', '/creator', hasPermission(role, 'cms:access')],
     ['Quản lý người dùng', '/admin/users', hasPermission(role, 'users:read')],
     ['Tài liệu học tập', '/kien-thuc', hasPermission(role, 'learning:use')],
   ].filter(([, , show]) => show)
