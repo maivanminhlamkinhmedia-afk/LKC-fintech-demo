@@ -5,7 +5,7 @@ Updated: 2026-09-24
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
 Nguồn: bản bàn giao do Product Owner cung cấp ngày 2026-09-24, đối chiếu với GitHub và tiến độ trong chat triển khai. Bằng chứng mới hơn thay thế checkpoint cũ; không thực hiện lại thao tác đã hoàn tất chỉ vì bản bàn giao cũ còn ghi pending.
 
-Checkpoint đang làm theo xác nhận mới nhất của Product Owner: CMS-004 chưa hoàn thiện, đang kiểm tra trên web bằng tài khoản Người tạo nội dung (CREATOR) và Chuyên viên phân tích (ANALYST). Tiếp tục hoàn tất kiểm tra này; CMS-005 chỉ có bản đề xuất, chưa triển khai.
+Checkpoint mới nhất: kiểm tra production bằng CREATOR và ANALYST đã PASS theo ảnh và thao tác Product Owner báo trong chat. CMS-004 đã merge/deploy nhưng còn xác nhận homepage và cleanup staging để đóng task. CMS-005 chỉ có bản đề xuất, chưa triển khai.
 
 ## Quy trình delivery
 
@@ -20,7 +20,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-001 | Financial publishing domain schema | COMPLETE theo bàn giao; PR #15 |
 | CMS-002 | Creator/Admin publishing RBAC | COMPLETE; PR #17 |
 | CMS-003 | Author profiles | COMPLETE; PR #18 |
-| CMS-004 | Creator dashboard | IN PROGRESS: đã merge/deploy, đang kiểm tra web với CREATOR và ANALYST |
+| CMS-004 | Creator dashboard | IN PROGRESS: đã merge/deploy, CREATOR/ANALYST web checks PASS; còn homepage và cleanup staging |
 | CMS-005 | Draft editor + TipTap | DRAFT SPEC; chưa implementation |
 | CMS-006 | Autosave | Planned |
 | CMS-007 | Sources/citations | Planned |
@@ -52,14 +52,19 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 - Ảnh CLIENT xác minh navigation; kết luận direct-route denial còn phụ thuộc việc ảnh được chụp sau truy cập /creator, không chỉ sau login.
 - Browser của phiên triển khai bị ERR_BLOCKED_BY_CLIENT khi mở production; không tính là production outage hoặc bằng chứng smoke FAIL.
 
+## Production checks CREATOR / ANALYST đã đạt
+
+- CREATOR — PASS truy cập/giao diện: ảnh tài khoản content, role Người tạo nội dung, tại /dashboard có menu và thẻ Khu người tạo nội dung; /creator mở được, bốn metrics bằng 0, danh sách bài và hồ sơ tác giả có empty states đúng. Bằng chứng: hai ảnh 1679866a-a3aa-4669-942a-9833217662cb.png và 56075950-5cca-4e96-abcc-2d8984538c34.png do Product Owner gửi trong chat.
+- Empty state không tự chứng minh ownership isolation. Kiểm tra own/foreign có dữ liệu đã PASS ở staging theo bàn giao, không yêu cầu làm lại trên production.
+- ANALYST — PASS navigation: ảnh tài khoản ANALYST, role Chuyên viên phân tích, tại /dashboard không có menu/thẻ Khu người tạo. Ảnh 8f47f301-13d8-4bb0-b442-290d2134cfd3.png là sau login, chỉ dùng làm bằng chứng navigation.
+- ANALYST — PASS manual direct-route check theo thao tác được hướng dẫn và phản hồi người dùng: sau yêu cầu nhập trực tiếp https://lkcfintech.com.vn/creator rồi Enter, Product Owner báo “trang vẫn đứng như thế” và gửi ảnh e8de0772-f30b-4cbd-9f58-37544311b501.png với địa chỉ /dashboard, đúng role ANALYST, không có CMS. Ghi nhận kết quả trả về dashboard; đây là manual smoke do người dùng thực hiện, không phải browser automation/network trace của agent.
+
 ## Hồ sơ đóng CMS-004 còn thiếu
 
-1. Đang kiểm tra CREATOR trên production: đăng nhập đúng role Người tạo nội dung, có menu Khu người tạo, mở /creator thành công. Dashboard chỉ hiển thị dữ liệu trong own scope; nếu tài khoản chưa có bài/profile thì số 0 và empty states là hợp lệ. Empty state không tự chứng minh ownership isolation; kiểm tra isolation có dữ liệu đã PASS ở staging.
-2. Đang kiểm tra ANALYST trên production: đăng nhập đúng role Chuyên viên phân tích, không có menu Khu người tạo; nhập trực tiếp /creator phải được chuyển về /dashboard. Cần bằng chứng sau khi truy cập trực tiếp, không chỉ ảnh ngay sau login. Chưa ghi PASS cho hai vai trò khi chưa nhận kết quả.
-3. Chưa nhận được output cleanup staging chứng minh remaining_articles = 0, remaining_profiles = 0, remaining_users = 0. Không kết luận cleanup đã thành công và không chạy lại xóa dữ liệu một cách mù quáng. Nếu đã có output, chỉ bổ sung bằng chứng; nếu chưa có, kiểm tra read-only đúng staging trước.
-4. Login/dashboard/admin creator đã có ảnh hoặc ngữ cảnh; homepage chưa có xác nhận riêng.
+1. Chưa nhận được output cleanup staging chứng minh remaining_articles = 0, remaining_profiles = 0, remaining_users = 0. Không kết luận cleanup đã thành công và không chạy lại xóa dữ liệu một cách mù quáng. Nếu đã có output, chỉ bổ sung bằng chứng; nếu chưa có, kiểm tra read-only đúng staging trước.
+2. Login/dashboard/admin creator và CREATOR/ANALYST đã có bằng chứng; homepage chưa có xác nhận riêng.
 
-Tiếp tục bằng hai tài khoản CREATOR/ANALYST hiện có, không bắt tạo thêm tài khoản production. Không bắt test lại staging responsive/ownership. Ưu tiên hoàn tất CMS-004; giữ CMS-005 ở trạng thái DRAFT SPEC, chưa cài package hoặc triển khai. Chưa ghi CMS-004 COMPLETE hoặc công bố 4/20 completed cho tới khi đủ bằng chứng.
+Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/ownership đã đạt khi không có thay đổi liên quan. Không bắt tạo thêm tài khoản production. Ưu tiên hoàn tất CMS-004; giữ CMS-005 ở trạng thái DRAFT SPEC, chưa cài package hoặc triển khai. Chưa ghi CMS-004 COMPLETE hoặc công bố 4/20 completed cho tới khi đủ bằng chứng.
 
 ## Vận hành và giới hạn
 
