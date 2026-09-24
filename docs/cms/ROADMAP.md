@@ -5,6 +5,8 @@ Updated: 2026-09-24
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
 Nguồn: bản bàn giao do Product Owner cung cấp ngày 2026-09-24, đối chiếu với GitHub và tiến độ trong chat triển khai. Bằng chứng mới hơn thay thế checkpoint cũ; không thực hiện lại thao tác đã hoàn tất chỉ vì bản bàn giao cũ còn ghi pending.
 
+Checkpoint đang làm theo xác nhận mới nhất của Product Owner: CMS-004 chưa hoàn thiện, đang kiểm tra trên web bằng tài khoản Người tạo nội dung (CREATOR) và Chuyên viên phân tích (ANALYST). Tiếp tục hoàn tất kiểm tra này; CMS-005 chỉ có bản đề xuất, chưa triển khai.
+
 ## Quy trình delivery
 
 ChatGPT spec/Acceptance Criteria → feature branch → Codex implementation + local validation → Claude Code independent review ONLY → Codex fix/Claude regression nếu có bug → PR/CI → staging/browser validation → final triage → merge main → production deploy → smoke/monitoring.
@@ -18,7 +20,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-001 | Financial publishing domain schema | COMPLETE theo bàn giao; PR #15 |
 | CMS-002 | Creator/Admin publishing RBAC | COMPLETE; PR #17 |
 | CMS-003 | Author profiles | COMPLETE; PR #18 |
-| CMS-004 | Creator dashboard | Merged/deployed; còn xác nhận hồ sơ đóng task bên dưới |
+| CMS-004 | Creator dashboard | IN PROGRESS: đã merge/deploy, đang kiểm tra web với CREATOR và ANALYST |
 | CMS-005 | Draft editor + TipTap | DRAFT SPEC; chưa implementation |
 | CMS-006 | Autosave | Planned |
 | CMS-007 | Sources/citations | Planned |
@@ -34,7 +36,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-017 | Correction/update history | Planned |
 | CMS-018 | Audit integration | Planned |
 | CMS-019 | Search/archive/related | Planned |
-| CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; nền tảng E2E bắt đầu trong CMS-005 |
+| CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; nền tảng E2E cùng CMS-005 mới là đề xuất, chưa phê duyệt |
 
 ## CMS-004: trạng thái đã đối chiếu
 
@@ -52,10 +54,12 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 
 ## Hồ sơ đóng CMS-004 còn thiếu
 
-1. Chưa nhận được output cleanup staging chứng minh remaining_articles = 0, remaining_profiles = 0, remaining_users = 0. Không kết luận cleanup đã thành công và không chạy lại xóa dữ liệu một cách mù quáng. Nếu đã có output, chỉ bổ sung bằng chứng; nếu chưa có, kiểm tra read-only đúng staging trước.
-2. Cần xác nhận smoke tối thiểu theo handoff đã đủ: homepage, login, /dashboard, /creator bằng tài khoản quản trị có sẵn. Login/dashboard/admin creator đã có ảnh hoặc ngữ cảnh; homepage chưa có xác nhận riêng.
+1. Đang kiểm tra CREATOR trên production: đăng nhập đúng role Người tạo nội dung, có menu Khu người tạo, mở /creator thành công. Dashboard chỉ hiển thị dữ liệu trong own scope; nếu tài khoản chưa có bài/profile thì số 0 và empty states là hợp lệ. Empty state không tự chứng minh ownership isolation; kiểm tra isolation có dữ liệu đã PASS ở staging.
+2. Đang kiểm tra ANALYST trên production: đăng nhập đúng role Chuyên viên phân tích, không có menu Khu người tạo; nhập trực tiếp /creator phải được chuyển về /dashboard. Cần bằng chứng sau khi truy cập trực tiếp, không chỉ ảnh ngay sau login. Chưa ghi PASS cho hai vai trò khi chưa nhận kết quả.
+3. Chưa nhận được output cleanup staging chứng minh remaining_articles = 0, remaining_profiles = 0, remaining_users = 0. Không kết luận cleanup đã thành công và không chạy lại xóa dữ liệu một cách mù quáng. Nếu đã có output, chỉ bổ sung bằng chứng; nếu chưa có, kiểm tra read-only đúng staging trước.
+4. Login/dashboard/admin creator đã có ảnh hoặc ngữ cảnh; homepage chưa có xác nhận riêng.
 
-Không bắt tạo thêm tài khoản production để đóng CMS-004. Không bắt test lại staging responsive/ownership. Có thể chuẩn bị spec CMS-005 trong lúc bổ sung hồ sơ; chưa ghi CMS-004 COMPLETE hoặc công bố 4/20 completed cho tới khi đủ bằng chứng.
+Tiếp tục bằng hai tài khoản CREATOR/ANALYST hiện có, không bắt tạo thêm tài khoản production. Không bắt test lại staging responsive/ownership. Ưu tiên hoàn tất CMS-004; giữ CMS-005 ở trạng thái DRAFT SPEC, chưa cài package hoặc triển khai. Chưa ghi CMS-004 COMPLETE hoặc công bố 4/20 completed cho tới khi đủ bằng chứng.
 
 ## Vận hành và giới hạn
 
