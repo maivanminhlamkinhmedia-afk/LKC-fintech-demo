@@ -63,8 +63,17 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 
 ## Hồ sơ đóng CMS-004 còn thiếu
 
-1. Chưa nhận được output cleanup staging chứng minh remaining_articles = 0, remaining_profiles = 0, remaining_users = 0. Không kết luận cleanup đã thành công và không chạy lại xóa dữ liệu một cách mù quáng. Nếu đã có output, chỉ bổ sung bằng chứng; nếu chưa có, kiểm tra read-only đúng staging trước.
-Chỉ còn xác minh dữ liệu thử CMS-004 trên staging. Kiểm tra kết nối và database identity trước, sau đó đọc số lượng fixture còn lại; không tự suy ra cần xóa lại.
+Read-only staging check do Product Owner chạy đã xác minh:
+- SSH tunnel 127.0.0.1:3307 kết nối được.
+- DATABASE_URL target: host 127.0.0.1, port 3307, database edpmjmha_lkcstage, user edpmjmha_lkcstg.
+- SELECT DATABASE()/CURRENT_USER() trả đúng staging identity.
+- remaining_articles = 5, remaining_profiles = 1, remaining_users = 2.
+
+Cleanup chưa hoàn tất. Bộ fixture trong handoff gồm 5 slug cms004-qa-draft/submitted/published/archived/foreign-draft, hồ sơ cms004-qa-creator, user ids cms004_qa_creator và cms004_qa_other.
+
+Đã chuẩn bị [script vận hành CMS-004](operations/cms004-staging-cleanup.cjs), commit 443d6762ea184a8d48a55dcd72e1e93ea85fff91. Mặc định --check chỉ đọc; --apply kiểm tra lại staging identity, counts, slug/owner/status, profile/user identity và quan hệ trước khi xóa trong transaction Serializable. Dừng khi có liên kết ngoài fixture hoặc audit event ngoài AUTH_LOGIN của chính hai tài khoản QA. Xóa theo exact record ids; xử lý cả các AUTH_LOGIN fixture logs; không tự mở rộng phạm vi, retry, tắt FK hoặc reset/seed. Kết quả cuối cần RESULT = CLEANUP_VERIFIED và cả ba remaining_* = 0.
+
+Validation của script: node --check PASS; 13 kiểm tra cô lập bằng Prisma mock PASS cho default read-only, sai URL/server identity, owner/profile/count/relations/audit mismatch, giữ dữ liệu ngoài fixture, rollback mô phỏng, hậu kiểm sau commit lỗi và already-clean rerun. Không kết nối database thật trong validation của agent; chưa có kết quả thực thi cleanup trên staging. Chờ output của Product Owner trước khi ghi CMS-004 COMPLETE.
 
 Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/ownership đã đạt khi không có thay đổi liên quan. Không bắt tạo thêm tài khoản production. Ưu tiên hoàn tất CMS-004; giữ CMS-005 ở trạng thái DRAFT SPEC, chưa cài package hoặc triển khai. Chưa ghi CMS-004 COMPLETE hoặc công bố 4/20 completed cho tới khi đủ bằng chứng.
 
