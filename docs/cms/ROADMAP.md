@@ -5,7 +5,7 @@ Updated: 2026-09-24
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
 Nguồn: bản bàn giao do Product Owner cung cấp ngày 2026-09-24, đối chiếu với GitHub và tiến độ trong chat triển khai. Bằng chứng mới hơn thay thế checkpoint cũ; không thực hiện lại thao tác đã hoàn tất chỉ vì bản bàn giao cũ còn ghi pending.
 
-Checkpoint mới nhất: production smoke CMS-004 đã PASS theo ảnh, thao tác kiểm tra role và xác nhận trang chủ bình thường của Product Owner. CMS-004 đã merge/deploy; chỉ còn xác nhận cleanup staging để đóng task. CMS-005 chỉ có bản đề xuất, chưa triển khai.
+Checkpoint mới nhất: CMS-004 COMPLETE. PR #19 đã merge/deploy, production smoke PASS và Product Owner đã chạy cleanup staging thành công: CLEANUP_COMMITTED = YES, remaining_articles/profiles/users = 0, RESULT = CLEANUP_VERIFIED. CMS-001 đến CMS-004 đã hoàn tất (4/20 nhiệm vụ, không phải ước lượng phần trăm khối lượng). Tiếp theo chốt đặc tả CMS-005; bản hiện tại vẫn là đề xuất, chưa triển khai.
 
 ## Quy trình delivery
 
@@ -20,7 +20,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-001 | Financial publishing domain schema | COMPLETE theo bàn giao; PR #15 |
 | CMS-002 | Creator/Admin publishing RBAC | COMPLETE; PR #17 |
 | CMS-003 | Author profiles | COMPLETE; PR #18 |
-| CMS-004 | Creator dashboard | Merged/deployed; production smoke PASS; còn xác nhận cleanup staging |
+| CMS-004 | Creator dashboard | COMPLETE; PR #19, deploy/production smoke/staging cleanup PASS |
 | CMS-005 | Draft editor + TipTap | DRAFT SPEC; chưa implementation |
 | CMS-006 | Autosave | Planned |
 | CMS-007 | Sources/citations | Planned |
@@ -61,21 +61,40 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 - ANALYST — PASS navigation: ảnh tài khoản ANALYST, role Chuyên viên phân tích, tại /dashboard không có menu/thẻ Khu người tạo. Ảnh 8f47f301-13d8-4bb0-b442-290d2134cfd3.png là sau login, chỉ dùng làm bằng chứng navigation.
 - ANALYST — PASS manual direct-route check theo thao tác được hướng dẫn và phản hồi người dùng: sau yêu cầu nhập trực tiếp https://lkcfintech.com.vn/creator rồi Enter, Product Owner báo “trang vẫn đứng như thế” và gửi ảnh e8de0772-f30b-4cbd-9f58-37544311b501.png với địa chỉ /dashboard, đúng role ANALYST, không có CMS. Ghi nhận kết quả trả về dashboard; đây là manual smoke do người dùng thực hiện, không phải browser automation/network trace của agent.
 
-## Hồ sơ đóng CMS-004 còn thiếu
+## Cleanup staging — PASS
 
-Read-only staging check do Product Owner chạy đã xác minh:
+Read-only staging check trước cleanup do Product Owner chạy đã xác minh:
+
 - SSH tunnel 127.0.0.1:3307 kết nối được.
 - DATABASE_URL target: host 127.0.0.1, port 3307, database edpmjmha_lkcstage, user edpmjmha_lkcstg.
 - SELECT DATABASE()/CURRENT_USER() trả đúng staging identity.
-- remaining_articles = 5, remaining_profiles = 1, remaining_users = 2.
+- Trước cleanup: remaining_articles = 5, remaining_profiles = 1, remaining_users = 2.
 
-Cleanup chưa hoàn tất. Bộ fixture trong handoff gồm 5 slug cms004-qa-draft/submitted/published/archived/foreign-draft, hồ sơ cms004-qa-creator, user ids cms004_qa_creator và cms004_qa_other.
+Product Owner đã chạy --apply trên đúng staging và gửi output thành công trong chat ngày 2026-09-24. Bộ fixture đã dọn gồm 5 slug cms004-qa-draft/submitted/published/archived/foreign-draft, hồ sơ cms004-qa-creator, user ids cms004_qa_creator và cms004_qa_other, cùng 1 AUTH_LOGIN fixture log.
 
-Đã chuẩn bị [script vận hành CMS-004](operations/cms004-staging-cleanup.cjs), commit 443d6762ea184a8d48a55dcd72e1e93ea85fff91. Mặc định --check chỉ đọc; --apply kiểm tra lại staging identity, counts, slug/owner/status, profile/user identity và quan hệ trước khi xóa trong transaction Serializable. Dừng khi có liên kết ngoài fixture hoặc audit event ngoài AUTH_LOGIN của chính hai tài khoản QA. Xóa theo exact record ids; xử lý cả các AUTH_LOGIN fixture logs; không tự mở rộng phạm vi, retry, tắt FK hoặc reset/seed. Kết quả cuối cần RESULT = CLEANUP_VERIFIED và cả ba remaining_* = 0.
+```text
+MODE = APPLY
+TARGET = {"host":"127.0.0.1","port":3307,"database":"edpmjmha_lkcstage","user":"edpmjmha_lkcstg"}
+STAGING_IDENTITY = OK
+FIXTURE_PREFLIGHT = OK
+fixture_articles = 5
+fixture_profiles = 1
+fixture_users = 2
+fixture_login_logs = 1
+CLEANUP_COMMITTED = YES
+remaining_articles = 0
+remaining_profiles = 0
+remaining_users = 0
+RESULT = CLEANUP_VERIFIED
+```
 
-Validation của script: node --check PASS; 13 kiểm tra cô lập bằng Prisma mock PASS cho default read-only, sai URL/server identity, owner/profile/count/relations/audit mismatch, giữ dữ liệu ngoài fixture, rollback mô phỏng, hậu kiểm sau commit lỗi và already-clean rerun. Không kết nối database thật trong validation của agent; chưa có kết quả thực thi cleanup trên staging. Chờ output của Product Owner trước khi ghi CMS-004 COMPLETE.
+Đây là bằng chứng thực thi do Product Owner cung cấp. Không yêu cầu chạy lại cleanup đã hoàn tất.
 
-Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/ownership đã đạt khi không có thay đổi liên quan. Không bắt tạo thêm tài khoản production. Ưu tiên hoàn tất CMS-004; giữ CMS-005 ở trạng thái DRAFT SPEC, chưa cài package hoặc triển khai. Chưa ghi CMS-004 COMPLETE hoặc công bố 4/20 completed cho tới khi đủ bằng chứng.
+Đã dùng [script vận hành CMS-004](operations/cms004-staging-cleanup.cjs), commit 443d6762ea184a8d48a55dcd72e1e93ea85fff91. Mặc định --check chỉ đọc; --apply kiểm tra lại staging identity, counts, slug/owner/status, profile/user identity và quan hệ trước khi xóa trong transaction Serializable. Dừng khi có liên kết ngoài fixture hoặc audit event ngoài AUTH_LOGIN của chính hai tài khoản QA. Xóa theo exact record ids; xử lý cả các AUTH_LOGIN fixture logs; không tự mở rộng phạm vi, retry, tắt FK hoặc reset/seed. Kết quả cuối đã đạt RESULT = CLEANUP_VERIFIED và cả ba remaining_* = 0.
+
+Validation của script: node --check PASS; 13 kiểm tra cô lập bằng Prisma mock PASS cho default read-only, sai URL/server identity, owner/profile/count/relations/audit mismatch, giữ dữ liệu ngoài fixture, rollback mô phỏng, hậu kiểm sau commit lỗi và already-clean rerun. Agent chỉ kiểm tra cô lập; kết quả thực thi staging do Product Owner cung cấp riêng ở trên. Cùng PR/CI, staging validation, deploy và production smoke đã ghi nhận, hồ sơ đóng CMS-004 đã đủ.
+
+Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/ownership đã đạt khi không có thay đổi liên quan. Không bắt tạo thêm tài khoản production. CMS-004 COMPLETE; chuyển sang chốt đặc tả CMS-005. Giữ CMS-005 ở trạng thái DRAFT SPEC, chưa cài package hoặc triển khai cho tới khi Product Owner chốt các quyết định còn mở theo bản bàn giao.
 
 ## Vận hành và giới hạn
 
