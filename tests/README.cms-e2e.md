@@ -11,6 +11,7 @@ do not run its cleanup script or recreate its accounts.
 $env:DATABASE_URL = 'mysql://build:build@127.0.0.1:3306/build'
 $env:DOTENV_CONFIG_PATH = 'NUL'
 node --test tests/cms-e2e-harness.test.mjs
+node --test tests/cms-e2e-diagnostics.test.mjs
 npx.cmd playwright test --list
 ```
 
@@ -190,7 +191,8 @@ AI aria snapshots in `error-context.md`, which can contain input values even wit
 tracing off. Config also uses `preserveOutput: 'never'`; review this suppression
 again before changing the Playwright pin. No automatic error-context artifact is
 permitted during login. The
-reporter emits only static case titles/statuses and summary counts. Login errors
+reporter emits only allowlisted case IDs, static step codes, status enums, approved
+relative source locations and discovery counts. Login errors
 are replaced with a role-only diagnostic; app/build diagnostics and Playwright
 call logs are not forwarded. Never upload raw test-results, auth state, browser
 traces, manifests, unreviewed screenshots or process environment dumps.
@@ -198,4 +200,86 @@ traces, manifests, unreviewed screenshots or process environment dumps.
 Attach only reviewed output containing commit/runId, case results and zero cleanup
 counts. `CMS_E2E VERIFIED` is emitted only after browser success and verified
 cleanup. Any `STOP`, failed case or nonzero remaining count means staging is not
-PASS. Before the first real run, report **STAGING PENDING / browser NOT RUN**.
+PASS. For a patched commit that has not been run, report **STAGING PENDING /
+browser NOT RUN**, even if an earlier commit has staging evidence.
+
+## Safe diagnostics for the two unresolved cases
+
+The reported staging run `50edda4dd148bf115c08eb60` tested commit
+`7bdee2e22891942235c3f1eb2c01dfc414a473bf` with Node 22.23.2 and Playwright
+1.63.0: 18 passed, 2 failed, 0 skipped. The failed cases were the formatting
+round-trip (EDIT-04/05/06/21) and native HTML clipboard paste (EDIT-18).
+EDIT-13/14 passed, and fixture cleanup reported all four counts as zero, but the
+suite ended `BROWSER_SUITE_FAILED` without `CMS_E2E VERIFIED`. These are supplied
+staging results, not a local replay. The cause of either failure remains
+**UNDETERMINED**; the diagnostic patch changes no application behavior or assertions.
+
+Use the already prepared **Node 22.23.2** for local patch validation. Override
+`DATABASE_URL` with the dummy value in each validation subprocess; never inherit
+the staging URL from an editor terminal. A production build must use a new
+env-free source snapshot with dummy environment settings. Do not read `.env`,
+rebuild/delete the earlier staging snapshot, or invoke the staging wrapper locally.
+
+The two tests now use awaited `test.step` wrappers with 44 fixed codes:
+
+| Case | Codes in execution order |
+|---|---|
+| EDIT-04/05/06/21 | `FMT_LOGIN`, `FMT_INPUT`, `FMT_BOLD`, `FMT_LIST`, `FMT_CODE_BLOCK`, `FMT_NO_WRITE`, `FMT_SAVE_NAVIGATE`, `FMT_DB`, `FMT_RELOAD`, `FMT_DOM_TEXT`, `FMT_DOM_BOLD`, `FMT_DOM_LIST`, `FMT_DOM_CODE`, `FMT_LIST_LINK`, `FMT_DASHBOARD` |
+| EDIT-18 setup/paste | `CLIP_LOGIN` (contains `CLIP_PERMISSION`), `CLIP_INPUT`, `CLIP_WRITE`, `CLIP_NATIVE_PASTE` |
+| EDIT-18 DOM | `CLIP_DOM_TEXT`, `CLIP_LINK_COUNT`, `CLIP_LINK_HREF`, `CLIP_LINK_TARGET`, `CLIP_LINK_REL`, `CLIP_LINK_CLASS`, `CLIP_LINK_TITLE`, `CLIP_DANGEROUS_ELEMENTS`, `CLIP_EVENT_ATTRIBUTES`, `CLIP_SCRIPT_EXECUTION` |
+| EDIT-18 save/reload | `CLIP_SAVE_NAVIGATE`, `CLIP_DB_CANONICAL`, `CLIP_DB_LINKS`, `CLIP_RELOAD`, then the ten DOM checks with the explicit `CLIP_RELOAD_...` codes |
+
+The test order, payloads, native keyboard/clipboard interactions and assertions
+are retained. No `.first()` was added to the `strong` locator, no assertion was
+weakened, and no timeout/retry/skip setting was changed. Any existing unrelated
+`.first()` remains unchanged.
+
+Reporter protocol lines use `CMS_E2E DISCOVERY`, `CASE`, `DIAGNOSTIC`, or `RESULT`
+followed by a JSON object. Case titles must match the fixed title/file registry
+exactly to become a known case ID; other titles become `UNKNOWN_CASE`, preserving
+their outcome without printing their text. Explicit step titles must be exact
+allowlisted codes for that case. Auto-generated Playwright step names/parameters
+are never output. Successful controlled steps report `passed`; failed controlled
+steps and failed `expect` leaves report `failed`. A leaf and its enclosing step
+may both report failure; this does not count as two failed browser cases.
+
+Location fields have deliberately distinct meanings:
+
+- `testLocation`: Playwright's test declaration location.
+- `stepLocation`: the enclosing approved `test.step` callsite.
+- `assertionLocation`: for a failed `expect` leaf only, its structured
+  `error.location`, or its own `step.location` if no approved error location exists.
+- `assertionSource`: `error.location` or `step.location`, identifying which API
+  field supplied the coordinate; `null` if none is available.
+
+Only `tests/e2e/cms-draft.spec.ts` and `tests/e2e/cms-editor-safety.spec.ts`
+with positive integer line/column values are allowed. Absolute source paths are
+normalized to these approved repository-relative paths. Missing/disallowed
+locations are `null`; no stack parsing, line-number guessing or substitution of
+the test declaration as an assertion location occurs. A callsite fallback is not
+a claim that it is the exact instruction that threw. A failure outside a
+controlled step may only have the CASE record; inspect what the API actually supplied.
+
+The runner reparses every candidate stdout line and checks exact keys, enums,
+case/step pairing and location schemas before reserializing it. Extra properties,
+invalid metadata, free text and unknown record types are dropped even if they
+start with `CMS_E2E`. The streaming buffer is capped at 4,096 characters per line;
+oversized lines are discarded through the next newline, and an unterminated final
+fragment is dropped. Split UTF-8/CRLF chunks are handled without opening raw stdout.
+Raw stderr remains discarded. The reporter ignores stdout/stderr callbacks,
+attachments, error messages/stacks/causes, expected/actual values, HTML/editor
+content and request/response/cookie/credential data.
+
+Diagnostics never catch a failing test assertion or override `onEnd` status.
+The runner still requires the actual Playwright process exit code to be zero
+before success, plus verified fixture cleanup. No diagnostic record alone proves
+a suite PASS. Unit tests exercise synthetic failures, hostile output metadata
+and chunk boundaries without starting Playwright/browser/DB.
+
+The next staging run requires **Claude independent review and CI PASS for the
+exact diagnostic patch commit**, followed by separately authorized Claude staging
+QA. The previous commit's CI/staging results do not satisfy that gate. Keep the
+existing trace/video/screenshot suppression, `preserveOutput: 'never'`,
+`PLAYWRIGHT_NO_COPY_PROMPT=1`, one worker, zero retries, provenance, lock and fixture
+guards. Do not run CMS-004 cleanup. See
+[diagnostic implementation report](../docs/cms/reports/CMS-005-staging-diagnostics.md).

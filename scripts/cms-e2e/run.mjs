@@ -5,6 +5,7 @@ import { resolve, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { assertPortAvailable, connectStaging, demand, DUMMY_DATABASE_URL, HarnessError, safeFailure, validateStagingEnvironment, withCleanup } from './guard.mjs'
 import { createFixturePlan, createFixtures, manifestPath, saveManifest, loadManifest, discoverCreatedArticles, cleanupFixtures } from './fixtures.mjs'
+import { createDiagnosticOutputFilter } from './diagnostics.mjs'
 
 function launch(args, env, cwd) {
   const child = spawn(process.execPath, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -117,14 +118,11 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
       const tests = spawn(process.execPath, [resolve(cwd, 'node_modules/@playwright/test/cli.js'), 'test'], {
         cwd, env: testEnv, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       })
-      // The custom reporter emits only case IDs/titles/status; discard all other
-      // stdout/stderr, including automatic Playwright call logs on auth failure.
-      let pending = ''
-      tests.stdout.on('data', chunk => {
-        pending += chunk.toString()
-        const lines = pending.split(/\r?\n/); pending = lines.pop() ?? ''
-        for (const line of lines) if (/^CMS_E2E (CASE|RESULT) /.test(line)) process.stdout.write(`${line}\n`)
-      })
+      // A matching prefix is insufficient: validate exact record fields, enums,
+      // case/step codes and relative locations before forwarding any stdout.
+      const output = createDiagnosticOutputFilter(line => process.stdout.write(line))
+      tests.stdout.on('data', chunk => output.push(chunk))
+      tests.stdout.on('end', () => output.end())
       tests.stderr.resume()
       demand(await completed(tests) === 0, 'BROWSER_SUITE_FAILED')
       demand(app.exitCode === null && app.signalCode === null, 'OWN_APP_EXITED_DURING_TESTS')
