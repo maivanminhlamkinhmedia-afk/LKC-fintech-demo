@@ -5,7 +5,7 @@ Updated: 2026-09-24
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
 Nguồn: bản bàn giao do Product Owner cung cấp ngày 2026-09-24, đối chiếu với GitHub và tiến độ trong chat triển khai. Bằng chứng mới hơn thay thế checkpoint cũ; không thực hiện lại thao tác đã hoàn tất chỉ vì bản bàn giao cũ còn ghi pending.
 
-Checkpoint mới nhất: kiểm tra production bằng CREATOR và ANALYST đã PASS theo ảnh và thao tác Product Owner báo trong chat. CMS-004 đã merge/deploy nhưng còn xác nhận homepage và cleanup staging để đóng task. CMS-005 chỉ có bản đề xuất, chưa triển khai.
+Checkpoint mới nhất: production smoke CMS-004 đã PASS theo ảnh, thao tác kiểm tra role và xác nhận trang chủ bình thường của Product Owner. CMS-004 đã merge/deploy; chỉ còn xác nhận cleanup staging để đóng task. CMS-005 chỉ có bản đề xuất, chưa triển khai.
 
 ## Quy trình delivery
 
@@ -20,7 +20,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-001 | Financial publishing domain schema | COMPLETE theo bàn giao; PR #15 |
 | CMS-002 | Creator/Admin publishing RBAC | COMPLETE; PR #17 |
 | CMS-003 | Author profiles | COMPLETE; PR #18 |
-| CMS-004 | Creator dashboard | IN PROGRESS: đã merge/deploy, CREATOR/ANALYST web checks PASS; còn homepage và cleanup staging |
+| CMS-004 | Creator dashboard | Merged/deployed; production smoke PASS; còn xác nhận cleanup staging |
 | CMS-005 | Draft editor + TipTap | DRAFT SPEC; chưa implementation |
 | CMS-006 | Autosave | Planned |
 | CMS-007 | Sources/citations | Planned |
@@ -52,7 +52,9 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 - Ảnh CLIENT xác minh navigation; kết luận direct-route denial còn phụ thuộc việc ảnh được chụp sau truy cập /creator, không chỉ sau login.
 - Browser của phiên triển khai bị ERR_BLOCKED_BY_CLIENT khi mở production; không tính là production outage hoặc bằng chứng smoke FAIL.
 
-## Production checks CREATOR / ANALYST đã đạt
+## Production smoke đã đạt
+
+- Homepage — PASS theo xác nhận trực tiếp của Product Owner: “xác nhận bình thường” sau yêu cầu mở https://lkcfintech.com.vn. Cùng bằng chứng login/dashboard, SUPER_ADMIN, CREATOR và ANALYST trong chat, phần production smoke đã đạt. Không phải kết quả browser automation của agent.
 
 - CREATOR — PASS truy cập/giao diện: ảnh tài khoản content, role Người tạo nội dung, tại /dashboard có menu và thẻ Khu người tạo nội dung; /creator mở được, bốn metrics bằng 0, danh sách bài và hồ sơ tác giả có empty states đúng. Bằng chứng: hai ảnh 1679866a-a3aa-4669-942a-9833217662cb.png và 56075950-5cca-4e96-abcc-2d8984538c34.png do Product Owner gửi trong chat.
 - Empty state không tự chứng minh ownership isolation. Kiểm tra own/foreign có dữ liệu đã PASS ở staging theo bàn giao, không yêu cầu làm lại trên production.
@@ -62,7 +64,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 ## Hồ sơ đóng CMS-004 còn thiếu
 
 1. Chưa nhận được output cleanup staging chứng minh remaining_articles = 0, remaining_profiles = 0, remaining_users = 0. Không kết luận cleanup đã thành công và không chạy lại xóa dữ liệu một cách mù quáng. Nếu đã có output, chỉ bổ sung bằng chứng; nếu chưa có, kiểm tra read-only đúng staging trước.
-2. Login/dashboard/admin creator và CREATOR/ANALYST đã có bằng chứng; homepage chưa có xác nhận riêng.
+Chỉ còn xác minh dữ liệu thử CMS-004 trên staging. Kiểm tra kết nối và database identity trước, sau đó đọc số lượng fixture còn lại; không tự suy ra cần xóa lại.
 
 Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/ownership đã đạt khi không có thay đổi liên quan. Không bắt tạo thêm tài khoản production. Ưu tiên hoàn tất CMS-004; giữ CMS-005 ở trạng thái DRAFT SPEC, chưa cài package hoặc triển khai. Chưa ghi CMS-004 COMPLETE hoặc công bố 4/20 completed cho tới khi đủ bằng chứng.
 
