@@ -42,6 +42,9 @@ jobs:
       - name: Prisma generate
         run: npx prisma generate
 
+      - name: Unit and action tests
+        run: npm run test:unit
+
       - name: Lint
         run: npm run lint
 

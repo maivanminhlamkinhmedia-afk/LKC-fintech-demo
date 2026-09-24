@@ -5,7 +5,7 @@ Updated: 2026-09-24
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
 Nguồn: bản bàn giao do Product Owner cung cấp ngày 2026-09-24, đối chiếu với GitHub và tiến độ trong chat triển khai. Bằng chứng mới hơn thay thế checkpoint cũ; không thực hiện lại thao tác đã hoàn tất chỉ vì bản bàn giao cũ còn ghi pending.
 
-Checkpoint mới nhất: CMS-004 COMPLETE. PR #19 đã merge/deploy, production smoke PASS và Product Owner đã chạy cleanup staging thành công: CLEANUP_COMMITTED = YES, remaining_articles/profiles/users = 0, RESULT = CLEANUP_VERIFIED. CMS-001 đến CMS-004 đã hoàn tất (4/20 nhiệm vụ, không phải ước lượng phần trăm khối lượng). Product Owner đã duyệt CMS-005 qua chỉ thị “Triển khai bước tiếp theo” ngày 2026-09-24. Đặc tả APPROVED FOR IMPLEMENTATION; bước hiện tại là giao Codex triển khai local, chưa có code editor hay kết quả validation CMS-005.
+Checkpoint mới nhất: CMS-004 COMPLETE. PR #19 đã merge/deploy, production smoke PASS và Product Owner đã chạy cleanup staging thành công: CLEANUP_COMMITTED = YES, remaining_articles/profiles/users = 0, RESULT = CLEANUP_VERIFIED. CMS-001 đến CMS-004 đã hoàn tất (4/20 nhiệm vụ, không phải ước lượng phần trăm khối lượng). CMS-005 đã có implementation local theo phạm vi Product Owner duyệt ngày 2026-09-24: editor/lưu thủ công, scoped actions, unit/action tests và Playwright/runbook. Xem [báo cáo implementation CMS-005](reports/CMS-005-implementation.md) để đối chiếu từng kết quả. Bước tiếp theo là Claude independent review; CI và browser/MariaDB staging vẫn chưa chạy. CMS-005 chưa COMPLETE.
 
 ## Quy trình delivery
 
@@ -21,7 +21,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-002 | Creator/Admin publishing RBAC | COMPLETE; PR #17 |
 | CMS-003 | Author profiles | COMPLETE; PR #18 |
 | CMS-004 | Creator dashboard | COMPLETE; PR #19, deploy/production smoke/staging cleanup PASS |
-| CMS-005 | Draft editor + TipTap | SPEC APPROVED; chuyển sang Codex implementation, chưa có kết quả code/test |
+| CMS-005 | Draft editor + TipTap | IMPLEMENTED LOCAL; chuyển Claude review; CI NOT RUN, browser/MariaDB STAGING PENDING; xem implementation report |
 | CMS-006 | Autosave | Planned |
 | CMS-007 | Sources/citations | Planned |
 | CMS-008 | Category/Topic/Tags/Instruments | Planned |
@@ -36,13 +36,13 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-017 | Correction/update history | Planned |
 | CMS-018 | Audit integration | Planned |
 | CMS-019 | Search/archive/related | Planned |
-| CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; nền tảng E2E cùng CMS-005 đã được duyệt, chưa triển khai |
+| CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; CMS-005 đã chuẩn bị nền tảng Chromium/runbook, chưa thực thi staging |
 
 ## CMS-004: trạng thái đã đối chiếu
 
 - Spec c74db740f37784870284a7218790a7559a1b0c73; implementation 45280cf9caab22282bb3c99f66944b60fe09223c.
 - Bản bàn giao và mô tả PR ghi Codex/Claude PASS: dashboard 26/26, full suite 331/331, Prisma validate/generate, lint, TypeScript, build, diff-check.
-- CI validate run 35850510814 SUCCESS, đã kiểm tra qua GitHub. CI hiện chưa chạy unit tests; không nhầm kết quả local 331/331 thành kết quả test trong CI.
+- CI validate run 35850510814 SUCCESS, đã kiểm tra qua GitHub. CI ở checkpoint CMS-004 chưa chạy unit tests; không nhầm kết quả local 331/331 thành kết quả test trong CI. CMS-005 bổ sung bước unit tests sau Prisma generate; lượt CI mới chưa chạy.
 - Staging ownership/profile PASS theo bàn giao: own articles 4, draft 1, editorial 1, published 1; foreign article không xuất hiện.
 - Staging responsive desktop/mobile 390px/tablet 768px PASS theo bàn giao. Không yêu cầu chạy lại các kiểm tra này nếu không có thay đổi liên quan.
 - PR #19 đã MERGED, merge commit 9bb1a289526726e494243fb14a597345b27bfd3b.
