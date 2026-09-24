@@ -5,7 +5,7 @@ Updated: 2026-09-24
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
 Nguồn: bản bàn giao do Product Owner cung cấp ngày 2026-09-24, đối chiếu với GitHub và tiến độ trong chat triển khai. Bằng chứng mới hơn thay thế checkpoint cũ; không thực hiện lại thao tác đã hoàn tất chỉ vì bản bàn giao cũ còn ghi pending.
 
-Checkpoint mới nhất: CMS-004 COMPLETE. PR #19 đã merge/deploy, production smoke PASS và Product Owner đã chạy cleanup staging thành công: CLEANUP_COMMITTED = YES, remaining_articles/profiles/users = 0, RESULT = CLEANUP_VERIFIED. CMS-001 đến CMS-004 đã hoàn tất (4/20 nhiệm vụ, không phải ước lượng phần trăm khối lượng). Tiếp theo chốt đặc tả CMS-005; bản hiện tại vẫn là đề xuất, chưa triển khai.
+Checkpoint mới nhất: CMS-004 COMPLETE. PR #19 đã merge/deploy, production smoke PASS và Product Owner đã chạy cleanup staging thành công: CLEANUP_COMMITTED = YES, remaining_articles/profiles/users = 0, RESULT = CLEANUP_VERIFIED. CMS-001 đến CMS-004 đã hoàn tất (4/20 nhiệm vụ, không phải ước lượng phần trăm khối lượng). Product Owner đã duyệt CMS-005 qua chỉ thị “Triển khai bước tiếp theo” ngày 2026-09-24. Đặc tả APPROVED FOR IMPLEMENTATION; bước hiện tại là giao Codex triển khai local, chưa có code editor hay kết quả validation CMS-005.
 
 ## Quy trình delivery
 
@@ -21,7 +21,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-002 | Creator/Admin publishing RBAC | COMPLETE; PR #17 |
 | CMS-003 | Author profiles | COMPLETE; PR #18 |
 | CMS-004 | Creator dashboard | COMPLETE; PR #19, deploy/production smoke/staging cleanup PASS |
-| CMS-005 | Draft editor + TipTap | DRAFT SPEC; chưa implementation |
+| CMS-005 | Draft editor + TipTap | SPEC APPROVED; chuyển sang Codex implementation, chưa có kết quả code/test |
 | CMS-006 | Autosave | Planned |
 | CMS-007 | Sources/citations | Planned |
 | CMS-008 | Category/Topic/Tags/Instruments | Planned |
@@ -36,7 +36,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-017 | Correction/update history | Planned |
 | CMS-018 | Audit integration | Planned |
 | CMS-019 | Search/archive/related | Planned |
-| CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; nền tảng E2E cùng CMS-005 mới là đề xuất, chưa phê duyệt |
+| CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; nền tảng E2E cùng CMS-005 đã được duyệt, chưa triển khai |
 
 ## CMS-004: trạng thái đã đối chiếu
 
@@ -94,7 +94,7 @@ RESULT = CLEANUP_VERIFIED
 
 Validation của script: node --check PASS; 13 kiểm tra cô lập bằng Prisma mock PASS cho default read-only, sai URL/server identity, owner/profile/count/relations/audit mismatch, giữ dữ liệu ngoài fixture, rollback mô phỏng, hậu kiểm sau commit lỗi và already-clean rerun. Agent chỉ kiểm tra cô lập; kết quả thực thi staging do Product Owner cung cấp riêng ở trên. Cùng PR/CI, staging validation, deploy và production smoke đã ghi nhận, hồ sơ đóng CMS-004 đã đủ.
 
-Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/ownership đã đạt khi không có thay đổi liên quan. Không bắt tạo thêm tài khoản production. CMS-004 COMPLETE; chuyển sang chốt đặc tả CMS-005. Giữ CMS-005 ở trạng thái DRAFT SPEC, chưa cài package hoặc triển khai cho tới khi Product Owner chốt các quyết định còn mở theo bản bàn giao.
+Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/ownership đã đạt khi không có thay đổi liên quan. Không bắt tạo thêm tài khoản production. CMS-004 COMPLETE. Product Owner đã chốt phạm vi CMS-005 gồm draft editor/lưu thủ công, quyền theo spec, chống ghi đè và Playwright foundation. Codex được triển khai theo [đặc tả](tasks/CMS-005.md) và [hướng dẫn implementation](tasks/CMS-005-IMPLEMENTATION.md). Dependency installation cần npm metadata/peer gate, không cần xin lại phê duyệt phạm vi. Các bước review, CI, staging và deploy CMS-005 vẫn chưa thực hiện.
 
 ## Vận hành và giới hạn
 
@@ -103,7 +103,7 @@ Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/own
 - Không chạy lại migrations/backup đã hoàn tất khi chưa có căn cứ mới.
 - Không chạm danhgia.lkcfintech.com.vn hoặc evaluation database.
 - Không tái tạo fixtures cms004-qa-* đã cleanup. Fixtures mới của CMS-005 phải có namespace riêng, dùng staging và có cleanup kiểm chứng.
-- Không cài TipTap/Playwright trước khi spec CMS-005 được chốt.
+- Spec CMS-005 đã chốt; Codex được cài đúng TipTap/Playwright pins sau metadata/peer check. Nếu version không có hoặc xung đột, báo blocker để điều chỉnh; không tự force, đổi runtime hoặc nới scope.
 
 ## Bug ngoài CMS-004 được ghi nhận
 
@@ -114,4 +114,4 @@ Quản lý User: Product Owner xác nhận tạo email trùng khiến /admin/use
 - [PR #19](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/pull/19)
 - [CMS-004 CI](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/actions/runs/35850510814)
 - [Production deploy](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/actions/runs/35887183245)
-- [CMS-005 draft spec](tasks/CMS-005.md)
+- [CMS-005 approved spec](tasks/CMS-005.md)
