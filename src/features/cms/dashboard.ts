@@ -17,6 +17,7 @@ export const PUBLISHED_STATUSES = [
 
 export const RECENT_ARTICLE_SELECT = {
   id: true,
+  authorId: true,
   title: true,
   slug: true,
   articleType: true,

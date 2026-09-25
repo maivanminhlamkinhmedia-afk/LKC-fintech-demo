@@ -81,6 +81,9 @@ const hook = registerHooks({
     if (specifier === '@/lib/roles') return nextResolve([homeUrl, shellUrl].includes(context.parentURL) ? navRolesUrl : rolesUrl, context)
     if (specifier.startsWith('@/')) return nextResolve(new URL(`${specifier.slice(2)}.ts`, sourceRoot).href, context)
     if (context.parentURL === helperUrl && specifier === './access') return nextResolve(accessUrl, context)
+    if (context.parentURL?.startsWith(sourceRoot.href) && specifier.startsWith('./') && !/\.[a-z]+$/i.test(specifier)) {
+      return nextResolve(new URL(`${specifier}.ts`, context.parentURL).href, context)
+    }
     return nextResolve(specifier, context)
   },
   load(url, context, nextLoad) {
@@ -105,10 +108,10 @@ const { dashboardArticleWhere, EDITORIAL_IN_PROGRESS_STATUSES, PUBLISHED_STATUSE
 const creator = { id: 'creator-own', role: 'CREATOR', name: 'Session creator' }
 const editorialStatuses = ['SUBMITTED', 'EDITORIAL_REVIEW', 'CHANGES_REQUESTED', 'FACT_CHECK', 'APPROVED', 'SCHEDULED']
 const publishedStatuses = ['PUBLISHED', 'CORRECTED']
-const recentSelect = Object.fromEntries(['id', 'title', 'slug', 'articleType', 'status', 'updatedAt', 'publishedAt'].map(field => [field, true]))
+const recentSelect = Object.fromEntries(['id', 'authorId', 'title', 'slug', 'articleType', 'status', 'updatedAt', 'publishedAt'].map(field => [field, true]))
 const profileSelect = Object.fromEntries(['displayName', 'slug', 'jobTitle', 'isPublic', 'updatedAt'].map(field => [field, true]))
 function article(overrides = {}) {
-  return { id: 'article-own', title: 'Recent market article', slug: 'market-article', articleType: 'NEWS',
+  return { id: 'article-own', authorId: 'creator-own', title: 'Recent market article', slug: 'market-article', articleType: 'NEWS',
     status: 'DRAFT', updatedAt: new Date('2026-09-26T05:00:00Z'), publishedAt: null, ...overrides }
 }
 function profile(overrides = {}) {
@@ -195,7 +198,7 @@ for (const [id, role] of [['DASH-10', 'ADMIN'], ['DASH-11', 'SUPER_ADMIN']]) {
   })
 }
 
-test('DASH-12: recent select contains exactly seven summary fields and never fetches article body', async () => {
+test('DASH-12: recent select contains eight summary fields including editor eligibility owner and never fetches article body', async () => {
   assert.deepEqual(RECENT_ARTICLE_SELECT, recentSelect)
   scenario()
   await render()
@@ -241,15 +244,30 @@ test('DASH-15: both real navigation surfaces follow cms:access, independently of
   }
 })
 
-test('DASH-16: recent cards have no editor/create actions and all rendered internal links have a route', async () => {
+test('DASH-16 / CMS-005: new list/create/edit links all resolve to implemented routes', async () => {
   for (const articles of [[article()], []]) {
     scenario('CREATOR', { articles })
     const html = await render()
-    assert.equal(/\b(?:href|action)="[^"]*(?:\/edit\b|\/new\b|\/create\b|\/editor\b)/i.test(html), false)
+    assert.equal(hrefs(html).includes('/creator/articles/new'), true)
+    assert.equal(hrefs(html).includes('/creator/articles'), true)
+    assert.equal(hrefs(html).includes('/creator/articles/article-own/edit'), articles.length > 0)
     assert.equal(/<form\b/i.test(html), false)
     for (const href of hrefs(html).filter(href => href.startsWith('/'))) {
-      const path = href.split(/[?#]/)[0].replace(/^\//, '')
+      const path = href.split(/[?#]/)[0].replace(/^\//, '').replace(/^creator\/articles\/[^/]+\/edit$/, 'creator/articles/[id]/edit')
       assert.ok(existsSync(new URL(`app/${path ? `${path}/` : ''}page.tsx`, sourceRoot)), `Missing page for ${href}`)
+    }
+  }
+})
+
+test('CMS-005 recent edit links respect existing ownership and task-level status restrictions for every author role', async () => {
+  for (const role of ['CREATOR', 'ADMIN', 'SUPER_ADMIN']) {
+    for (const status of ['DRAFT', 'CHANGES_REQUESTED', 'SUBMITTED', 'EDITORIAL_REVIEW', 'FACT_CHECK', 'APPROVED', 'SCHEDULED', 'PUBLISHED', 'CORRECTED', 'ARCHIVED']) {
+      for (const authorId of [`${role.toLowerCase()}-own`, 'another-author']) {
+        scenario(role, { articles: [article({ status, authorId })] })
+        const html = await render()
+        const editable = ['DRAFT', 'CHANGES_REQUESTED'].includes(status) && (role !== 'CREATOR' || authorId === 'creator-own')
+        assert.equal(hrefs(html).includes('/creator/articles/article-own/edit'), editable, `${role}/${status}/${authorId}`)
+      }
     }
   }
 })

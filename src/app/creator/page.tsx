@@ -1,7 +1,10 @@
 import type { ArticleStatus, ArticleType } from '@prisma/client'
+import Link from 'next/link'
 import { PortalShell } from '@/components/portal/PortalShell'
 import { requirePermission } from '@/lib/authz'
 import { prisma } from '@/lib/prisma'
+import { canCreateArticle } from '@/features/cms/access'
+import { canEditArticleDraft } from '@/features/cms/article-draft'
 import {
   dashboardArticleWhere,
   EDITORIAL_IN_PROGRESS_STATUSES,
@@ -80,6 +83,10 @@ export default async function CreatorPage() {
             <p className="text-sm font-semibold uppercase tracking-wider text-[#2BAD97]">LKC Publishing</p>
             <h1 className="mt-2 text-3xl font-bold">Khu người tạo nội dung</h1>
             <p className="mt-2 text-slate-500">Tổng quan bài viết trong phạm vi được cấp quyền của bạn.</p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              {canCreateArticle(user) && <Link href="/creator/articles/new" className="rounded-xl bg-[#167563] px-5 py-3 font-semibold text-white">Tạo bài nháp</Link>}
+              <Link href="/creator/articles" className="rounded-xl border border-slate-300 bg-white px-5 py-3 font-medium">Danh sách bài viết</Link>
+            </div>
           </header>
 
           <dl className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -114,6 +121,7 @@ export default async function CreatorPage() {
                         </span>
                       </div>
                       <p className="mt-2 text-sm text-slate-500">{ARTICLE_TYPE_LABELS[article.articleType]} · {article.slug}</p>
+                      {canEditArticleDraft(user, article) && <Link href={`/creator/articles/${encodeURIComponent(article.id)}/edit`} className="mt-2 inline-block text-sm font-medium text-emerald-800 underline">Chỉnh sửa</Link>}
                       <div className="mt-3 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:gap-x-4">
                         <p>Cập nhật: <UpdatedTime value={article.updatedAt} /></p>
                         {article.publishedAt && <p>Xuất bản: <UpdatedTime value={article.publishedAt} /></p>}
