@@ -87,15 +87,19 @@ export function ArticleDraftForm({ initial }: { initial?: DraftEditorData }) {
     event.preventDefault()
     if (pendingRef.current || !editorRef.current) return
     pendingRef.current = true
-    // Lock synchronously before capturing the document; a second event cannot submit again.
-    editorRef.current.setEditable(false, false)
-    const payload = { ...values, contentJson: editorRef.current.getJSON() }
-    setStatus('pending')
-    setError(null)
-    setWarning('')
     let committed = false
     let openingSavedArticle = false
     try {
+      // Lock synchronously; preparation errors must also reach catch/finally.
+      editorRef.current.setEditable(false, false)
+      setStatus('pending')
+      setError(null)
+      setWarning('')
+      // ProseMirror attrs have null prototypes. Copy this trusted editor output
+      // into plain JSON before React Flight can turn attrs into opaque references.
+      // The action still strictly validates the received payload independently.
+      const contentJson = JSON.parse(JSON.stringify(editorRef.current.getJSON())) as JSONContent
+      const payload = { ...values, contentJson }
       const result = saved
         ? await updateArticleDraft(saved.id, { ...payload, expectedUpdatedAt: saved.updatedAt })
         : await createArticleDraft(payload)

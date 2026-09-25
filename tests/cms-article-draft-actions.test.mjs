@@ -3,7 +3,9 @@ import { after } from 'node:test'
 import test from 'node:test'
 import { registerHooks } from 'node:module'
 import { Prisma } from '@prisma/client'
+import { getSchema } from '@tiptap/core'
 import { APP_ROLES, hasPermission } from '../src/lib/roles.ts'
+import { createEditorExtensions } from '../src/features/cms/editor-schema.ts'
 
 // Import real actions, query policies and document validation. Only framework,
 // authentication and Prisma I/O are adapted. These argument/rollback fixtures
@@ -398,6 +400,54 @@ test('editor query preserves scope and returns only editable fields with an ISO 
     noWrite()
   }
 })
+
+const persistedDocumentCases = [
+  ['paragraph', schema => schema.nodes.paragraph.create(null, schema.text('Tiếng Việt trong đoạn văn')), 'Tiếng Việt trong đoạn văn'],
+  ['codeBlock', schema => schema.nodes.codeBlock.create(null, schema.text('const tiếngViệt = 1;\n  tiếngViệt++')), 'const tiếngViệt = 1;\n  tiếngViệt++'],
+  ['link', schema => schema.nodes.paragraph.create(null, schema.text('Liên kết tiếng Việt', [
+    schema.marks.link.create({ href: 'https://example.com/vi' }),
+  ])), 'Liên kết tiếng Việt'],
+  ['heading', schema => schema.nodes.heading.create({ level: 2 }, schema.text('Tiêu đề tiếng Việt')), 'Tiêu đề tiếng Việt'],
+  ['orderedList', schema => schema.nodes.orderedList.create({ start: 3 }, [
+    schema.nodes.listItem.create(null, schema.nodes.paragraph.create(null, schema.text('Mục thứ nhất'))),
+    schema.nodes.listItem.create(null, schema.nodes.paragraph.create(null, schema.text('Mục thứ hai'))),
+  ]), 'Mục thứ nhất\nMục thứ hai'],
+]
+
+function assertPlainDto(value, path = '$') {
+  if (value === null || typeof value !== 'object') return
+  assert.equal(Object.getPrototypeOf(value), Array.isArray(value) ? Array.prototype : Object.prototype,
+    `returned client DTO must have an ordinary prototype at ${path}`)
+  for (const [key, child] of Object.entries(value)) assertPlainDto(child, `${path}.${key}`)
+}
+
+for (const [name, buildNode, expectedText] of persistedDocumentCases) {
+  test(`editor query reopens real shared-schema ${name} JSON as an ordinary client DTO without changing content`, async () => {
+    const schema = getSchema(createEditorExtensions())
+    const pmDocument = schema.nodes.doc.create(null, buildNode(schema))
+    pmDocument.check()
+    // This is the actual PM serialization called by TipTap Editor.getJSON().
+    // JSON persistence removes prototypes, before the query validates/rebuilds it.
+    const persistedJson = JSON.parse(JSON.stringify(pmDocument.toJSON()))
+    scenario(creator, { queryArticle: article({ contentJson: persistedJson, contentText: expectedText }) })
+
+    const result = await getArticleDraftForEdit(creator, 'article-a')
+    assert.equal(result.ok, true)
+    // Inspect the actual returned value, not calls()/structuredClone: those
+    // adapters would silently discard null prototypes and hide this regression.
+    assertPlainDto(result.data)
+    assert.deepEqual(result.data, {
+      id: 'article-a', title: 'Original title', slug: 'original-slug', excerpt: '', articleType: 'NEWS',
+      contentJson: persistedJson, updatedAt: timestamp.toISOString(),
+    })
+    assert.equal(JSON.stringify(result.data.contentJson), JSON.stringify(persistedJson))
+    const reopened = schema.nodeFromJSON(result.data.contentJson)
+    reopened.check()
+    assert.equal(reopened.textBetween(0, reopened.content.size, '\n', leaf => leaf.type.name === 'hardBreak' ? '\n' : ''), expectedText)
+    assert.deepEqual(calls('queryEditor')[0].args.where, { AND: [{ id: 'article-a' }, { authorId: creator.id }] })
+    noWrite()
+  })
+}
 
 test('editor query safely handles missing/foreign/noneditable/unsupported and invalid actors', async () => {
   for (const [queryArticle, code] of [[null, 'NOT_FOUND'], [article({ status: 'PUBLISHED' }), 'NOT_EDITABLE'],

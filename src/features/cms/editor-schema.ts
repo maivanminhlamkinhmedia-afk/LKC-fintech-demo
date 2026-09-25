@@ -177,10 +177,15 @@ export function validateEditorDocument(input: unknown): ValidatedEditorDocument 
     if (!checked.content?.length) checked.content = [{ type: 'paragraph' }]
     const document = schema.nodeFromJSON(checked)
     document.check()
-    const contentJson: JSONContent = document.toJSON()
-    if (encoder.encode(JSON.stringify(contentJson)).length > EDITOR_LIMITS.maxBytes) return invalid()
+    // Only serialize the strictly checked, schema-validated document. Do not
+    // clone untrusted input first: that could invoke hooks or erase invalid data.
+    const canonicalJson = JSON.stringify(document.toJSON())
+    if (encoder.encode(canonicalJson).length > EDITOR_LIMITS.maxBytes) return invalid()
     const contentText = document.textBetween(0, document.content.size, '\n', leaf => leaf.type.name === 'hardBreak' ? '\n' : '')
     if (Array.from(contentText).length > EDITOR_LIMITS.maxTextCodePoints) return invalid()
+    // node/mark.toJSON retains ProseMirror's null-prototype attrs. Reopened
+    // editor props must be ordinary JSON objects at the Server Component boundary.
+    const contentJson: JSONContent = JSON.parse(canonicalJson)
     return { contentJson, contentText }
   } catch { throw new EditorDocumentError() }
 }
