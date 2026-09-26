@@ -2,6 +2,7 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import type { Article } from '@prisma/client'
 import { connectStaging, demand } from '../../scripts/cms-e2e/guard.mjs'
 import { loadManifest, saveManifest, discoverCreatedArticles, fixtureArticle, alterFixture } from '../../scripts/cms-e2e/fixtures.mjs'
+import { pauseEditorClock } from './cms-autosave-support'
 
 type Actor = 'creator' | 'other' | 'admin' | 'super' | 'analyst' | 'client'
 type FixtureManifest = {
@@ -38,7 +39,15 @@ async function login(browser: Browser, actor: Actor) {
     await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click()
     await expect(page).toHaveURL(/\/dashboard$/)
   } catch { throw new Error(`Fixture login failed for ${actor}; credential diagnostics suppressed`) }
+  await page.clock.install()
   return { context, page }
+}
+async function openManualEdit(page: Page, id: string) {
+  await page.clock.resume()
+  await page.goto(editPath(id))
+  await expect(body(page)).toBeVisible()
+  // Keep the existing explicit-save assertions independent of the new 2s timer.
+  await pauseEditorClock(page)
 }
 async function fillHeader(page: Page, slug: string, title = `Bài nháp tiếng Việt ${slug}`) {
   await page.getByLabel('Tiêu đề', { exact: true }).fill(title)
@@ -113,8 +122,14 @@ test('EDIT-04/05/06/21 create and refresh Vietnamese formatting with no writes f
     await body(page).press('Enter')
   })
   await test.step('FMT_CODE_BLOCK', async () => {
+    const code = 'const tiếngViệt = "an toàn";\nconsole.log(tiếngViệt)'
     await page.getByRole('button', { name: 'Khối mã', exact: true }).click()
-    await page.keyboard.type('const tiếngViệt = "an toàn";\nconsole.log(tiếngViệt)')
+    // TipTap returns focus to the editor on an animation frame, after click can settle.
+    await expect(body(page)).toBeFocused()
+    await expect(body(page).locator('pre')).toBeVisible()
+    await page.keyboard.type(code)
+    // Check exact text (including the newline) before Save/DB can obscure the input boundary.
+    await expect(body(page).locator('pre code')).toHaveJSProperty('textContent', code)
   })
   await test.step('FMT_NO_WRITE', async () => {
     expect(await db.article.count({ where: { authorId: userId('creator') } })).toBe(before)
@@ -174,7 +189,7 @@ test('EDIT-08 creator saves own DRAFT and CHANGES_REQUESTED without changing sta
   const { page } = await login(browser, 'creator')
   for (const status of ['DRAFT', 'CHANGES_REQUESTED']) {
     const id = fixture(status).id
-    await page.goto(editPath(id))
+    await openManualEdit(page, id)
     await page.getByLabel('Tiêu đề', { exact: true }).fill(`${manifest.namespace} own ${status}`)
     await save(page); await saved(page)
     const row = await readArticle(id)
@@ -190,7 +205,7 @@ for (const actor of ['admin', 'super'] as const) {
     // not the stricter AuthorProfile hierarchy from CMS-003.
     const id = fixture(actor === 'admin' ? 'super-draft' : 'other-draft').id
     const before = await readArticle(id)
-    await page.goto(editPath(id))
+    await openManualEdit(page, id)
     await page.getByLabel('Tiêu đề', { exact: true }).fill(`${manifest.namespace} saved by ${actor}`)
     await save(page); await saved(page)
     const after = await readArticle(id)
@@ -217,14 +232,15 @@ test('EDIT-11 suspended or demoted actor cannot save an already-open editor', as
   for (const patch of [{ status: 'SUSPENDED' }, { role: 'CLIENT' }]) {
     const { page } = await login(browser, 'creator')
     const id = fixture('DRAFT').id
-    await page.goto(editPath(id))
+    await openManualEdit(page, id)
     await page.getByLabel('Tiêu đề', { exact: true }).fill(`${manifest.namespace} must not save`)
     const before = snapshot(await readArticle(id))
     try {
       await alterFixture(db, process.env, manifest, 'user', userId('creator'), patch, persist)
       await save(page)
-      await expect.poll(async () => /\/(?:dang-nhap|dashboard)(?:\?|$)/.test(new URL(page.url()).pathname)
-        || await error(page, 'FORBIDDEN').count() > 0).toBe(true)
+      await expect(error(page, 'FORBIDDEN')).toBeVisible()
+      await expect(page).toHaveURL(new RegExp(`${id}/edit$`))
+      await expect(page.getByLabel('Tiêu đề', { exact: true })).toHaveValue(`${manifest.namespace} must not save`)
       expect(snapshot(await readArticle(id))).toEqual(before)
     } finally { await alterFixture(db, process.env, manifest, 'user', userId('creator'), { role: 'CREATOR', status: 'ACTIVE' }, persist) }
   }
@@ -234,7 +250,7 @@ test('EDIT-12 status and owner changes after opening cannot bypass the write gua
   const id = fixture('DRAFT').id
   for (const patch of [{ status: 'PUBLISHED' }, { authorId: userId('other') }]) {
     const { page } = await login(browser, 'creator')
-    await page.goto(editPath(id))
+    await openManualEdit(page, id)
     await page.getByLabel('Tiêu đề', { exact: true }).fill(`${manifest.namespace} stale policy`)
     try {
       await alterFixture(db, process.env, manifest, 'article', id, patch, persist)
@@ -251,6 +267,9 @@ test('EDIT-13 simultaneous saves from two tabs have one winner and preserve the 
   const second = await context.newPage()
   const id = fixture('DRAFT').id
   await Promise.all([first.goto(editPath(id)), second.goto(editPath(id))])
+  await expect(body(first)).toBeVisible(); await expect(body(second)).toBeVisible()
+  // Clock controls the whole context, including both already-hydrated tabs.
+  await pauseEditorClock(first)
   const titles = [`${manifest.namespace} tab first`, `${manifest.namespace} tab second`]
   await first.getByLabel('Tiêu đề', { exact: true }).fill(titles[0])
   await second.getByLabel('Tiêu đề', { exact: true }).fill(titles[1])
@@ -269,7 +288,7 @@ test('EDIT-14 real DATETIME(3) tokens advance by one millisecond when stored tim
   await alterFixture(db, process.env, manifest, 'article', id, { updatedAt: future }, persist)
   const stored = await readArticle(id)
   expect(stored.updatedAt.getTime()).toBe(future.getTime())
-  await page.goto(editPath(id))
+  await openManualEdit(page, id)
   for (const offset of [1, 2]) {
     await page.getByLabel('Tiêu đề', { exact: true }).fill(`${manifest.namespace} precision ${offset}`)
     await save(page); await saved(page)

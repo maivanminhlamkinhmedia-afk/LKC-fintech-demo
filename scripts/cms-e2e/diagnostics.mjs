@@ -5,6 +5,7 @@ import { StringDecoder } from 'node:string_decoder'
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
 const draftFile = 'tests/e2e/cms-draft.spec.ts'
 const safetyFile = 'tests/e2e/cms-editor-safety.spec.ts'
+const autosaveFile = 'tests/e2e/cms-autosave.spec.ts'
 const formatSteps = [
   'FMT_LOGIN', 'FMT_INPUT', 'FMT_BOLD', 'FMT_LIST', 'FMT_CODE_BLOCK',
   'FMT_NO_WRITE', 'FMT_SAVE_NAVIGATE', 'FMT_DB', 'FMT_RELOAD',
@@ -44,6 +45,22 @@ const definitions = [
   ['EDIT-22', 'EDIT-22 editor works at 390/768/desktop and exposes keyboard-operable controls'],
   ['EDIT-18', 'EDIT-18 real HTML clipboard paste removes unsafe content and persists canonical safe links', safetyFile, clipboardSteps],
   ['EDIT-20', 'EDIT-20 offline save retains the draft, dirty app-link dismissal stays in editor, and explicit retry succeeds', safetyFile],
+  ['AUTO-01/02', 'AUTO-01/02 new stays manual and persisted edit stays idle until data changes', autosaveFile, ['AUTO_CREATE_IDLE']],
+  ['AUTO-03/04/18', 'AUTO-03/04/18 latest metadata and native rich clipboard autosave round trip', autosaveFile, ['AUTO_RICH_ROUNDTRIP']],
+  ['AUTO-05/06/07/23', 'AUTO-05/06/07/23 slow real ACK preserves typing and coalesces one latest tokened followup', autosaveFile, ['AUTO_SINGLE_FLIGHT']],
+  ['AUTO-07', 'AUTO-07 manual flush before deadline and repeated clean clicks make one update', autosaveFile, ['AUTO_MANUAL_FLUSH']],
+  ['AUTO-10', 'AUTO-10 slug conflict pauses the same slug until an edited slug becomes valid', autosaveFile, ['AUTO_SLUG_BARRIER']],
+  ['AUTO-11', 'AUTO-11 known offline makes no request and online rearms one latest save', autosaveFile, ['AUTO_OFFLINE_REARM']],
+  ['AUTO-12', 'AUTO-12 lost real committed ACK stops retries and explicit stale retry conflicts', autosaveFile, ['AUTO_UNKNOWN_ACK']],
+  ['AUTO-13', 'AUTO-13 two autosaving tabs keep the loser draft and require confirmed reload', autosaveFile, ['AUTO_TWO_TABS']],
+  ['AUTO-14-ADMIN', 'AUTO-14 admin autosaves an allowed foreign draft without changing owner', autosaveFile, ['AUTO_ADMIN_SCOPE']],
+  ['AUTO-14-SUPER', 'AUTO-14 super autosaves an allowed foreign draft without changing owner', autosaveFile, ['AUTO_ADMIN_SCOPE']],
+  ['AUTO-14-REVOKED', 'AUTO-14 revocation stops an open editor and non-CMS roles cannot open it', autosaveFile, ['AUTO_REVOKED_ACTOR']],
+  ['AUTO-15', 'AUTO-15 owner or status changing after load blocks autosave and its queued edits', autosaveFile, ['AUTO_CHANGED_POLICY']],
+  ['AUTO-16', 'AUTO-16 expired browser session pauses autosave without redirecting the draft', autosaveFile, ['AUTO_EXPIRED_SESSION']],
+  ['AUTO-19', 'AUTO-19 composition blocks intermediate title and editor snapshots beyond debounce', autosaveFile, ['AUTO_COMPOSITION']],
+  ['AUTO-21', 'AUTO-21 navigation cancel preserves debounce and accepting during save prevents followup', autosaveFile, ['AUTO_NAVIGATION']],
+  ['AUTO-23', 'AUTO-23 persisted future millisecond tokens advance across consecutive autosaves', autosaveFile, ['AUTO_TOKEN_PRECISION']],
 ].map(([caseId, title, file = draftFile, steps = []]) => Object.freeze({ caseId, title, file, steps: Object.freeze(steps) }))
 const byTitle = new Map(definitions.map(definition => [definition.title, definition]))
 const byId = new Map(definitions.map(definition => [definition.caseId, definition]))
@@ -55,7 +72,7 @@ export const MAX_DIAGNOSTIC_LINE_LENGTH = 4096
 function sourceFile(file) {
   if (typeof file !== 'string' || file.length > 4096) return null
   const candidate = (isAbsolute(file) ? relative(repositoryRoot, file) : file).replaceAll('\\', '/')
-  return [draftFile, safetyFile].includes(candidate) ? candidate : null
+  return [draftFile, safetyFile, autosaveFile].includes(candidate) ? candidate : null
 }
 
 export function diagnosticCase(test) {

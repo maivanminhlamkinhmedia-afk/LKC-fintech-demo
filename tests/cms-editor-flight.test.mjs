@@ -9,7 +9,12 @@ import { createEditorExtensions, EditorDocumentError, validateEditorDocument,
 // aliases its bundler supplies. No mocked codec, HTTP, DOM, browser or database.
 const require = createRequire(import.meta.url)
 const compiled = new URL('../node_modules/next/dist/compiled/', import.meta.url)
+const sourceRoot = new URL('../src/', import.meta.url)
 const hook = registerHooks({ resolve(specifier, context, nextResolve) {
+  if (specifier.startsWith('@/')) return nextResolve(new URL(`${specifier.slice(2)}.ts`, sourceRoot).href, context)
+  if (context.parentURL?.startsWith(sourceRoot.href) && specifier.startsWith('./') && !specifier.endsWith('.ts')) {
+    return nextResolve(new URL(`${specifier}.ts`, context.parentURL).href, context)
+  }
   if (context.parentURL?.startsWith(new URL('react-server-dom-turbopack/', compiled).href)) {
     const target = specifier === 'react' ? 'react/cjs/react.react-server.production.js'
       : specifier === 'react-dom' ? 'react-dom/cjs/react-dom.production.js' : null
@@ -17,8 +22,10 @@ const hook = registerHooks({ resolve(specifier, context, nextResolve) {
   }
   return nextResolve(specifier, context)
 } })
-let client, server
+let client, server, createArticleAutosave, normalizeUpdateDraftInput
 try {
+  ;({ createArticleAutosave } = await import('../src/features/cms/article-autosave.ts'))
+  ;({ normalizeUpdateDraftInput } = await import('../src/features/cms/article-draft.ts'))
   client = require('next/dist/compiled/react-server-dom-turbopack/cjs/react-server-dom-turbopack-client.browser.production.js')
   server = require('next/dist/compiled/react-server-dom-turbopack/cjs/react-server-dom-turbopack-server.node.production.js')
 } finally { hook.deregister() }
@@ -138,3 +145,40 @@ test('canonical output normalization never sanitizes untrusted values before str
   }
   assert.equal(hooksCalled, 0)
 })
+
+for (const [name, makeNode] of samples) {
+  test(`autosave snapshot with real ${name} output survives Flight, server validation and reopened content`, async () => {
+    const originalToken = '2026-09-26T03:04:05.006Z'
+    const initial = { title: 'Bài đã lưu', slug: 'bai-da-luu', excerpt: '', articleType: 'NEWS',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph' }] } }
+    const raw = editorOutput(makeNode)
+    const expected = JSON.parse(JSON.stringify(raw))
+    const sent = []
+    const controller = createArticleAutosave({ id: 'flight-article', initial, updatedAt: originalToken,
+      async update(id, payload) {
+        assert.equal(id, 'flight-article')
+        assert.equal(Object.isFrozen(payload), true)
+        assert.equal(Object.isFrozen(payload.contentJson), true)
+        assertPlainJson(payload)
+        const wire = await client.encodeReply([id, payload], { temporaryReferences: client.createTemporaryReferenceSet() })
+        const [receivedId, received] = await server.decodeReply(wire, {}, { temporaryReferences: server.createTemporaryReferenceSet() })
+        assert.equal(receivedId, id)
+        assert.deepEqual(received, payload)
+        assert.equal(received.expectedUpdatedAt, originalToken)
+        const validated = normalizeUpdateDraftInput(received)
+        assert.deepEqual(validated.data.contentJson, expected)
+        assert.equal(validated.data.contentText, validateEditorDocument(raw).contentText)
+        const reopened = validateStoredEditorDocument(validated.data.contentJson, 1)
+        assert.deepEqual((await serverRoundTrip(reopened.contentJson)).contentJson, expected)
+        sent.push(received)
+        return { ok: true, data: { id, slug: received.slug, updatedAt: '2026-09-26T03:04:05.007Z' } }
+      } })
+    controller.activate()
+    try {
+      controller.setValues({ ...initial, title: 'Tiêu đề Việt mới', contentJson: raw })
+      await controller.manualSave()
+      assert.equal(sent.length, 1)
+      assert.equal(controller.getState().phase, 'clean')
+    } finally { controller.deactivate() }
+  })
+}
