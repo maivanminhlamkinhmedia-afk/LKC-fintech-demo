@@ -1,11 +1,13 @@
 # LKC Financial Publishing — roadmap và checkpoint
 
-Updated: 2026-09-24
+Updated: 2026-09-26
 
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
 Nguồn: bản bàn giao do Product Owner cung cấp ngày 2026-09-24, đối chiếu với GitHub và tiến độ trong chat triển khai. Bằng chứng mới hơn thay thế checkpoint cũ; không thực hiện lại thao tác đã hoàn tất chỉ vì bản bàn giao cũ còn ghi pending.
 
-Checkpoint mới nhất: CMS-004 COMPLETE. PR #19 đã merge/deploy, production smoke PASS và Product Owner đã chạy cleanup staging thành công: CLEANUP_COMMITTED = YES, remaining_articles/profiles/users = 0, RESULT = CLEANUP_VERIFIED. CMS-001 đến CMS-004 đã hoàn tất (4/20 nhiệm vụ, không phải ước lượng phần trăm khối lượng). CMS-005 đã có implementation local theo phạm vi Product Owner duyệt ngày 2026-09-24: editor/lưu thủ công, scoped actions, unit/action tests và Playwright/runbook. Xem [báo cáo implementation CMS-005](reports/CMS-005-implementation.md) để đối chiếu từng kết quả. Bước tiếp theo là Claude independent review; CI và browser/MariaDB staging vẫn chưa chạy. CMS-005 chưa COMPLETE.
+Checkpoint mới nhất: CMS-001..004 COMPLETE; **CMS-005 DEPLOYED, authenticated production smoke DEFERRED theo quyết định Product Owner ngày 2026-09-26, chưa COMPLETE**. PR #20 đã merge, production deploy SUCCESS, Claude review/CI/staging/cleanup PASS, public/anonymous smoke và monitoring ban đầu PASS trong phạm vi đã báo. Không suy diễn phần kiểm thử đăng nhập được hoãn thành PASS. Xem [release checkpoint CMS-005](reports/CMS-005-release-checkpoint.md).
+
+**Bước hiện tại: CMS-006 — Autosave, READY FOR CODEX IMPLEMENTATION.** PO chỉ thị “Tiếp tục lộ trình và kiểm thử đăng nhập sau”. Tiếp tục trên base main `6a726baa29f18df184497c3389d69a68d9086d44`, nhánh `feature/cms-006-autosave`; [spec CMS-006](tasks/CMS-006.md) và [implementation handoff](tasks/CMS-006-IMPLEMENTATION.md). Đây là bước tài liệu/handoff; chưa có code autosave, không có local/CI/staging PASS cho CMS-006.
 
 ## Quy trình delivery
 
@@ -21,8 +23,8 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-002 | Creator/Admin publishing RBAC | COMPLETE; PR #17 |
 | CMS-003 | Author profiles | COMPLETE; PR #18 |
 | CMS-004 | Creator dashboard | COMPLETE; PR #19, deploy/production smoke/staging cleanup PASS |
-| CMS-005 | Draft editor + TipTap | IMPLEMENTED LOCAL; chuyển Claude review; CI NOT RUN, browser/MariaDB STAGING PENDING; xem implementation report |
-| CMS-006 | Autosave | Planned |
+| CMS-005 | Draft editor + TipTap | DEPLOYED; review/CI/staging/cleanup/public smoke/monitoring PASS; authenticated production smoke DEFERRED by PO; chưa COMPLETE |
+| CMS-006 | Autosave | READY FOR CODEX IMPLEMENTATION; spec/handoff trên feature/cms-006-autosave; code và validation NOT RUN |
 | CMS-007 | Sources/citations | Planned |
 | CMS-008 | Category/Topic/Tags/Instruments | Planned |
 | CMS-009 | Media library | Planned |
@@ -36,13 +38,24 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-017 | Correction/update history | Planned |
 | CMS-018 | Audit integration | Planned |
 | CMS-019 | Search/archive/related | Planned |
-| CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; CMS-005 đã chuẩn bị nền tảng Chromium/runbook, chưa thực thi staging |
+| CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; nền tảng CMS-005 đã staging 20/20 PASS; không thay thế full workflow regression CMS-020 |
+
+## CMS-005 → CMS-006: quyết định và bằng chứng mới
+
+- Reviewed head CMS-005: `cdb5a1b630ae416b6c600314c87e924643e31014`; merge commit `6a726baa29f18df184497c3389d69a68d9086d44`, PR #20.
+- CI run 36131235754 SUCCESS, Node 22.23.2, 437/437 tests. Staging mới runId `2bcd94fd6be0872026f7b9a1`, BUILD_ID `b6vuICVMKMRjFv7X7R0Wq`: 20/20 cases, exit 0, VERIFIED, cleanup articles/profiles/users/logs = 0/0/0/0; hai failure cũ đã hết.
+- Deploy production run 36134885752 SUCCESS gồm SSH deploy, đúng merge commit. Không migration.
+- Public/anonymous smoke PASS; monitoring 22:25:25–22:30:29 ngày 25/09/2026 UTC+7 PASS trong phạm vi hai trang chưa đăng nhập. Không có runtime logs; không mở rộng kết luận sang mọi trang/server.
+- Nguồn kết quả review/staging/smoke/monitoring là báo cáo Codex/Claude do PO cung cấp; người cập nhật roadmap không nhận là đã tự chạy lại.
+- Authenticated smoke CREATOR/ANALYST: **DEFERRED**, không giả định PASS. Checklist có IDs và người phụ trách tại [release checkpoint](reports/CMS-005-release-checkpoint.md). Được thực hiện sau theo quyết định PO, không chặn bắt đầu CMS-006.
+- CMS-006: tự lưu bài đã tạo sau 2.000 ms ngừng nhập; create đầu tiên vẫn thủ công, single-flight/optimistic concurrency, giữ draft khi conflict/offline/unknown result. Không migration/dependency mới. Spec có 30 AC và 24 AUTO scenarios; implementation/test/CI/staging chưa chạy.
+- CMS-005 DoD và bằng chứng lịch sử được giữ; việc tiếp tục task sau không tự đóng nghiệm thu task trước. Không tạo lịch kiểm thử hoặc deadline khi PO chưa chỉ định.
 
 ## CMS-004: trạng thái đã đối chiếu
 
 - Spec c74db740f37784870284a7218790a7559a1b0c73; implementation 45280cf9caab22282bb3c99f66944b60fe09223c.
 - Bản bàn giao và mô tả PR ghi Codex/Claude PASS: dashboard 26/26, full suite 331/331, Prisma validate/generate, lint, TypeScript, build, diff-check.
-- CI validate run 35850510814 SUCCESS, đã kiểm tra qua GitHub. CI ở checkpoint CMS-004 chưa chạy unit tests; không nhầm kết quả local 331/331 thành kết quả test trong CI. CMS-005 bổ sung bước unit tests sau Prisma generate; lượt CI mới chưa chạy.
+- CI validate run 35850510814 SUCCESS, đã kiểm tra qua GitHub. CI ở checkpoint CMS-004 chưa chạy unit tests; không nhầm kết quả local 331/331 thành kết quả test trong CI. CMS-005 sau đó bổ sung bước unit tests sau Prisma generate; CI của transport fix đã 437/437 PASS, xem release checkpoint mới.
 - Staging ownership/profile PASS theo bàn giao: own articles 4, draft 1, editorial 1, published 1; foreign article không xuất hiện.
 - Staging responsive desktop/mobile 390px/tablet 768px PASS theo bàn giao. Không yêu cầu chạy lại các kiểm tra này nếu không có thay đổi liên quan.
 - PR #19 đã MERGED, merge commit 9bb1a289526726e494243fb14a597345b27bfd3b.
@@ -94,7 +107,7 @@ RESULT = CLEANUP_VERIFIED
 
 Validation của script: node --check PASS; 13 kiểm tra cô lập bằng Prisma mock PASS cho default read-only, sai URL/server identity, owner/profile/count/relations/audit mismatch, giữ dữ liệu ngoài fixture, rollback mô phỏng, hậu kiểm sau commit lỗi và already-clean rerun. Agent chỉ kiểm tra cô lập; kết quả thực thi staging do Product Owner cung cấp riêng ở trên. Cùng PR/CI, staging validation, deploy và production smoke đã ghi nhận, hồ sơ đóng CMS-004 đã đủ.
 
-Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/ownership đã đạt khi không có thay đổi liên quan. Không bắt tạo thêm tài khoản production. CMS-004 COMPLETE. Product Owner đã chốt phạm vi CMS-005 gồm draft editor/lưu thủ công, quyền theo spec, chống ghi đè và Playwright foundation. Codex được triển khai theo [đặc tả](tasks/CMS-005.md) và [hướng dẫn implementation](tasks/CMS-005-IMPLEMENTATION.md). Dependency installation cần npm metadata/peer gate, không cần xin lại phê duyệt phạm vi. Các bước review, CI, staging và deploy CMS-005 vẫn chưa thực hiện.
+Không yêu cầu kiểm tra lại CREATOR/ANALYST hoặc staging responsive/ownership đã đạt khi không có thay đổi liên quan. Không bắt tạo thêm tài khoản production. CMS-004 COMPLETE. Product Owner đã chốt phạm vi CMS-005 gồm draft editor/lưu thủ công, quyền theo spec, chống ghi đè và Playwright foundation. Codex được triển khai theo [đặc tả](tasks/CMS-005.md) và [hướng dẫn implementation](tasks/CMS-005-IMPLEMENTATION.md). Dependency installation cần npm metadata/peer gate, không cần xin lại phê duyệt phạm vi. Các bước review, CI, staging và deploy CMS-005 sau đó đã PASS; authenticated production smoke được PO hoãn. Checkpoint 2026-09-26 ở đầu tài liệu thay thế trạng thái pending cũ.
 
 ## Vận hành và giới hạn
 
@@ -115,3 +128,4 @@ Quản lý User: Product Owner xác nhận tạo email trùng khiến /admin/use
 - [CMS-004 CI](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/actions/runs/35850510814)
 - [Production deploy](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/actions/runs/35887183245)
 - [CMS-005 approved spec](tasks/CMS-005.md)
+
