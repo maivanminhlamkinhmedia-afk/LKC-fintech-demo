@@ -7,7 +7,7 @@ Nguồn: bản bàn giao do Product Owner cung cấp ngày 2026-09-24, đối ch
 
 Checkpoint mới nhất: CMS-001..004 COMPLETE; **CMS-005 DEPLOYED, authenticated production smoke DEFERRED theo quyết định Product Owner ngày 2026-09-26, chưa COMPLETE**. PR #20 đã merge, production deploy SUCCESS, Claude review/CI/staging/cleanup PASS, public/anonymous smoke và monitoring ban đầu PASS trong phạm vi đã báo. Không suy diễn phần kiểm thử đăng nhập được hoãn thành PASS. Xem [release checkpoint CMS-005](reports/CMS-005-release-checkpoint.md).
 
-**Bước hiện tại: CMS-006 — Autosave, READY FOR CODEX IMPLEMENTATION.** PO chỉ thị “Tiếp tục lộ trình và kiểm thử đăng nhập sau”. Tiếp tục trên base main `6a726baa29f18df184497c3389d69a68d9086d44`, nhánh `feature/cms-006-autosave`; [spec CMS-006](tasks/CMS-006.md) và [implementation handoff](tasks/CMS-006-IMPLEMENTATION.md). Đây là bước tài liệu/handoff; chưa có code autosave, không có local/CI/staging PASS cho CMS-006.
+**Bước hiện tại: CMS-006 — Autosave, LOCAL IMPLEMENTATION / AWAITING CLAUDE REVIEW; chưa COMPLETE.** Implementation chưa staged trên `feature/cms-006-autosave`, HEAD tài liệu `d83f1423e870a7f0f44f7eb7e35b535fb626f131`, base CMS-005 `6a726baa29f18df184497c3389d69a68d9086d44`. Node 22.23.2: focused 101/101, toàn bộ unit/action 493/493, Prisma validate/generate, lint, TypeScript, build cô lập và diff-check PASS; discovery 36 cases (20 EDIT + 16 AUTO), không phải browser PASS. Claude independent review / CI / browser / MariaDB / cleanup CMS-006 **NOT RUN / STAGING PENDING**. Xem [spec](tasks/CMS-006.md), [implementation handoff](tasks/CMS-006-IMPLEMENTATION.md) và [báo cáo thực tế](reports/CMS-006-implementation.md). Quyết định PO hoãn smoke CMS-005 vẫn giữ nguyên.
 
 ## Quy trình delivery
 
@@ -24,7 +24,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 | CMS-003 | Author profiles | COMPLETE; PR #18 |
 | CMS-004 | Creator dashboard | COMPLETE; PR #19, deploy/production smoke/staging cleanup PASS |
 | CMS-005 | Draft editor + TipTap | DEPLOYED; review/CI/staging/cleanup/public smoke/monitoring PASS; authenticated production smoke DEFERRED by PO; chưa COMPLETE |
-| CMS-006 | Autosave | READY FOR CODEX IMPLEMENTATION; spec/handoff trên feature/cms-006-autosave; code và validation NOT RUN |
+| CMS-006 | Autosave | LOCAL IMPLEMENTATION; local gates PASS, 493/493 tests; discovery 36; chưa staged; Claude/CI NOT RUN, STAGING PENDING; chưa COMPLETE |
 | CMS-007 | Sources/citations | Planned |
 | CMS-008 | Category/Topic/Tags/Instruments | Planned |
 | CMS-009 | Media library | Planned |
@@ -48,7 +48,7 @@ Claude không sửa code trong lượt review. Hướng dẫn PowerShell dùng n
 - Public/anonymous smoke PASS; monitoring 22:25:25–22:30:29 ngày 25/09/2026 UTC+7 PASS trong phạm vi hai trang chưa đăng nhập. Không có runtime logs; không mở rộng kết luận sang mọi trang/server.
 - Nguồn kết quả review/staging/smoke/monitoring là báo cáo Codex/Claude do PO cung cấp; người cập nhật roadmap không nhận là đã tự chạy lại.
 - Authenticated smoke CREATOR/ANALYST: **DEFERRED**, không giả định PASS. Checklist có IDs và người phụ trách tại [release checkpoint](reports/CMS-005-release-checkpoint.md). Được thực hiện sau theo quyết định PO, không chặn bắt đầu CMS-006.
-- CMS-006: tự lưu bài đã tạo sau 2.000 ms ngừng nhập; create đầu tiên vẫn thủ công, single-flight/optimistic concurrency, giữ draft khi conflict/offline/unknown result. Không migration/dependency mới. Spec có 30 AC và 24 AUTO scenarios; implementation/test/CI/staging chưa chạy.
+- CMS-006: đã triển khai local tự lưu bài persisted sau 2.000 ms ngừng nhập; create đầu tiên vẫn thủ công, manual/auto chung single-flight, immutable latest snapshot và ACK token; giữ draft khi conflict/offline/unknown result/session hết hạn. Không migration/dependency mới. Báo cáo map đủ 30 AC và 24 AUTO scenarios; local validation PASS, không nhận bằng chứng CI/staging cũ của CMS-005 là bằng chứng CMS-006. Bước tiếp theo là Claude independent review trên diff chưa staged.
 - CMS-005 DoD và bằng chứng lịch sử được giữ; việc tiếp tục task sau không tự đóng nghiệm thu task trước. Không tạo lịch kiểm thử hoặc deadline khi PO chưa chỉ định.
 
 ## CMS-004: trạng thái đã đối chiếu

@@ -7,6 +7,7 @@ import SafeReporter from './e2e/safe-reporter.mjs'
 // app, credential lookup, environment file or database is initialized here.
 const FORMAT_FILE = 'tests/e2e/cms-draft.spec.ts'
 const CLIP_FILE = 'tests/e2e/cms-editor-safety.spec.ts'
+const AUTO_FILE = 'tests/e2e/cms-autosave.spec.ts'
 const FORMAT_CASE = 'EDIT-04/05/06/21'
 const CLIP_CASE = 'EDIT-18'
 const FORMAT_TITLE = 'EDIT-04/05/06/21 create and refresh Vietnamese formatting with no writes from GET or typing'
@@ -22,6 +23,24 @@ const CLIP_STEPS = ['CLIP_LOGIN', 'CLIP_PERMISSION', 'CLIP_INPUT', 'CLIP_WRITE',
   'CLIP_RELOAD_DOM_TEXT', 'CLIP_RELOAD_LINK_COUNT', 'CLIP_RELOAD_LINK_HREF', 'CLIP_RELOAD_LINK_TARGET',
   'CLIP_RELOAD_LINK_REL', 'CLIP_RELOAD_LINK_CLASS', 'CLIP_RELOAD_LINK_TITLE', 'CLIP_RELOAD_DANGEROUS_ELEMENTS',
   'CLIP_RELOAD_EVENT_ATTRIBUTES', 'CLIP_RELOAD_SCRIPT_EXECUTION']
+const AUTO_CASES = [
+  ['AUTO-01/02', 'AUTO-01/02 new stays manual and persisted edit stays idle until data changes', 'AUTO_CREATE_IDLE'],
+  ['AUTO-03/04/18', 'AUTO-03/04/18 latest metadata and native rich clipboard autosave round trip', 'AUTO_RICH_ROUNDTRIP'],
+  ['AUTO-05/06/07/23', 'AUTO-05/06/07/23 slow real ACK preserves typing and coalesces one latest tokened followup', 'AUTO_SINGLE_FLIGHT'],
+  ['AUTO-07', 'AUTO-07 manual flush before deadline and repeated clean clicks make one update', 'AUTO_MANUAL_FLUSH'],
+  ['AUTO-10', 'AUTO-10 slug conflict pauses the same slug until an edited slug becomes valid', 'AUTO_SLUG_BARRIER'],
+  ['AUTO-11', 'AUTO-11 known offline makes no request and online rearms one latest save', 'AUTO_OFFLINE_REARM'],
+  ['AUTO-12', 'AUTO-12 lost real committed ACK stops retries and explicit stale retry conflicts', 'AUTO_UNKNOWN_ACK'],
+  ['AUTO-13', 'AUTO-13 two autosaving tabs keep the loser draft and require confirmed reload', 'AUTO_TWO_TABS'],
+  ['AUTO-14-ADMIN', 'AUTO-14 admin autosaves an allowed foreign draft without changing owner', 'AUTO_ADMIN_SCOPE'],
+  ['AUTO-14-SUPER', 'AUTO-14 super autosaves an allowed foreign draft without changing owner', 'AUTO_ADMIN_SCOPE'],
+  ['AUTO-14-REVOKED', 'AUTO-14 revocation stops an open editor and non-CMS roles cannot open it', 'AUTO_REVOKED_ACTOR'],
+  ['AUTO-15', 'AUTO-15 owner or status changing after load blocks autosave and its queued edits', 'AUTO_CHANGED_POLICY'],
+  ['AUTO-16', 'AUTO-16 expired browser session pauses autosave without redirecting the draft', 'AUTO_EXPIRED_SESSION'],
+  ['AUTO-19', 'AUTO-19 composition blocks intermediate title and editor snapshots beyond debounce', 'AUTO_COMPOSITION'],
+  ['AUTO-21', 'AUTO-21 navigation cancel preserves debounce and accepting during save prevents followup', 'AUTO_NAVIGATION'],
+  ['AUTO-23', 'AUTO-23 persisted future millisecond tokens advance across consecutive autosaves', 'AUTO_TOKEN_PRECISION'],
+]
 const location = (file = FORMAT_FILE, line = 120, column = 7) => ({ file, line, column })
 const testCase = (title = FORMAT_TITLE, file = FORMAT_FILE) => ({ title, location: location(file) })
 const caseRecord = (overrides = {}) => ({ caseId: FORMAT_CASE, status: 'failed', testLocation: location(), ...overrides })
@@ -399,5 +418,58 @@ test('reporter and runner-filter integration keeps safe failure diagnostics whil
   assert.equal(rows[1].record.assertionSource, 'step.location')
   assert.equal(rows[2].record.status, 'failed')
   assert.equal(rows[3].record.status, 'failed')
+  assert.equal(lines.join('').includes(PRIVATE), false)
+})
+
+test('all 16 autosave cases and 15 explicit codes survive reporter plus runner filtering without losing failures', () => {
+  assert.equal(AUTO_CASES.length, 16)
+  assert.equal(new Set(AUTO_CASES.map(row => row[2])).size, 15)
+  const lines = []
+  const filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  for (const [caseId, title, stepCode] of AUTO_CASES) {
+    const known = freeze(testCase(title, AUTO_FILE))
+    const parent = freeze({ category: 'test.step', title: stepCode, location: location(AUTO_FILE, 42, 3) })
+    const result = freeze({ status: 'failed', error: { message: PRIVATE } })
+    reporter.onStepEnd(known, result, parent)
+    reporter.onStepEnd(known, result, freeze({ category: 'expect', parent, title: PRIVATE,
+      error: { message: PRIVATE, location: location(AUTO_FILE, 45, 7) } }))
+    reporter.onTestEnd(known, result)
+    const latest = lines.slice(-3).map(parse)
+    assert.deepEqual(latest.map(row => [row.kind, row.record.caseId, row.record.status]), [
+      ['DIAGNOSTIC', caseId, 'passed'], ['DIAGNOSTIC', caseId, 'failed'], ['CASE', caseId, 'failed'],
+    ])
+    assert.equal(latest[1].record.stepCode, stepCode)
+    assert.deepEqual(latest[1].record.assertionLocation, location(AUTO_FILE, 45, 7))
+    assert.equal(latest[1].record.assertionSource, 'error.location')
+    assert.equal(result.status, 'failed')
+  }
+  filter.end()
+  assert.equal(lines.length, 48)
+  assert.equal(lines.join('').includes(PRIVATE), false)
+})
+
+test('autosave diagnostics reject title suffixes, support-file locations, cross-case codes and sensitive payload fields', () => {
+  const { reporter, lines, records } = capture()
+  for (const [caseId, title, stepCode] of AUTO_CASES) {
+    const valid = { caseId, stepCode, status: 'failed', testLocation: location(AUTO_FILE),
+      stepLocation: null, assertionLocation: null, assertionSource: null }
+    for (const invalid of [
+      { ...valid, stepCode: 'FMT_DOM_BOLD' }, { ...valid, stepCode: 'AUTO_UNKNOWN' },
+      { ...valid, stepCode: `${stepCode}_${PRIVATE}` },
+      { ...valid, testLocation: location(FORMAT_FILE) },
+      { ...valid, stepLocation: location('tests/e2e/cms-autosave-support.ts') },
+      { ...valid, requestBody: PRIVATE },
+    ]) assert.equal(formatDiagnosticRecord('DIAGNOSTIC', invalid), null)
+    reporter.onTestEnd(testCase(`${title} ${PRIVATE}`, AUTO_FILE), { status: 'failed' })
+    reporter.onTestEnd(testCase(title, FORMAT_FILE), { status: 'failed' })
+    reporter.onStepEnd(testCase(title, AUTO_FILE), {}, {
+      category: 'test.step', title: stepCode === 'AUTO_SINGLE_FLIGHT' ? 'AUTO_UNKNOWN_ACK' : 'AUTO_SINGLE_FLIGHT',
+      error: { message: PRIVATE },
+    })
+  }
+  assert.equal(records().length, 32)
+  assert.ok(records().every(row => row.kind === 'CASE' && row.record.caseId === 'UNKNOWN_CASE'
+    && row.record.status === 'failed' && row.record.testLocation === null))
   assert.equal(lines.join('').includes(PRIVATE), false)
 })
