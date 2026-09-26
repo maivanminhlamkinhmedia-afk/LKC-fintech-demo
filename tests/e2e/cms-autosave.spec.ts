@@ -363,8 +363,9 @@ test('AUTO-21 navigation cancel preserves debounce and accepting during save pre
     const unload = page.waitForEvent('dialog').then(async dialog => {
       expect(dialog.type()).toBe('beforeunload'); await dialog.dismiss()
     })
-    // Chromium rejects the navigation when its actual beforeunload is dismissed.
-    await Promise.all([page.reload().catch(() => {}), unload])
+    // Cancellation has no new document to await. Trigger the native reload
+    // without Playwright's navigation waiter; unexpected errors must propagate.
+    await Promise.all([page.evaluate(() => window.location.reload()), unload])
     await expect(title(page)).toHaveValue('Giữ timer sau cancel')
     await dialogLink(page, false)
     await tick(page); await saved(page); expect(count()).toBe(1)
