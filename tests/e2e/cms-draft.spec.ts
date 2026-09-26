@@ -122,8 +122,14 @@ test('EDIT-04/05/06/21 create and refresh Vietnamese formatting with no writes f
     await body(page).press('Enter')
   })
   await test.step('FMT_CODE_BLOCK', async () => {
+    const code = 'const tiếngViệt = "an toàn";\nconsole.log(tiếngViệt)'
     await page.getByRole('button', { name: 'Khối mã', exact: true }).click()
-    await page.keyboard.type('const tiếngViệt = "an toàn";\nconsole.log(tiếngViệt)')
+    // TipTap returns focus to the editor on an animation frame, after click can settle.
+    await expect(body(page)).toBeFocused()
+    await expect(body(page).locator('pre')).toBeVisible()
+    await page.keyboard.type(code)
+    // Check exact text (including the newline) before Save/DB can obscure the input boundary.
+    await expect(body(page).locator('pre code')).toHaveJSProperty('textContent', code)
   })
   await test.step('FMT_NO_WRITE', async () => {
     expect(await db.article.count({ where: { authorId: userId('creator') } })).toBe(before)
