@@ -1,4 +1,4 @@
-# CMS staging E2E — CMS-005
+# CMS staging E2E — CMS-005 and CMS-006
 
 This is a **staging-only** harness. Local implementation/review runs unit mocks,
 lint/type checks and discovery only. No database, browser installation, tunnel or
@@ -104,8 +104,8 @@ the run namespace; unexpected ownership or namespace changes stop cleanup.
 
 ## Cases and evidence levels
 
-The browser suite uses actual login, Server Actions and MariaDB—no network,
-permission, action or database mocks. It covers:
+The browser suite uses actual login, Server Actions and MariaDB. No permission,
+action result or database success is fabricated. The CMS-005 cases cover:
 
 - EDIT-01 and CLIENT/ANALYST route denial from EDIT-02.
 - EDIT-04/05/06: manual create, no GET/typing writes, Vietnamese/marks/list/code
@@ -121,8 +121,8 @@ permission, action or database mocks. It covers:
   This verifies precision and the monotonic fallback; it does **not** claim two
   physical HTTP requests completed inside one wall-clock millisecond.
 - EDIT-15/16: canonical slug collision and blank body with no AuthorProfile.
-- EDIT-18/20: real clipboard HTML paste with unsafe markup, and an actual offline
-  browser context while saving; verify safe stored attributes, retained draft,
+- EDIT-18/20: real clipboard HTML paste with unsafe markup, and a browser context
+  taken offline after a real action dispatch; verify safe stored attributes, retained draft,
   no database write, dirty navigation dismissal and successful retry.
 - EDIT-21/22: scoped dashboard/list links and actual own count, 390/768/1280px
   editor width, no document overflow, code-block internal horizontal scrolling
@@ -136,6 +136,71 @@ their actual level; a mocked cleanup test does not mean real cleanup succeeded.
 `tests/cms-e2e-harness.test.mjs` uses in-memory mocks only to verify EDIT-23/24
 guards, exact-ID mutations, relation protection, rollback control flow, cleanup
 after PASS/FAIL, and post-commit verification handling.
+
+## CMS-006 autosave source and evidence mapping
+
+The suite retains all 20 CMS-005 cases and adds 16 CMS-006 cases: **36 expected
+discovered browser tests**, with zero retries. Discovery is not browser evidence.
+The CMS-006 browser suite is **NOT RUN** during local implementation. The supplied
+CMS-005 release checkpoint remains its own historical evidence; a future run must
+use a new run ID, exact reviewed CMS-006 commit and fresh build provenance.
+
+The new tests install Playwright's browser clock before opening an editor, pause
+it after hydration, and explicitly advance the 2-second debounce. The initial
+pause jumps fake time forward 60 seconds only on a clean/new editor before edits
+or composition, or on the destination after confirmed leave. This avoids a stale
+absolute pause target between protocol calls; it is not a wall-time wait or a
+timeout/retry increase. There is no
+application test flag or disabled autosave. `holdActionResponses` forwards the
+unchanged authenticated request with `route.fetch()` to the actual app/DB, then
+delays that actual response or aborts its delivery. It never creates a successful
+action payload. The lost-ACK case verifies the committed row before dropping the
+response, then verifies a deliberate stale-token retry conflicts. Request counts
+exclude GET/revalidation traffic and login actions.
+
+| AUTO scenarios | Browser case IDs and controlled step codes | Browser assertions |
+|---|---|---|
+| 01, 02 | `AUTO-01/02` / `AUTO_CREATE_IDLE` | New typing/idle makes no row; double-click creates once; edit load, focus, selection, link UI and idle do not write; persisted edit enables autosave. |
+| 03, 04, 18 | `AUTO-03/04/18` / `AUTO_RICH_ROUNDTRIP` | Latest five fields only after deadline; uppercase slug canonicalizes without looping; native HTML clipboard preserves Vietnamese heading/link/list/code and whitespace through DB/reload; blank body remains valid. |
+| 05, 06, 07, 23 | `AUTO-05/06/07/23` / `AUTO_SINGLE_FLIGHT` | Two held real ACKs; typing, formatting and undo/redo remain usable; one in-flight plus one latest follow-up; newer slug, title caret and editor DOM/history survive ACK; persisted token advances. |
+| 07 | `AUTO-07` / `AUTO_MANUAL_FLUSH` | Manual flush before deadline, double-click and clean clicks do not duplicate updates. |
+| 10 | `AUTO-10` / `AUTO_SLUG_BARRIER` | Collision makes no write; body changes do not retry the same conflicting slug; edited valid slug resumes. |
+| 11, 21 | `AUTO-11` / `AUTO_OFFLINE_REARM` | Known offline makes no action; latest draft and dismissed navigation survive; online rearms exactly one debounce. |
+| 12 | `AUTO-12` / `AUTO_UNKNOWN_ACK` | Commit with lost real response remains uncertain; timer/online never retries; explicit stale retry conflicts and preserves local draft. |
+| 13, 21 | `AUTO-13` / `AUTO_TWO_TABS` | Concurrent tabs have one winner; loser keeps draft without retry; link dismissal and reload cancel preserve it; confirmed reload shows winner. |
+| 14 | `AUTO-14-ADMIN`, `AUTO-14-SUPER` / `AUTO_ADMIN_SCOPE`; `AUTO-14-REVOKED` / `AUTO_REVOKED_ACTOR` | Admin scope preserves foreign author; suspended/demoted active editors stop; client/analyst/foreign creator routes deny. |
+| 15 | `AUTO-15` / `AUTO_CHANGED_POLICY` | Guarded status/owner changes reject stale editor writes and stop subsequent automatic queueing. |
+| 16 | `AUTO-16` / `AUTO_EXPIRED_SESSION` | Real browser cookies removed; safe forbidden response keeps route/input and stops queue. No-Article-query ordering is proven in local action tests, not inferred from the browser. |
+| 19 | `AUTO-19` / `AUTO_COMPOSITION` | DOM composition events on title and contenteditable exceed debounce without write; end rearms one save. Synthetic events test app integration, not every OS input method. |
+| 21 | `AUTO-21` / `AUTO_NAVIGATION` | Actual beforeunload and app-link dismissal preserve pending debounce; accepting navigation during held save prevents newer follow-up. Offline/conflict branches are above. |
+| 23 | `AUTO-23` / `AUTO_TOKEN_PRECISION` | Real future `DATETIME(3)` token advances exactly +1 ms on each consecutive autosave. |
+| 24 | Every case through guarded runner/global setup/hooks | Exact new run/commit/build, safe reporter protocol, finally discovery and exact-ID cleanup after PASS/FAIL. Only an actual guarded run can establish cleanup zero counts. |
+
+AUTO-08, 09, 17, 20 and 22 are explicitly local-only in the spec; controller,
+form/action/query/Flight tests supply their evidence. Browser tests do not claim
+to prove inaccessible getters, Strict Mode lifecycle, server query ordering or
+post-commit cache-failure behavior. Local harness mocks cover the AUTO-24 cleanup
+control flow; they cannot certify real cleanup. This task changes no fixture
+identity, mutation, provenance, cleanup, artifact-suppression or launch guard.
+
+CMS-005 assertion changes are limited to the autosave business delta:
+
+| Existing cases | Timing or assertion change | Preserved invariant / replacement |
+|---|---|---|
+| EDIT-08/09/12/14 | Pause browser clock after edit hydration before explicit saves. | All state, ownership, policy and millisecond-token assertions remain. AUTO cases separately exercise automatic dispatch. |
+| EDIT-11 | Pause before actor mutation; require `FORBIDDEN` without redirect instead of accepting either redirect or error. | Denied write remains unchanged; draft/route retention is now additionally required. |
+| EDIT-13 | Pause the shared context clock after both editors hydrate, then submit both manual actions. | Same concurrent real requests, exactly one winner, losing input retained. |
+| EDIT-20 | Freeze debounce; switch context offline after the real POST dispatch, then continue it to a genuine network failure; expect paused autosave status. | Failed request, retained title/excerpt/body, no DB write, dirty navigation dismissal and successful explicit retry remain. AUTO-11 separately covers known-offline suppression. |
+| All other CMS-005 cases | No scenario/assertion changes. Clock installation in the shared login helper keeps time running unless explicitly paused. | Native clipboard, formatting, create-first, route access, blank body and responsive assertions remain. |
+
+The diagnostics registry has 36 exact title/file identities and **59 distinct
+static step codes**: the original 44 plus 15 AUTO codes (the two admin cases share
+`AUTO_ADMIN_SCOPE`). Autosave source locations allow only
+`tests/e2e/cms-autosave.spec.ts`; helper-file and unknown locations stay null.
+Two added synthetic diagnostics tests exercise all 16 new identities through both
+reporter and runner filtering, reject cross-case/file/suffix/payload forgeries,
+and preserve failed verdicts. There are 17 diagnostics unit cases; no raw action
+body, DOM, cookie, clipboard, error message or response is emitted.
 
 ## Cleanup and interrupted-run recovery
 
@@ -203,7 +268,7 @@ cleanup. Any `STOP`, failed case or nonzero remaining count means staging is not
 PASS. For a patched commit that has not been run, report **STAGING PENDING /
 browser NOT RUN**, even if an earlier commit has staging evidence.
 
-## Safe diagnostics for the two unresolved cases
+## Historical CMS-005 diagnostic checkpoint
 
 The reported staging run `50edda4dd148bf115c08eb60` tested commit
 `7bdee2e22891942235c3f1eb2c01dfc414a473bf` with Node 22.23.2 and Playwright
@@ -252,7 +317,8 @@ Location fields have deliberately distinct meanings:
 - `assertionSource`: `error.location` or `step.location`, identifying which API
   field supplied the coordinate; `null` if none is available.
 
-Only `tests/e2e/cms-draft.spec.ts` and `tests/e2e/cms-editor-safety.spec.ts`
+Only `tests/e2e/cms-draft.spec.ts`, `tests/e2e/cms-editor-safety.spec.ts` and
+`tests/e2e/cms-autosave.spec.ts`
 with positive integer line/column values are allowed. Absolute source paths are
 normalized to these approved repository-relative paths. Missing/disallowed
 locations are `null`; no stack parsing, line-number guessing or substitution of
@@ -277,7 +343,7 @@ a suite PASS. Unit tests exercise synthetic failures, hostile output metadata
 and chunk boundaries without starting Playwright/browser/DB.
 
 The next staging run requires **Claude independent review and CI PASS for the
-exact diagnostic patch commit**, followed by separately authorized Claude staging
+exact CMS-006 commit**, followed by separately authorized Claude staging
 QA. The previous commit's CI/staging results do not satisfy that gate. Keep the
 existing trace/video/screenshot suppression, `preserveOutput: 'never'`,
 `PLAYWRIGHT_NO_COPY_PROMPT=1`, one worker, zero retries, provenance, lock and fixture

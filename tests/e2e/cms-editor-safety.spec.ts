@@ -3,6 +3,7 @@ import type { Article } from '@prisma/client'
 import { connectStaging, demand, STAGING_BASE_URL } from '../../scripts/cms-e2e/guard.mjs'
 import { loadManifest, saveManifest, discoverCreatedArticles, fixtureArticle } from '../../scripts/cms-e2e/fixtures.mjs'
 import { validateEditorDocument } from '../../src/features/cms/editor-schema'
+import { isArticleAction, pauseEditorClock } from './cms-autosave-support'
 
 type FixtureManifest = {
   runId: string
@@ -163,24 +164,34 @@ test('EDIT-18 real HTML clipboard paste removes unsafe content and persists cano
 
 test('EDIT-20 offline save retains the draft, dirty app-link dismissal stays in editor, and explicit retry succeeds', async ({ browser }) => {
   const { context, page } = await login(browser)
+  await page.clock.install()
   await newDraft(page, 'offline')
   await body(page).fill('Nội dung đã lưu trước khi mất mạng')
   await save(page)
   const id = await registerCreated(page)
+  await expect(body(page)).toBeVisible(); await pauseEditorClock(page)
   const before = snapshot(await readArticle(id))
   const title = 'Tiêu đề chưa lưu khi mất mạng'
   const text = 'Bản nháp tiếng Việt cần giữ lại khi mất mạng'
   await page.getByLabel('Tiêu đề', { exact: true }).fill(title)
   await page.getByLabel('Tóm tắt', { exact: true }).fill('Tóm tắt chưa lưu')
   await body(page).fill(text)
-  try {
+  let failedOnce = false
+  await page.route('**/creator/articles/**', async route => {
+    if (!isArticleAction(route.request()) || failedOnce) return route.continue()
+    failedOnce = true
+    // Known-offline dispatch is now prevented by CMS-006. Drop the network only
+    // after this real action was dispatched; never fabricate its response.
     await context.setOffline(true)
+    await route.continue()
+  })
+  try {
     const failedRequest = page.waitForEvent('requestfailed', {
-      predicate: request => request.method() === 'POST' && 'next-action' in request.headers(),
+      predicate: isArticleAction,
     })
     await save(page)
     await failedRequest
-    await expect(page.getByRole('status').filter({ hasText: /^Lưu thất bại$/ })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: /^Tự động lưu tạm dừng…$/ })).toBeVisible()
     await expect(page.locator('[data-error-code="INTERNAL_ERROR"]')).toBeVisible()
     await expect(page.getByRole('status').filter({ hasText: /^Đã lưu$/ })).toHaveCount(0)
     await expect(page.getByLabel('Tiêu đề', { exact: true })).toHaveValue(title)

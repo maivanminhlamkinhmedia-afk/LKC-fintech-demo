@@ -20,9 +20,17 @@ const record = (kind, args) => current.calls.push({ kind, ...(args === undefined
 const denied = new Error('Authentication redirect sentinel')
 const originalConsoleError = console.error
 console.error = (...args) => current?.logs.push(args)
+const authOptions = Object.freeze({ testSessionConfiguration: true })
 after(() => { console.error = originalConsoleError })
 
 const adapter = {
+  authOptions,
+  async getServerSession(options) {
+    assert.equal(options, authOptions, 'UPDATE must reuse the existing auth configuration')
+    record('session')
+    if (current.sessionError) throw current.sessionError
+    return clone(current.session)
+  },
   async requirePermission(permission) {
     record('auth', permission)
     if (current.authError) throw current.authError
@@ -108,6 +116,8 @@ const adapterModule = exports => `data:text/javascript,${encodeURIComponent(
   `const adapter = globalThis[Symbol.for('cms-draft-actions-test-adapter')]; ${exports}`,
 )}`
 const replacements = new Map([
+  ['next-auth', adapterModule('export const getServerSession = adapter.getServerSession;')],
+  ['@/lib/auth', adapterModule('export const authOptions = adapter.authOptions;')],
   ['@/lib/authz', adapterModule('export const requirePermission = adapter.requirePermission;')],
   ['@/lib/prisma', adapterModule('export const prisma = adapter.prisma;')],
   ['next/cache', adapterModule('export const revalidatePath = adapter.revalidatePath;')],
@@ -165,19 +175,63 @@ function knownError(code, target, modelName = 'Article') {
 }
 const expectedScope = actor => actor.role === 'CREATOR' ? { authorId: actor.id } : {}
 
-test('EDIT-01/02: authentication precedes validation/DB, and framework redirects escape unchanged', async () => {
-  for (const run of [() => createArticleDraft(null), () => updateArticleDraft(null, null)]) {
-    scenario(creator, { authError: denied })
-    await assert.rejects(run(), error => error === denied)
+test('EDIT-01/02: manual create retains authentication-before-validation and unchanged framework redirects', async () => {
+  scenario(creator, { authError: denied })
+  await assert.rejects(createArticleDraft(null), error => error === denied)
+  assert.deepEqual(current.calls, [{ kind: 'auth', args: 'cms:access' }])
+  for (const role of APP_ROLES.filter(role => !['CREATOR', 'ADMIN', 'SUPER_ADMIN'].includes(role))) {
+    scenario({ ...creator, role })
+    await assert.rejects(createArticleDraft(input()), error => error === denied)
     assert.deepEqual(current.calls, [{ kind: 'auth', args: 'cms:access' }])
   }
-  for (const role of APP_ROLES.filter(role => !['CREATOR', 'ADMIN', 'SUPER_ADMIN'].includes(role))) {
-    for (const run of [() => createArticleDraft(input()), () => updateArticleDraft('article-a', updateInput())]) {
-      scenario({ ...creator, role })
-      await assert.rejects(run(), error => error === denied)
-      assert.equal(current.calls.length, 1)
-    }
+})
+
+test('AUTO-16: missing, expired and invalid UPDATE sessions return FORBIDDEN before validation or Article access', async () => {
+  const sessions = [null, undefined, {}, { user: null }, { user: {} },
+    { user: { id: '', role: 'CREATOR' } }, { user: { id: '   ', role: 'CREATOR' } },
+    { user: { id: creator.id } }, { user: { id: creator.id, role: 'UNKNOWN_ROLE' } }]
+  for (const session of sessions) {
+    scenario(creator, { session })
+    const before = clone(current.article)
+    // Invalid request arguments ensure session denial precedes input inspection.
+    const result = await updateArticleDraft(null, null)
+    errorCode(result, 'FORBIDDEN')
+    assert.deepEqual(current.calls, [{ kind: 'session' }])
+    assert.deepEqual(current.article, before)
+    assert.deepEqual(current.logs, [])
   }
+})
+
+test('AUTO-14/16: every non-CMS role returns safe UPDATE denial without transaction or redirect guard', async () => {
+  for (const role of APP_ROLES.filter(role => !['CREATOR', 'ADMIN', 'SUPER_ADMIN'].includes(role))) {
+    scenario({ ...creator, role })
+    errorCode(await updateArticleDraft('article-a', updateInput()), 'FORBIDDEN')
+    assert.deepEqual(current.calls, [{ kind: 'session' }])
+    assert.deepEqual(current.logs, [])
+  }
+})
+
+test('AUTO-16: a session lost after a successful update cannot access or mutate the article on the next save', async () => {
+  scenario()
+  const first = await updateArticleDraft('article-a', updateInput())
+  assert.equal(first.ok, true)
+  const saved = clone(current.article)
+  current.session = null
+  current.calls = []
+  errorCode(await updateArticleDraft('article-a', updateInput({
+    title: 'Unsaved after session expiration', expectedUpdatedAt: first.data.updatedAt,
+  })), 'FORBIDDEN')
+  assert.deepEqual(current.calls, [{ kind: 'session' }])
+  assert.deepEqual(current.article, saved)
+})
+
+test('UPDATE session-provider errors are sanitized and stop before Article access', async () => {
+  scenario(creator, { sessionError: new Error('PRIVATE session cookie and token diagnostics') })
+  const before = clone(current.article)
+  errorCode(await updateArticleDraft('article-a', updateInput()), 'INTERNAL_ERROR')
+  assert.deepEqual(current.calls, [{ kind: 'session' }])
+  assert.deepEqual(current.article, before)
+  assert.deepEqual(current.logs, [['CMS_DRAFT_WRITE_FAILED']])
 })
 
 test('EDIT-03: untrusted ownership/lifecycle/schema/text/relation fields are rejected, never stripped into a write', async () => {

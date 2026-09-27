@@ -2,6 +2,8 @@
 
 import { Prisma } from '@prisma/client'
 import { revalidatePath } from 'next/cache'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { requirePermission } from '@/lib/authz'
 import { prisma } from '@/lib/prisma'
 import { articleCmsScope, canAccessCms, canCreateArticle, type CMSUser } from '@/features/cms/access'
@@ -96,11 +98,14 @@ export async function createArticleDraft(input: unknown): Promise<ArticleDraftAc
 }
 
 export async function updateArticleDraft(articleId: unknown, input: unknown): Promise<ArticleDraftActionResult> {
-  const { user } = await requirePermission('cms:access')
-  if (!canAccessCms(user)) return failed(new ArticleDraftError('FORBIDDEN'))
-
   let saved: SavedArticleDraft
   try {
+    // Autosave must retain the open draft when the session expires. Reuse the
+    // existing session and policy without the route/create redirect guard.
+    const session = await getServerSession(authOptions)
+    const user = session?.user
+    if (!canAccessCms(user)) return failed(new ArticleDraftError('FORBIDDEN'))
+
     const id = parseArticleId(articleId)
     const { data, expectedUpdatedAt } = normalizeUpdateDraftInput(input)
     saved = await prisma.$transaction(async (tx) => {
