@@ -9,7 +9,7 @@ Checkpoint mới nhất: CMS-001..004 COMPLETE; **CMS-005 DEPLOYED, authenticate
 
 **CMS-006 đã DEPLOYED; review/CI/staging/cleanup/public smoke/monitoring PASS; authenticated production smoke/autosave PENDING, chưa COMPLETE.** PR #21 merged, main `6c74acbc25a8b7f76d48f376b075d9c2d2225831`, deploy run 36286530195 SUCCESS. Staging cuối 36/36 PASS, runId `843639a9bf993d961757c40a`, BUILD_ID `OFJWgyIEWte6fprp_D77b`, cleanup 0/0/0/0. Xem [release checkpoint CMS-006](reports/CMS-006-release-checkpoint.md) để phân biệt nguồn bằng chứng và nghiệm thu còn lại.
 
-**Bước hiện tại: CMS-007 — Sources/citations, READY FOR CODEX IMPLEMENTATION theo chỉ thị PO ngày 2026-09-27.** Branch `feature/cms-007-sources-citations`, base main sau CMS-006 `6c74acbc25a8b7f76d48f376b075d9c2d2225831`. Đặc tả dùng SourceReference hiện có, trang nguồn riêng/lưu thủ công, Article token chung chống conflict với autosave; không migration/dependency mới. Source/tests/CI/staging CMS-007 chưa triển khai/chưa chạy. Xem [spec](tasks/CMS-007.md) và [implementation handoff](tasks/CMS-007-IMPLEMENTATION.md). Tiếp tục CMS-007 không đóng nghiệm thu pending/deferred của task trước.
+**Bước hiện tại: CMS-007 — Sources/citations, LOCAL IMPLEMENTATION / VALIDATION PASS, chờ Claude independent review.** Branch `feature/cms-007-sources-citations`, HEAD tài liệu `36cca5f7a70371326d3008087950a11fc1c1845f`, base CMS-006 `6c74acbc25a8b7f76d48f376b075d9c2d2225831`. Đã triển khai trang nguồn riêng/lưu thủ công, shared Article token, manifest v2 và source cleanup guards; không schema/migration/dependency mới. Local Node22.23.2: 612/612 unit/action tests, Prisma validate/generate, lint, TypeScript, isolated build và discovery55 (36 baseline +19 SRC) PASS. Implementation UNSTAGED; Claude review/CI/staging/browser NOT RUN, chưa COMPLETE. Xem [implementation report](reports/CMS-007-implementation.md), [spec](tasks/CMS-007.md) và [handoff](tasks/CMS-007-IMPLEMENTATION.md). Tiếp tục CMS-007 không đóng nghiệm thu pending/deferred của task trước.
 
 ## Quy trình delivery
 
@@ -27,7 +27,7 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 | CMS-004 | Creator dashboard | COMPLETE; PR #19, deploy/production smoke/staging cleanup PASS |
 | CMS-005 | Draft editor + TipTap | DEPLOYED; review/CI/staging/cleanup/public smoke/monitoring PASS; authenticated production smoke DEFERRED by PO; chưa COMPLETE |
 | CMS-006 | Autosave | DEPLOYED; review/CI 493 tests/staging 36 cases/cleanup/public smoke/monitoring PASS; authenticated production smoke/autosave PENDING; chưa COMPLETE |
-| CMS-007 | Sources/citations | READY FOR CODEX IMPLEMENTATION; spec/handoff 30 AC + 24 SRC scenarios; chưa implementation/CI/staging |
+| CMS-007 | Sources/citations | LOCAL IMPLEMENTATION / VALIDATION PASS; 612 tests, discovery55; diff UNSTAGED chờ Claude review; CI/staging NOT RUN, chưa COMPLETE |
 | CMS-008 | Category/Topic/Tags/Instruments | Planned |
 | CMS-009 | Media library | Planned |
 | CMS-010 | Preview | Planned |
@@ -50,7 +50,7 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 - Deploy run 36286530195/job 108528239508 SUCCESS đúng push/main/merge SHA, gồm Deploy to cPanel via SSH. Không migration/dispatch trùng.
 - Anonymous smoke PASS; monitoring 08:49:35–08:54:38 ngày 27/09/2026 UTC+7, 12/12 mẫu PASS trong phạm vi homepage/login, 18 blocked RUM requests + console errors của toàn smoke/monitoring được đối chiếu theo report. Không runtime logs, không authenticated functional evidence.
 - GitHub PR/deploy metadata được người chuẩn bị tài liệu đối chiếu trực tiếp; local tests/Claude staging và production browser results là bằng chứng PO cung cấp hoặc đã ghi trong PR, không nhận là tự chạy lại.
-- CMS-007 dùng schema hiện có; nguồn là danh mục tham chiếu của từng bài, chưa có inline citation mark/public rendering/URL metadata fetch. Source mutations phải atomic với Article.updatedAt để không ghi đè autosave. Harness sẽ mở rộng exact SourceReference ownership và cleanup thành 5 counters, giữ toàn bộ 36 EDIT/AUTO baseline.
+- CMS-007 local đã dùng schema hiện có; nguồn là danh mục tham chiếu của từng bài, không inline citation mark/public rendering/URL metadata fetch. Source mutations atomic với Article.updatedAt qua Serializable/CAS; local action/controller/harness tests PASS. Harness đã mở rộng exact SourceReference ownership cả hai đầu và cleanup thành 5 counters; chưa chạy fixture/cleanup thực tế. Giữ toàn bộ 36 EDIT/AUTO baseline, thêm19 SRC cases mới discovery. Report map đủ30 AC/24 SRC và tách LOCAL PASS/BROWSER NOT RUN.
 - Thực hiện local implementation → Claude review → commit/PR/CI → staging đủ baseline + SRC mới → release như workflow hiện có. Không chạy lại gate của CMS-006 chỉ để cập nhật tài liệu, không mở lại cleanup cũ.
 
 ## CMS-005 → CMS-006: quyết định và bằng chứng lịch sử

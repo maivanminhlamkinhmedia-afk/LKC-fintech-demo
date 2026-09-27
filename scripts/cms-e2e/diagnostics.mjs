@@ -6,6 +6,7 @@ const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
 const draftFile = 'tests/e2e/cms-draft.spec.ts'
 const safetyFile = 'tests/e2e/cms-editor-safety.spec.ts'
 const autosaveFile = 'tests/e2e/cms-autosave.spec.ts'
+const sourcesFile = 'tests/e2e/cms-sources.spec.ts'
 const formatSteps = [
   'FMT_LOGIN', 'FMT_INPUT', 'FMT_BOLD', 'FMT_LIST', 'FMT_CODE_BLOCK',
   'FMT_NO_WRITE', 'FMT_SAVE_NAVIGATE', 'FMT_DB', 'FMT_RELOAD',
@@ -61,6 +62,25 @@ const definitions = [
   ['AUTO-19', 'AUTO-19 composition blocks intermediate title and editor snapshots beyond debounce', autosaveFile, ['AUTO_COMPOSITION']],
   ['AUTO-21', 'AUTO-21 navigation cancel preserves debounce and accepting during save prevents followup', autosaveFile, ['AUTO_NAVIGATION']],
   ['AUTO-23', 'AUTO-23 persisted future millisecond tokens advance across consecutive autosaves', autosaveFile, ['AUTO_TOKEN_PRECISION']],
+  ['SRC-01', 'SRC-01 sources route denies anonymous non-CMS and foreign readers', sourcesFile, ['SRC_ACCESS']],
+  ['SRC-02/09', 'SRC-02/09 full source metadata retains fixed Vietnam time and millisecond precision', sourcesFile, ['SRC_METADATA_INPUT', 'SRC_METADATA_SUBMIT', 'SRC_METADATA_DB', 'SRC_METADATA_RELOAD']],
+  ['SRC-02', 'SRC-02 changes requested saves blank optional fields as null', sourcesFile, ['SRC_NULL_FIELDS']],
+  ['SRC-03-ADMIN', 'SRC-03 admin source author does not replace article ownership', sourcesFile, ['SRC_ADMIN_SCOPE']],
+  ['SRC-03-SUPER', 'SRC-03 super source author does not replace article ownership', sourcesFile, ['SRC_ADMIN_SCOPE']],
+  ['SRC-04', 'SRC-04 excluded statuses and unsupported documents expose read-only sources', sourcesFile, ['SRC_READ_ONLY']],
+  ['SRC-07/08', 'SRC-07/08 safe source links and legacy unsafe text never execute or fetch', sourcesFile, ['SRC_URL_INPUT', 'SRC_UNSAFE_RENDER']],
+  ['SRC-10/11', 'SRC-10/11 manual source panel has no idle writes and one pending mutation', sourcesFile, ['SRC_MANUAL_IDLE', 'SRC_SINGLE_FLIGHT']],
+  ['SRC-12', 'SRC-12 two source tabs have one winner and preserve the losing form', sourcesFile, ['SRC_TWO_TABS_SUBMIT', 'SRC_TWO_TABS_DB']],
+  ['SRC-13-SOURCE', 'SRC-13 source commit conflicts with the other stale surface', sourcesFile, ['SRC_CROSS_SURFACE_SUBMIT', 'SRC_CROSS_SURFACE_DB']],
+  ['SRC-13-AUTOSAVE', 'SRC-13 autosave commit conflicts with the other stale surface', sourcesFile, ['SRC_CROSS_SURFACE_SUBMIT', 'SRC_CROSS_SURFACE_DB']],
+  ['SRC-14-ACTOR', 'SRC-14 suspended demoted and expired sessions retain source input without writes', sourcesFile, ['SRC_ACTOR_REVOKED']],
+  ['SRC-14-PARENT', 'SRC-14 changed article owner or status blocks an already open source form', sourcesFile, ['SRC_PARENT_REVOKED']],
+  ['SRC-15', 'SRC-15 delete confirmation removes only the selected source', sourcesFile, ['SRC_DELETE_CANCEL', 'SRC_DELETE_DB']],
+  ['SRC-17', 'SRC-17 source create update delete retain monotonic persisted DATETIME tokens', sourcesFile, ['SRC_TOKEN_PRECISION']],
+  ['SRC-18', 'SRC-18 offline and lost real ACK preserve input and never duplicate create', sourcesFile, ['SRC_OFFLINE', 'SRC_UNKNOWN_ACK']],
+  ['SRC-20', 'SRC-20 dirty navigation cancellation retains source form and accepted leave has no followup', sourcesFile, ['SRC_NAVIGATION_CANCEL', 'SRC_NAVIGATION_LEAVE']],
+  ['SRC-21', 'SRC-21 editor source links retain the autosave navigation guard', sourcesFile, ['SRC_EDITOR_LINKS']],
+  ['SRC-23', 'SRC-23 source form labels keyboard errors and long URLs fit all viewports', sourcesFile, ['SRC_ACCESSIBLE_LAYOUT']],
 ].map(([caseId, title, file = draftFile, steps = []]) => Object.freeze({ caseId, title, file, steps: Object.freeze(steps) }))
 const byTitle = new Map(definitions.map(definition => [definition.title, definition]))
 const byId = new Map(definitions.map(definition => [definition.caseId, definition]))
@@ -72,7 +92,7 @@ export const MAX_DIAGNOSTIC_LINE_LENGTH = 4096
 function sourceFile(file) {
   if (typeof file !== 'string' || file.length > 4096) return null
   const candidate = (isAbsolute(file) ? relative(repositoryRoot, file) : file).replaceAll('\\', '/')
-  return [draftFile, safetyFile, autosaveFile].includes(candidate) ? candidate : null
+  return [draftFile, safetyFile, autosaveFile, sourcesFile].includes(candidate) ? candidate : null
 }
 
 export function diagnosticCase(test) {

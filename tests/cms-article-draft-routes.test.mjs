@@ -248,6 +248,9 @@ test('EDIT-21: creator/admin list edit links obey ownership and task-specific st
     scenario(role, { rows, total: rows.length })
     const html = await renderList()
     const links = hrefs(html)
+    // SRC-21: every article already returned within read scope has sources,
+    // including readonly statuses; existing edit-link restrictions stay intact.
+    for (const row of rows) assert.ok(links.includes(`/creator/articles/${row.id}/sources`))
     for (const status of ['DRAFT', 'CHANGES_REQUESTED']) assert.ok(links.includes(`/creator/articles/article-${status}/edit`))
     for (const status of ['PUBLISHED', 'CORRECTED', 'SUBMITTED', 'ARCHIVED']) {
       assert.equal(links.includes(`/creator/articles/article-${status}/edit`), false)

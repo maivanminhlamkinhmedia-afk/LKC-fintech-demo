@@ -35,9 +35,12 @@ export default async function ArticleListPage({ searchParams }: {
                     <p className="text-sm text-slate-500">{article.slug}</p>
                     <p className="text-xs text-slate-500"><time dateTime={article.updatedAt.toISOString()}>{article.updatedAt.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}</time> · {article.status}</p>
                   </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                  <Link href={`/creator/articles/${encodeURIComponent(article.id)}/sources`} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Nguồn tham khảo</Link>
                   {canEditArticleDraft(user, article) && (
                     <Link href={`/creator/articles/${encodeURIComponent(article.id)}/edit`} className="shrink-0 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Chỉnh sửa</Link>
                   )}
+                  </div>
                 </li>
               ))}
             </ul>
