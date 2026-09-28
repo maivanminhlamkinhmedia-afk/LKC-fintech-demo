@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
 import { formatDiagnosticRecord, createDiagnosticOutputFilter } from '../scripts/cms-e2e/diagnostics.mjs'
 import SafeReporter from './e2e/safe-reporter.mjs'
 
@@ -471,5 +472,85 @@ test('autosave diagnostics reject title suffixes, support-file locations, cross-
   assert.equal(records().length, 32)
   assert.ok(records().every(row => row.kind === 'CASE' && row.record.caseId === 'UNKNOWN_CASE'
     && row.record.status === 'failed' && row.record.testLocation === null))
+  assert.equal(lines.join('').includes(PRIVATE), false)
+})
+
+const SOURCE_FILE = 'tests/e2e/cms-sources.spec.ts'
+const SOURCE_CASES = [
+  ['SRC-01', 'SRC-01 sources route denies anonymous non-CMS and foreign readers', ['SRC_ACCESS']],
+  ['SRC-02/09', 'SRC-02/09 full source metadata retains fixed Vietnam time and millisecond precision', ['SRC_METADATA_INPUT', 'SRC_METADATA_SUBMIT', 'SRC_METADATA_DB', 'SRC_METADATA_RELOAD']],
+  ['SRC-02', 'SRC-02 changes requested saves blank optional fields as null', ['SRC_NULL_FIELDS']],
+  ['SRC-03-ADMIN', 'SRC-03 admin source author does not replace article ownership', ['SRC_ADMIN_SCOPE']],
+  ['SRC-03-SUPER', 'SRC-03 super source author does not replace article ownership', ['SRC_ADMIN_SCOPE']],
+  ['SRC-04', 'SRC-04 excluded statuses and unsupported documents expose read-only sources', ['SRC_READ_ONLY']],
+  ['SRC-07/08', 'SRC-07/08 safe source links and legacy unsafe text never execute or fetch', ['SRC_URL_INPUT', 'SRC_UNSAFE_RENDER']],
+  ['SRC-10/11', 'SRC-10/11 manual source panel has no idle writes and one pending mutation', ['SRC_MANUAL_IDLE', 'SRC_SINGLE_FLIGHT']],
+  ['SRC-12', 'SRC-12 two source tabs have one winner and preserve the losing form', ['SRC_TWO_TABS_SUBMIT', 'SRC_TWO_TABS_DB']],
+  ['SRC-13-SOURCE', 'SRC-13 source commit conflicts with the other stale surface', ['SRC_CROSS_SURFACE_SUBMIT', 'SRC_CROSS_SURFACE_DB']],
+  ['SRC-13-AUTOSAVE', 'SRC-13 autosave commit conflicts with the other stale surface', ['SRC_CROSS_SURFACE_SUBMIT', 'SRC_CROSS_SURFACE_DB']],
+  ['SRC-14-ACTOR', 'SRC-14 suspended demoted and expired sessions retain source input without writes', ['SRC_ACTOR_REVOKED']],
+  ['SRC-14-PARENT', 'SRC-14 changed article owner or status blocks an already open source form', ['SRC_PARENT_REVOKED']],
+  ['SRC-15', 'SRC-15 delete confirmation removes only the selected source', ['SRC_DELETE_CANCEL', 'SRC_DELETE_DB']],
+  ['SRC-17', 'SRC-17 source create update delete retain monotonic persisted DATETIME tokens', ['SRC_TOKEN_PRECISION']],
+  ['SRC-18', 'SRC-18 offline and lost real ACK preserve input and never duplicate create', ['SRC_OFFLINE', 'SRC_UNKNOWN_ACK']],
+  ['SRC-20', 'SRC-20 dirty navigation cancellation retains source form and accepted leave has no followup', ['SRC_NAVIGATION_CANCEL', 'SRC_NAVIGATION_LEAVE']],
+  ['SRC-21', 'SRC-21 editor source links retain the autosave navigation guard', ['SRC_EDITOR_LINKS']],
+  ['SRC-23', 'SRC-23 source form labels keyboard errors and long URLs fit all viewports', ['SRC_ACCESSIBLE_LAYOUT']],
+]
+
+test('source registry matches every actual test declaration and controlled step without a raw fallback', async () => {
+  const source = await readFile(new URL('./e2e/cms-sources.spec.ts', import.meta.url), 'utf8')
+  const titles = [...source.matchAll(/test\('([^']+)'/g)].map(match => match[1])
+  for (const actor of ['admin', 'super']) titles.push(`SRC-03 ${actor} source author does not replace article ownership`)
+  for (const first of ['source', 'autosave']) titles.push(`SRC-13 ${first} commit conflicts with the other stale surface`)
+  assert.deepEqual(titles.sort(), SOURCE_CASES.map(row => row[1]).sort())
+  assert.equal(titles.length, 19)
+  const steps = [...new Set([...source.matchAll(/test\.step\('([^']+)'/g)].map(match => match[1]))].sort()
+  assert.deepEqual(steps, [...new Set(SOURCE_CASES.flatMap(row => row[2]))].sort())
+  assert.equal(steps.length, 27)
+})
+
+test('all source steps pass the reporter and runner filter with exact failed assertion locations', () => {
+  const lines = []
+  const filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  for (const [caseId, title, steps] of SOURCE_CASES) {
+    const known = freeze(testCase(title, SOURCE_FILE))
+    for (const stepCode of steps) {
+      const parent = freeze({ category: 'test.step', title: stepCode, location: location(SOURCE_FILE, 50, 3) })
+      reporter.onStepEnd(known, {}, parent)
+      reporter.onStepEnd(known, {}, { category: 'expect', parent, title: PRIVATE,
+        error: { message: PRIVATE, location: location(SOURCE_FILE, 55, 5) } })
+      const latest = lines.slice(-2).map(parse)
+      assert.deepEqual(latest.map(row => [row.record.caseId, row.record.stepCode, row.record.status]), [
+        [caseId, stepCode, 'passed'], [caseId, stepCode, 'failed'],
+      ])
+      assert.deepEqual(latest[1].record.assertionLocation, location(SOURCE_FILE, 55, 5))
+    }
+    reporter.onTestEnd(known, { status: 'failed', error: { message: PRIVATE } })
+    assert.equal(parse(lines.at(-1)).record.caseId, caseId)
+    assert.equal(parse(lines.at(-1)).record.status, 'failed')
+  }
+  filter.end()
+  assert.equal(lines.join('').includes(PRIVATE), false)
+})
+
+test('source diagnostics reject title suffixes cross-case steps helper locations and payload fields', () => {
+  const { reporter, lines, records } = capture()
+  for (const [caseId, title, steps] of SOURCE_CASES) {
+    const valid = { caseId, stepCode: steps[0], status: 'failed', testLocation: location(SOURCE_FILE),
+      stepLocation: null, assertionLocation: null, assertionSource: null }
+    for (const invalid of [
+      { ...valid, stepCode: 'AUTO_NAVIGATION' }, { ...valid, stepCode: 'SRC_UNKNOWN' },
+      { ...valid, stepCode: `${steps[0]}_${PRIVATE}` }, { ...valid, testLocation: location(AUTO_FILE) },
+      { ...valid, stepLocation: location('tests/e2e/cms-sources-support.ts') }, { ...valid, sourceTitle: PRIVATE },
+    ]) assert.equal(formatDiagnosticRecord('DIAGNOSTIC', invalid), null)
+    reporter.onTestEnd(testCase(`${title} ${PRIVATE}`, SOURCE_FILE), { status: 'failed' })
+    reporter.onTestEnd(testCase(title, FORMAT_FILE), { status: 'failed' })
+    reporter.onStepEnd(testCase(title, SOURCE_FILE), {}, { category: 'test.step',
+      title: steps.includes('SRC_ACCESS') ? 'SRC_DELETE_DB' : 'SRC_ACCESS', error: { message: PRIVATE } })
+  }
+  assert.equal(records().length, 38)
+  assert.ok(records().every(row => row.kind === 'CASE' && row.record.caseId === 'UNKNOWN_CASE' && row.record.status === 'failed'))
   assert.equal(lines.join('').includes(PRIVATE), false)
 })

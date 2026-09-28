@@ -268,6 +268,8 @@ function DraftFormInstance({ initial }: { initial?: DraftEditorData }) {
       <div className="flex flex-wrap items-center gap-3">
         <button type="submit" disabled={locked || !ready || cannotUpdate} className="rounded-xl bg-[#167563] px-5 py-3 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-not-allowed disabled:opacity-50">Lưu nháp</button>
         <Link href="/creator/articles" className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium">Danh sách bài viết</Link>
+        {initial ? <Link href={`/creator/articles/${encodeURIComponent(initial.id)}/sources`} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium">Nguồn tham khảo</Link>
+          : <p className="text-sm text-slate-600">Lưu nháp trước khi thêm nguồn</p>}
         {currentError?.code === 'EDIT_CONFLICT' && <button type="button" disabled={pending} className="rounded-xl border border-amber-500 px-5 py-3 text-sm" onClick={() => {
           if (window.confirm('Tải lại sẽ bỏ nội dung chưa lưu trong tab này. Bạn có muốn tiếp tục?')) {
             dirtyRef.current = false

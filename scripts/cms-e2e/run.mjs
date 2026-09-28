@@ -4,7 +4,7 @@ import { mkdir, open, readFile, writeFile, unlink, copyFile, symlink } from 'nod
 import { resolve, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { assertPortAvailable, connectStaging, demand, DUMMY_DATABASE_URL, HarnessError, safeFailure, validateStagingEnvironment, withCleanup } from './guard.mjs'
-import { createFixturePlan, createFixtures, manifestPath, saveManifest, loadManifest, discoverCreatedArticles, cleanupFixtures } from './fixtures.mjs'
+import { createFixturePlan, createFixtures, manifestPath, saveManifest, loadManifest, discoverCreatedArticles, discoverCreatedSources, cleanupFixtures } from './fixtures.mjs'
 import { createDiagnosticOutputFilter } from './diagnostics.mjs'
 
 function launch(args, env, cwd) {
@@ -132,7 +132,8 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
       // ownership of existing rows. Preserve the manifest for operator review.
       demand(fixturesCommitted, 'FIXTURE_SETUP_UNCONFIRMED_NO_AUTOMATIC_DELETE')
       const latest = await loadManifest(path)
-      await discoverCreatedArticles(db, runtimeEnv, latest, updated => saveManifest(path, updated))
+      const recover = latest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
+      await recover(db, runtimeEnv, latest, updated => saveManifest(path, updated))
       const counts = await cleanupFixtures(db, runtimeEnv, latest, { apply: true })
       process.stdout.write(`CMS_E2E CLEANUP ${JSON.stringify(counts)}\n`)
     })

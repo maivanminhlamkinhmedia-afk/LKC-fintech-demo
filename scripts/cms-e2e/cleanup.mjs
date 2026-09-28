@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { assertPortAvailable, connectStaging, demand, safeFailure, validateStagingEnvironment } from './guard.mjs'
-import { loadManifest, saveManifest, discoverCreatedArticles, cleanupFixtures } from './fixtures.mjs'
+import { loadManifest, saveManifest, discoverCreatedArticles, discoverCreatedSources, cleanupFixtures } from './fixtures.mjs'
 
 export async function cleanupRun(argv, env) {
   demand(argv.length >= 2 && argv[0] === '--manifest' && typeof argv[1] === 'string'
@@ -13,7 +13,10 @@ export async function cleanupRun(argv, env) {
   const db = await connectStaging(env)
   try {
     // Only --apply updates a recovery manifest; default check remains read-only.
-    if (argv.includes('--apply')) await discoverCreatedArticles(db, env, manifest, updated => saveManifest(path, updated))
+    if (argv.includes('--apply')) {
+      const recover = manifest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
+      await recover(db, env, manifest, updated => saveManifest(path, updated))
+    }
     const counts = await cleanupFixtures(db, env, manifest, { apply: argv.includes('--apply') })
     process.stdout.write(`CMS_E2E ${argv.includes('--apply') ? 'CLEANUP_VERIFIED' : 'CHECK_ONLY'} ${JSON.stringify(counts)}\n`)
   } finally { await db.$disconnect() }

@@ -23,11 +23,11 @@ export function createFixturePlan(runId = randomBytes(12).toString('hex')) {
     articles.push({ key: `${key}-draft`, id: `${namespace}-${key}-draft`, slug: `${namespace}-${key}-draft`,
       authorId: user.id, allowedOwnerIds: [user.id], status: 'DRAFT' })
   }
-  return { version: 1, runId, namespace, createdAt: new Date().toISOString(), users, articles, profiles: [] }
+  return { version: 2, runId, namespace, createdAt: new Date().toISOString(), users, articles, profiles: [], sources: [] }
 }
 
 export function validateManifest(manifest) {
-  demand(manifest?.version === 1 && /^[a-f0-9]{24}$/.test(manifest.runId), 'MANIFEST_INVALID')
+  demand([1, 2].includes(manifest?.version) && /^[a-f0-9]{24}$/.test(manifest.runId), 'MANIFEST_INVALID')
   const expected = createFixturePlan(manifest.runId)
   demand(manifest.namespace === expected.namespace && Array.isArray(manifest.users)
     && manifest.users.length === 6 && Array.isArray(manifest.articles)
@@ -44,6 +44,18 @@ export function validateManifest(manifest) {
       && article.allowedOwnerIds.every(id => ids.includes(id)), 'MANIFEST_ARTICLE_MISMATCH')
   }
   demand(new Set(manifest.articles.map(article => article.id)).size === manifest.articles.length, 'MANIFEST_DUPLICATE_IDS')
+  // A legacy journal never grants permission to delete sources, even if someone
+  // adds a sources property to it. No implicit manifest upgrade takes place.
+  if (manifest.version === 1) demand(manifest.sources === undefined, 'MANIFEST_V1_HAS_SOURCES')
+  else {
+    demand(Array.isArray(manifest.sources), 'MANIFEST_SOURCES_INVALID')
+    for (const source of manifest.sources) demand(source && Object.keys(source).length === 3
+      && Object.keys(source).every(key => ['id', 'articleId', 'createdById'].includes(key))
+      && typeof source.id === 'string' && source.id.length > 0 && source.id.length <= 191
+      && manifest.articles.some(article => article.id === source.articleId)
+      && ids.includes(source.createdById), 'MANIFEST_SOURCE_MISMATCH')
+    demand(new Set(manifest.sources.map(source => source.id)).size === manifest.sources.length, 'MANIFEST_DUPLICATE_SOURCE_IDS')
+  }
   return manifest
 }
 
@@ -76,6 +88,9 @@ export async function loadManifest(path) {
 export async function createFixtures(db, env, manifest, hashPassword) {
   validateStagingEnvironment(env)
   validateManifest(manifest)
+  // New runs start empty; source scenarios create through the real UI and then
+  // journal identities. A populated journal is recovery state, not a seed plan.
+  demand(!manifest.sources?.length, 'FIXTURE_SOURCE_CREATE_REQUIRES_EMPTY_PLAN')
   const credentials = Object.fromEntries(manifest.users.map(user => [user.key, { email: user.email, password: randomBytes(24).toString('base64url') }]))
   const users = await Promise.all(manifest.users.map(async user => ({
     id: user.id, email: user.email, name: `${manifest.namespace} ${user.key}`, role: user.role,
@@ -103,14 +118,21 @@ const articleWhere = manifest => ({ OR: [
 const auditWhere = manifest => ({ OR: [
   { actorId: { in: userIds(manifest) } }, { entityType: 'User', entityId: { in: userIds(manifest) } },
 ] })
+const sourceWhere = manifest => ({ OR: [
+  { articleId: { in: manifest.articles.map(article => article.id) } },
+  { createdById: { in: userIds(manifest) } },
+  // Known IDs also detect identity drift that moved BOTH endpoints outside.
+  { id: { in: (manifest.sources ?? []).map(source => source.id) } },
+] })
 export async function remainingCounts(db, manifest) {
-  const [articles, profiles, users, logs] = await Promise.all([
+  const [articles, profiles, users, logs, sources] = await Promise.all([
     db.article.count({ where: articleWhere(manifest) }),
     db.authorProfile.count({ where: { userId: { in: userIds(manifest) } } }),
     db.user.count({ where: { id: { in: userIds(manifest) } } }),
     db.auditLog.count({ where: auditWhere(manifest) }),
+    db.sourceReference.count({ where: sourceWhere(manifest) }),
   ])
-  return { articles, profiles, users, logs }
+  return { articles, profiles, users, logs, sources }
 }
 
 // After a lost browser response/runner interruption, discover only articles owned
@@ -131,33 +153,73 @@ export async function discoverCreatedArticles(db, env, manifest, persist) {
   return manifest
 }
 
-export async function fixturePreflight(db, manifest) {
+async function readFixtureSnapshot(db, manifest, recoverSources = false) {
   validateManifest(manifest)
   await assertDatabaseIdentity(db)
-  const [articles, profiles, users, logs] = await Promise.all([
+  const [articles, profiles, users, logs, sources] = await Promise.all([
     db.article.findMany({ where: articleWhere(manifest), select: { id: true, slug: true, authorId: true, editorId: true, categoryId: true, coverMediaId: true, _count: true } }),
     db.authorProfile.findMany({ where: { userId: { in: userIds(manifest) } }, select: { id: true, userId: true } }),
     db.user.findMany({ where: { id: { in: userIds(manifest) } }, select: { id: true, email: true, role: true, status: true, customerProfile: { select: { id: true } }, _count: true } }),
     db.auditLog.findMany({ where: auditWhere(manifest), select: { id: true, actorId: true, action: true, entityType: true, entityId: true } }),
+    db.sourceReference.findMany({ where: sourceWhere(manifest), select: { id: true, articleId: true, createdById: true } }),
   ])
   demand(profiles.length === 0, 'UNEXPECTED_AUTHOR_PROFILE')
+  demand(manifest.version === 2 || sources.length === 0, 'MANIFEST_V1_SOURCE_NOT_AUTHORIZED')
+  demand(new Set(sources.map(source => source.id)).size === sources.length, 'DUPLICATE_SOURCE_IDENTITY')
+  for (const source of sources) {
+    demand(typeof source.id === 'string' && source.id.length > 0 && source.id.length <= 191
+      && articles.some(article => article.id === source.articleId)
+      && users.some(user => user.id === source.createdById), 'SOURCE_ENDPOINT_OUTSIDE_FIXTURE')
+    const known = manifest.sources?.find(fixture => fixture.id === source.id)
+    demand(known || recoverSources, 'SOURCE_NOT_IN_MANIFEST')
+    if (known) demand(known.articleId === source.articleId && known.createdById === source.createdById, 'SOURCE_IDENTITY_MISMATCH')
+  }
   for (const article of articles) {
     const known = manifest.articles.find(fixture => fixture.id === article.id)
     demand(known && known.allowedOwnerIds.includes(article.authorId) && article.slug.startsWith(`${manifest.namespace}-`), 'ARTICLE_FIXTURE_MISMATCH')
+    const sourceCount = sources.filter(source => source.articleId === article.id).length
     demand(!article.editorId && !article.categoryId && !article.coverMediaId
-      && article._count && Object.values(article._count).every(count => count === 0), 'ARTICLE_HAS_UNEXPECTED_RELATIONS')
+      && article._count && (article._count.sources ?? 0) === sourceCount
+      && Object.entries(article._count).every(([relation, count]) => relation === 'sources' || count === 0), 'ARTICLE_HAS_UNEXPECTED_RELATIONS')
   }
   for (const user of users) {
     const expected = manifest.users.find(fixture => fixture.id === user.id)
     demand(expected && user.email === expected.email
       && (user.role === expected.role || (expected.role === 'CREATOR' && user.role === 'CLIENT'))
       && ['ACTIVE', 'SUSPENDED'].includes(user.status), 'USER_FIXTURE_MISMATCH')
-    demand(!user.customerProfile && user._count && Object.entries(user._count)
-      .every(([relation, count]) => ['articlesAuthored', 'auditLogs'].includes(relation) || count === 0), 'USER_HAS_UNEXPECTED_RELATIONS')
+    const sourceCount = sources.filter(source => source.createdById === user.id).length
+    demand(!user.customerProfile && user._count && (user._count.sourceReferencesCreated ?? 0) === sourceCount
+      && Object.entries(user._count).every(([relation, count]) =>
+        ['articlesAuthored', 'auditLogs', 'sourceReferencesCreated'].includes(relation) || count === 0), 'USER_HAS_UNEXPECTED_RELATIONS')
   }
   for (const log of logs) demand(userIds(manifest).includes(log.actorId) && log.action === 'AUTH_LOGIN'
     && log.entityType === 'User' && log.entityId === log.actorId, 'UNEXPECTED_FIXTURE_AUDIT')
-  return { articles, profiles, users, logs }
+  return { articles, profiles, users, logs, sources }
+}
+
+export async function fixturePreflight(db, manifest) {
+  return readFixtureSnapshot(db, manifest)
+}
+
+// Both candidate directions are required: a fixture creator on a foreign parent
+// must stop cleanup just like a foreign creator on a fixture parent. Validate ALL
+// candidates and existing identities before journaling any newly discovered ID.
+export async function discoverCreatedSources(db, env, manifest, persist) {
+  validateStagingEnvironment(env)
+  validateManifest(manifest)
+  if (manifest.version === 1) {
+    await fixturePreflight(db, manifest)
+    return manifest
+  }
+  await discoverCreatedArticles(db, env, manifest, persist)
+  const fixture = await db.$transaction(tx => readFixtureSnapshot(tx, manifest, true), transactionOptions)
+  const sources = [...manifest.sources]
+  for (const source of fixture.sources) if (!sources.some(known => known.id === source.id)) sources.push(source)
+  const updated = { ...manifest, sources }
+  validateManifest(updated)
+  await persist(updated)
+  manifest.sources = sources
+  return manifest
 }
 
 export async function cleanupFixtures(db, env, manifest, { apply = false } = {}) {
@@ -166,6 +228,9 @@ export async function cleanupFixtures(db, env, manifest, { apply = false } = {})
   await db.$transaction(async tx => {
     const fixture = await fixturePreflight(tx, manifest)
     if (!apply) return
+    for (const source of fixture.sources) demand((await tx.sourceReference.deleteMany({ where: {
+      id: source.id, articleId: source.articleId, createdById: source.createdById,
+    } })).count === 1, 'SOURCE_DELETE_COUNT_MISMATCH')
     if (fixture.logs.length) demand((await tx.auditLog.deleteMany({ where: {
       id: { in: fixture.logs.map(log => log.id) }, actorId: { in: userIds(manifest) }, action: 'AUTH_LOGIN', entityType: 'User', entityId: { in: userIds(manifest) },
     } })).count === fixture.logs.length, 'AUDIT_DELETE_COUNT_MISMATCH')
@@ -191,6 +256,16 @@ export async function fixtureArticle(db, manifest, id) {
   return row
 }
 
+export async function fixtureSource(db, manifest, id) {
+  validateManifest(manifest)
+  const known = manifest.sources?.find(source => source.id === id)
+  demand(manifest.version === 2 && known, 'SOURCE_NOT_IN_MANIFEST')
+  await fixturePreflight(db, manifest)
+  const row = await db.sourceReference.findFirst({ where: { id, articleId: known.articleId, createdById: known.createdById } })
+  demand(row && row.id === known.id && row.articleId === known.articleId && row.createdById === known.createdById, 'SOURCE_IDENTITY_MISMATCH')
+  return row
+}
+
 // Test-only staging operations for race/revocation checks, not application APIs.
 export async function alterFixture(db, env, manifest, kind, id, data, persist) {
   validateStagingEnvironment(env)
@@ -200,12 +275,18 @@ export async function alterFixture(db, env, manifest, kind, id, data, persist) {
     demand(user && Object.keys(data).every(key => ['role', 'status'].includes(key))
       && (data.role === undefined || data.role === user.role || (user.role === 'CREATOR' && data.role === 'CLIENT'))
       && (data.status === undefined || ['ACTIVE', 'SUSPENDED'].includes(data.status)), 'FIXTURE_MUTATION_REJECTED')
+  } else if (kind === 'source') {
+    demand(manifest.version === 2 && manifest.sources.some(source => source.id === id)
+      && Object.keys(data).length > 0 && Object.keys(data).every(key => ['title', 'publisher', 'url', 'note'].includes(key))
+      && Object.entries(data).every(([key, value]) => key === 'title' ? typeof value === 'string' && value.length <= 180
+        : value === null || typeof value === 'string' && value.length <= (key === 'publisher' ? 180 : 4000)), 'FIXTURE_MUTATION_REJECTED')
   } else {
     const article = manifest.articles.find(article => article.id === id)
-    demand(kind === 'article' && article && Object.keys(data).every(key => ['status', 'authorId', 'updatedAt'].includes(key))
+    demand(kind === 'article' && article && Object.keys(data).every(key => ['status', 'authorId', 'updatedAt', 'editorSchemaVersion'].includes(key))
       && (data.status === undefined || FIXTURE_STATUSES.includes(data.status))
       && (data.authorId === undefined || manifest.users.some(user => user.id === data.authorId && user.role === 'CREATOR'))
-      && (data.updatedAt === undefined || data.updatedAt instanceof Date && Number.isFinite(data.updatedAt.getTime())), 'FIXTURE_MUTATION_REJECTED')
+      && (data.updatedAt === undefined || data.updatedAt instanceof Date && Number.isFinite(data.updatedAt.getTime()))
+      && (data.editorSchemaVersion === undefined || [1, 2].includes(data.editorSchemaVersion)), 'FIXTURE_MUTATION_REJECTED')
   }
   return db.$transaction(async tx => {
     await assertDatabaseIdentity(tx)
@@ -218,6 +299,12 @@ export async function alterFixture(db, env, manifest, kind, id, data, persist) {
       demand((await tx.user.updateMany({ where: { AND: [
         { id, email: expected.email }, { role: current.role, status: current.status },
       ] }, data })).count === 1, 'FIXTURE_MUTATION_COUNT_MISMATCH')
+    } else if (kind === 'source') {
+      await fixturePreflight(tx, manifest)
+      const expected = manifest.sources.find(source => source.id === id)
+      demand((await tx.sourceReference.updateMany({ where: {
+        id, articleId: expected.articleId, createdById: expected.createdById,
+      }, data })).count === 1, 'FIXTURE_MUTATION_COUNT_MISMATCH')
     } else {
       const expected = manifest.articles.find(article => article.id === id)
       const current = await tx.article.findUnique({ where: { id }, select: {
@@ -226,8 +313,9 @@ export async function alterFixture(db, env, manifest, kind, id, data, persist) {
       } })
       demand(current && expected.allowedOwnerIds.includes(current.authorId)
         && current.slug.startsWith(`${manifest.namespace}-`), 'ARTICLE_FIXTURE_MISMATCH')
-      demand(!current.editorId && !current.categoryId && !current.coverMediaId
-        && current._count && Object.values(current._count).every(count => count === 0), 'ARTICLE_HAS_UNEXPECTED_RELATIONS')
+      // The same graph checks as cleanup permit only exact journaled sources;
+      // all other relations remain forbidden during status/owner race setup.
+      await fixturePreflight(tx, manifest)
       // Journal the exact intended fixture owner before commit, so recovery after
       // an interrupted response accepts only the previous or planned owner.
       if (data.authorId && !expected.allowedOwnerIds.includes(data.authorId)) expected.allowedOwnerIds.push(data.authorId)

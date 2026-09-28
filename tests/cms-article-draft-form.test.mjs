@@ -223,7 +223,7 @@ function mount(document, { edit = false, action = () => success, pristine = fals
     editorView().props.onChange(getRealJSON(document))
   }
   render()
-  const form = { state, render, input, editorView, change,
+  const form = { state, render, input, editorView, change, nodes: () => nodes(tree),
     document(value) { current = state; state.getJSON = () => value; editorView().props.onChange(value); render() },
     submit: () => { current = state; return find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }) },
     status: () => find(node => node.props?.role === 'status').props.children,
@@ -235,9 +235,9 @@ function mount(document, { edit = false, action = () => success, pristine = fals
     composition(start) { current = state; find(node => node.type === 'form').props[start ? 'onCompositionStartCapture' : 'onCompositionEndCapture']() },
     online(value) { current = state; navigator.onLine = value; window.emit(value ? 'online' : 'offline'); render() },
     unload() { let prevented = false; const event = { preventDefault() { prevented = true } }; window.emit('beforeunload', event); return prevented },
-    navigate(accept) {
+    navigate(accept, href = 'https://example.com/creator/articles') {
       current = state; state.confirm = accept
-      const target = new Element(); target.anchor = { href: 'https://example.com/creator/articles', target: '', hasAttribute: () => false }
+      const target = new Element(); target.anchor = { href, target: '', hasAttribute: () => false }
       let prevented = false
       globalThis.document.emit('click', { target, button: 0, preventDefault() { prevented = true }, stopPropagation() {}, stopImmediatePropagation() {} })
       render(); return prevented
@@ -633,4 +633,29 @@ test('canonical ACK updates only the submitted raw slug and cache warning never 
   assert.equal(form.unload(), false)
   await clock.tick(10000); await form.submit()
   assert.equal(form.state.calls.length, 1)
+})
+
+test('SRC-21: new draft only explains manual creation; persisted draft exposes a sources link', () => {
+  const fresh = mount(documentFor(paragraph('Bản chưa tạo')), { pristine: true })
+  assert.ok(fresh.nodes().some(node => node.props?.children === 'Lưu nháp trước khi thêm nguồn'))
+  assert.equal(fresh.nodes().some(node => node.props?.href?.endsWith('/sources')), false)
+  assert.equal(fresh.state.calls.length, 0)
+  const edit = editForm()
+  const link = edit.nodes().find(node => node.props?.children === 'Nguồn tham khảo')
+  assert.equal(link.props.href, `/creator/articles/${editInitial.id}/sources`)
+  assert.equal(edit.state.calls.length, 0)
+})
+
+test('SRC-21: sources link uses existing dirty guard; cancel preserves timer and accept suppresses follow-up', async () => {
+  const hold = deferred(), form = editForm({ action: () => hold.promise })
+  const link = form.nodes().find(node => node.props?.children === 'Nguồn tham khảo')
+  form.change('article-title', 'Nguồn chưa thể rời')
+  assert.equal(form.navigate(false, `https://example.com${link.props.href}`), true)
+  await clock.tick(1999); assert.equal(form.state.calls.length, 0)
+  await clock.tick(1); assert.equal(form.state.calls.length, 1)
+  form.change('article-title', 'Bản mới sau request')
+  assert.equal(form.navigate(true, `https://example.com${link.props.href}`), false)
+  hold.resolve(ack(form.state.calls[0].payload)); await flush(); await clock.tick(5000)
+  assert.equal(form.state.calls.length, 1)
+  assert.equal(form.input('article-title').props.value, 'Bản mới sau request')
 })

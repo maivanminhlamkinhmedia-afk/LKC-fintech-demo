@@ -1,4 +1,4 @@
-# CMS staging E2E — CMS-005 and CMS-006
+# CMS staging E2E — CMS-005, CMS-006 and CMS-007
 
 This is a **staging-only** harness. Local implementation/review runs unit mocks,
 lint/type checks and discovery only. No database, browser installation, tunnel or
@@ -7,12 +7,16 @@ do not run its cleanup script or recreate its accounts.
 
 ## Safe local checks
 
-```powershell
-$env:DATABASE_URL = 'mysql://build:build@127.0.0.1:3306/build'
-$env:DOTENV_CONFIG_PATH = 'NUL'
-node --test tests/cms-e2e-harness.test.mjs
-node --test tests/cms-e2e-diagnostics.test.mjs
-npx.cmd playwright test --list
+Use the already prepared Node **22.23.2** executable, with a child-process
+environment built from an allowlist of required OS/path variables. Supply only
+dummy `DATABASE_URL=mysql://build:build@127.0.0.1:3306/build`, dummy auth URL/secret,
+and `DOTENV_CONFIG_PATH=NUL`; do not copy the parent process environment wholesale
+or read `.env`. The local implementation report records the filtered wrapper and
+actual commands. In that filtered child process the checks are:
+
+```text
+node --test tests/cms-e2e-harness.test.mjs tests/cms-e2e-diagnostics.test.mjs
+node node_modules/@playwright/test/cli.js test --list
 ```
 
 The imports and discovery do not instantiate Prisma, read env files, start an
@@ -93,11 +97,12 @@ The wrapper performs the following ordered operations:
    environment only, not in a JSON credential file. Each actor gets an isolated
    browser context and authenticates through the existing login UI.
 9. Stop only the app child started by this runner, discover/record any UI-created
-   articles belonging to the six exact fixture users, and perform verified cleanup
+   articles and sources belonging to this exact fixture graph, and perform verified cleanup
    in `finally`, whether browser tests passed or failed.
 
-Run lock, manifests and build snapshots are ignored artifacts. Manifests contain
-run IDs, fixture user identities and exact article IDs/approved fixture owners;
+Run lock, manifests and build snapshots are ignored artifacts. Manifest v2 contains
+run IDs, fixture user identities, exact article IDs/approved fixture owners and
+source IDs with their exact article and creator IDs;
 they do not contain passwords, password hashes, cookies or auth state. Article
 IDs remain tracked when the test changes a slug. Browser-created slugs must retain
 the run namespace; unexpected ownership or namespace changes stop cleanup.
@@ -180,7 +185,7 @@ AUTO-08, 09, 17, 20 and 22 are explicitly local-only in the spec; controller,
 form/action/query/Flight tests supply their evidence. Browser tests do not claim
 to prove inaccessible getters, Strict Mode lifecycle, server query ordering or
 post-commit cache-failure behavior. Local harness mocks cover the AUTO-24 cleanup
-control flow; they cannot certify real cleanup. This task changes no fixture
+control flow; they cannot certify real cleanup. The CMS-006 task changed no fixture
 identity, mutation, provenance, cleanup, artifact-suppression or launch guard.
 
 CMS-005 assertion changes are limited to the autosave business delta:
@@ -202,21 +207,97 @@ reporter and runner filtering, reject cross-case/file/suffix/payload forgeries,
 and preserve failed verdicts. There are 17 diagnostics unit cases; no raw action
 body, DOM, cookie, clipboard, error message or response is emitted.
 
+## CMS-007 sources: current discovery and evidence map
+
+Local discovery now finds **55 cases = 20 EDIT + 16 AUTO + 19 SRC**. All 36
+baseline cases and their assertions are retained. The FMT_CODE_BLOCK real-focus
+wait/raw textContent check, AUTO-21 native cancelled-reload trigger and native
+clipboard flows are unchanged. Discovery is **LOCAL PASS**, while all CMS-007
+browser/MariaDB execution and five-counter cleanup evidence are **NOT RUN** until
+a separately authorized staging run on the exact reviewed, CI-passing commit.
+CMS-005 authenticated smoke remains **DEFERRED**; CMS-006 authenticated production
+smoke/autosave remains **PENDING**.
+
+Source cases create their own articles through the real manual create UI, record
+their IDs, and create sources through the actual manual source actions. They do
+not attach sources to shared EDIT/AUTO baseline articles. Sources are registered
+after ACK, and `afterEach` plus runner-finally recover sources after a lost ACK.
+No browser case mocks auth, writes, validation or successful server responses.
+
+`cms-sources-support.ts` counts only POSTs carrying `next-action` on the exact
+`/creator/articles/:id/sources` path. It excludes login, article autosave and GET
+traffic. Its response barrier forwards the real request with `route.fetch()`;
+only delivery of the returned response may be held/dropped. No synthetic success
+is returned. This helper adds no retries/timeouts/sleeps and logs no headers or
+payloads. Clock control reuses the existing browser-clock helper, with hydration
+completed before pausing; no product test flags disable autosave.
+
+| SRC scenario | Browser case(s) / static steps | Evidence required in the future guarded run |
+|---|---|---|
+| 01 | `SRC-01` / `SRC_ACCESS` | Anonymous login redirect; client/analyst denied; foreign creator cannot read source metadata. Exhaustive action role matrix and mismatched parent/source IDs additionally require local action tests. |
+| 02,09 | `SRC-02/09` / `SRC_METADATA_INPUT`, `SUBMIT`, `DB`, `RELOAD` (all `SRC_METADATA_`); `SRC-02` / `SRC_NULL_FIELDS` | All eight fields create/update/reload, fixed UTC+7 under America/Los_Angeles browser timezone, independent timestamps and milliseconds, null optionals and CHANGES_REQUESTED. Immutable source identity/creator/createdAt and article fields except token. |
+| 03 | `SRC-03-ADMIN`, `SRC-03-SUPER` / `SRC_ADMIN_SCOPE` | Admin/super creates on creator article; creator can edit that source without changing createdById or article ownership. |
+| 04 | `SRC-04` / `SRC_READ_ONLY` | All eight excluded statuses and unsupported schema retain readable sources; no mutation controls or repair. Action denial is also covered locally. |
+| 07,08 | `SRC-07/08` / `SRC_URL_INPUT`, `SRC_UNSAFE_RENDER` | Reject unsafe new URL; safe links retain query/fragment and rel/target; exact-owned fixture legacy unsafe URL is text-only; HTML-like title/publisher/note never executes, no automatic external request. |
+| 10,11 | `SRC-10/11` / `SRC_MANUAL_IDLE`, `SRC_SINGLE_FLIGHT` | Empty/order/read and input/idle do not write; held real create/update ACK disables competing mutations; double-click does not duplicate. Delete pending guard additionally in SRC-15. |
+| 12 | `SRC-12` / `SRC_TWO_TABS_SUBMIT`, `SRC_TWO_TABS_DB` | Two real tabs using one parent token yield one source and one conflict; losing input survives without retries, explicit confirmed reload reconciles. |
+| 13 | `SRC-13-SOURCE`, `SRC-13-AUTOSAVE` / `SRC_CROSS_SURFACE_SUBMIT`, `SRC_CROSS_SURFACE_DB` | Both commit orders with real held ACK; stale other surface conflicts, losing body/source input stays and DB winner is exact. |
+| 14 | `SRC-14-ACTOR` / `SRC_ACTOR_REVOKED`; `SRC-14-PARENT` / `SRC_PARENT_REVOKED` | Suspension/demotion/cookie expiry and owner/status change after load reject write, retain input and route; source count and parent row do not change. |
+| 15 | `SRC-15` / `SRC_DELETE_CANCEL`, `SRC_DELETE_DB` | Cancel makes zero requests; accepted delete removes exactly selected child once, keeps other source/Article/User, reload confirms. |
+| 17 | `SRC-17` / `SRC_TOKEN_PRECISION` | Future persisted Article token advances exactly +1ms for create/update/delete in MariaDB; stale editor conflicts without a further token bump. |
+| 18 | `SRC-18` / `SRC_OFFLINE`, `SRC_UNKNOWN_ACK` | Known offline makes no source request; drop actual committed create ACK, retain draft and block mutations; idle/online never retry; confirmed reload sees one source. |
+| 20 | `SRC-20` / `SRC_NAVIGATION_CANCEL`, `SRC_NAVIGATION_LEAVE` | Cancel form/source-switch/app-link/native beforeunload retains input; accept during real held mutation leaves without follow-up, next instance preserves its own input. Local lifecycle tests cover late ACK after instance replacement. |
+| 21 | `SRC-21` / `SRC_EDITOR_LINKS` | New hint/no undefined link; persisted editor/list/source links; dirty editor cancellation keeps debounce, accepted leave cancels unsent follow-up. |
+| 23 | `SRC-23` / `SRC_ACCESSIBLE_LAYOUT` | Keyboard add/save, visible field errors, all labels/status, long URL and form/list at 390/768/1280 widths without overflow. |
+| 24 | Every SRC case through hooks and guarded runner | Manifest v2 graph recovery, new run/commit/BUILD_ID, safe reporter, real finally cleanup with all five zeros and VERIFIED. Negative graph/rollback/v1 cases remain local mocked evidence. |
+
+The spec has **19 L+B scenarios** and **5 L-only scenarios** (SRC-05/06/16/19/22).
+Case grouping is intentional: scenario count and browser case count measure
+different things. Strict hostile input, 100-source limit/concurrent boundary,
+rollback injection, post-commit revalidation failure and Flight DTO behavior have
+local tests; the browser suite does not claim to prove them through route access.
+
+Diagnostics now have **55 exact title/file identities** and **86 distinct static
+step codes** (59 baseline + 27 SRC). Source case locations only accept
+`tests/e2e/cms-sources.spec.ts`; support-file locations remain null. Three added
+synthetic diagnostics tests verify actual title/step inventory, every approved
+source step through reporter+runner filtering with failed locations, and rejection
+of title suffixes, cross-case codes, helper locations and payload properties. The
+diagnostics suite is **20/20 local PASS**; it starts no app/browser/DB.
+`tests/cms-source-browser-support.test.mjs` adds **5/5 local PASS** protocol tests
+for source-only request matching/counting, exact fetched-response forwarding,
+held/dropped ACKs, disposal and fetch-error propagation. Its mocked callbacks are
+not evidence of real browser or DB behavior.
+
 ## Cleanup and interrupted-run recovery
 
 Normal cleanup revalidates both URL and actual server identity. It refuses:
 
 - an article owned outside its manifest-approved exact users;
 - unrecognized article IDs or unrelated/non-namespaced records;
-- article taxonomy/history/review/media links or other related rows;
+- article taxonomy/history/review/media links or other related rows, except exact
+  SourceReference identities proven by both parent and creator ownership;
 - unplanned AuthorProfiles, CRM/customer/team or other User relations;
 - audit records other than `AUTH_LOGIN` for the exact fixture User itself.
 
-It deletes only validated exact login-log IDs, article IDs, then User IDs; no
+Manifest v2 sources have exact `id`, `articleId`, `createdById`. Every candidate
+must have both an approved namespaced parent article and an exact fixture creator;
+one valid endpoint is insufficient. Discovery queries exact parent/creator IDs
+after article recovery, never title/prefix/URL. Known IDs keep immutable endpoints;
+deleted IDs remain journal tombstones. The v1 reader stays supported under its
+original contract: v1 never authorizes source deletion and is not upgraded during
+recovery. Source fixture mutations allow only guarded synthetic metadata; article
+state/owner/schema changes still verify the entire relation graph before writing.
+
+It deletes only validated exact source IDs and endpoints, login-log IDs, article
+IDs, then User IDs, in one transaction; no
 prefix-wide delete, FK disabling, migration, generic seed or cascade workaround.
 The baseline creates no AuthorProfiles, so an unexpected one stops cleanup instead
-of being deleted. Counts for exact fixture articles/profiles/users/login logs must
-all be zero inside the transaction and again after commit. Any cleanup failure
+of being deleted. Counts for exact fixture articles/profiles/users/login logs/sources
+must all be zero inside the transaction and again after commit:
+`{"articles":0,"profiles":0,"users":0,"logs":0,"sources":0}`. The source
+verification includes either endpoint pointing into the fixture graph, not just
+deleted IDs. Any cleanup failure
 makes the staging result fail, even if all browser cases passed.
 
 If the runner is forcibly terminated, retain the manifest and inspect the ignored
@@ -240,7 +321,8 @@ node scripts/cms-e2e/cleanup.mjs --manifest playwright/.cms-e2e/<runId>.json --a
 
 The first command is read-only. If it reports unrecorded UI rows after a lost
 response, the explicit apply path discovers records only by the six exact owned
-User IDs, verifies their run namespace, persists their exact IDs, and then runs
+User IDs, verifies their run namespace, then discovers source candidates through
+exact parent/creator IDs, validates both endpoints, journals exact IDs and runs
 the same restrictive cleanup. Never widen a failing preflight to force cleanup.
 If an unexpected relation/owner exists, stop for review. Once the operator has
 verified the matching runner is gone and `CLEANUP_VERIFIED` reports all zeros,
@@ -317,8 +399,8 @@ Location fields have deliberately distinct meanings:
 - `assertionSource`: `error.location` or `step.location`, identifying which API
   field supplied the coordinate; `null` if none is available.
 
-Only `tests/e2e/cms-draft.spec.ts`, `tests/e2e/cms-editor-safety.spec.ts` and
-`tests/e2e/cms-autosave.spec.ts`
+Only `tests/e2e/cms-draft.spec.ts`, `tests/e2e/cms-editor-safety.spec.ts`,
+`tests/e2e/cms-autosave.spec.ts` and `tests/e2e/cms-sources.spec.ts`
 with positive integer line/column values are allowed. Absolute source paths are
 normalized to these approved repository-relative paths. Missing/disallowed
 locations are `null`; no stack parsing, line-number guessing or substitution of
@@ -343,7 +425,7 @@ a suite PASS. Unit tests exercise synthetic failures, hostile output metadata
 and chunk boundaries without starting Playwright/browser/DB.
 
 The next staging run requires **Claude independent review and CI PASS for the
-exact CMS-006 commit**, followed by separately authorized Claude staging
+exact CMS-007 commit**, followed by separately authorized Claude staging
 QA. The previous commit's CI/staging results do not satisfy that gate. Keep the
 existing trace/video/screenshot suppression, `preserveOutput: 'never'`,
 `PLAYWRIGHT_NO_COPY_PROMPT=1`, one worker, zero retries, provenance, lock and fixture
