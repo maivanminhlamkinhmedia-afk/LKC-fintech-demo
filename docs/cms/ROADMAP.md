@@ -1,19 +1,21 @@
 # LKC Financial Publishing — roadmap và checkpoint
 
-Updated: 2026-09-27
+Updated: 2026-09-29 (UTC+7)
 
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
-Nguồn: bản bàn giao do Product Owner cung cấp ngày 2026-09-24, đối chiếu với GitHub và tiến độ trong chat triển khai. Bằng chứng mới hơn thay thế checkpoint cũ; không thực hiện lại thao tác đã hoàn tất chỉ vì bản bàn giao cũ còn ghi pending.
+Nguồn: bàn giao Product Owner, GitHub và các báo cáo triển khai trong phiên. Checkpoint mới thay thế trạng thái cũ; giữ báo cáo lịch sử, không chạy lại gate đã hoàn tất chỉ vì tài liệu cũ còn pending.
 
-Checkpoint mới nhất: CMS-001..004 COMPLETE; **CMS-005 DEPLOYED, authenticated production smoke DEFERRED theo quyết định Product Owner ngày 2026-09-26, chưa COMPLETE**. PR #20 đã merge, production deploy SUCCESS, Claude review/CI/staging/cleanup PASS, public/anonymous smoke và monitoring ban đầu PASS trong phạm vi đã báo. Không suy diễn phần kiểm thử đăng nhập được hoãn thành PASS. Xem [release checkpoint CMS-005](reports/CMS-005-release-checkpoint.md).
+**CMS-001..004 COMPLETE theo bằng chứng đã ghi. CMS-005, CMS-006 và CMS-007 đã DEPLOYED.** Review/CI/staging/cleanup và anonymous smoke/monitoring của từng release đã PASS trong phạm vi báo cáo. Manual authenticated production acceptance còn thiếu của cả ba task hiện **DEFERRED — chờ nghiệm thu cuối dự án**, theo PO ngày 28/09/2026; chưa đánh COMPLETE/PASS cho phần này. Xem [sổ nghiệm thu](ACCEPTANCE.md).
 
-**CMS-006 đã DEPLOYED; review/CI/staging/cleanup/public smoke/monitoring PASS; authenticated production smoke/autosave PENDING, chưa COMPLETE.** PR #21 merged, main `6c74acbc25a8b7f76d48f376b075d9c2d2225831`, deploy run 36286530195 SUCCESS. Staging cuối 36/36 PASS, runId `843639a9bf993d961757c40a`, BUILD_ID `OFJWgyIEWte6fprp_D77b`, cleanup 0/0/0/0. Xem [release checkpoint CMS-006](reports/CMS-006-release-checkpoint.md) để phân biệt nguồn bằng chứng và nghiệm thu còn lại.
+**CMS-007 release đã hoàn tất:** PR #22 merged, main `9bd3ec8e7cc55ebcaf8a9782868a3ac93fcc7a34`, deploy run 36401463356 SUCCESS. Head đã kiểm thử `fe61d3dcd826e0b58586b8224c0afbf440096fcd`, CI 612 tests, staging 55/55 PASS với runId `b27c36765fec1e586f51b5ab` / BUILD_ID `Mo8ODgdwdymem1iN-zNAc`, cleanup 5 counters bằng 0 và VERIFIED. Anonymous smoke 7/7, monitoring 12/12; nguồn và giới hạn tại [release checkpoint CMS-007](reports/CMS-007-release-checkpoint.md).
 
-**Bước hiện tại: CMS-007 — Sources/citations, LOCAL IMPLEMENTATION / VALIDATION PASS, chờ Claude independent review.** Branch `feature/cms-007-sources-citations`, HEAD tài liệu `36cca5f7a70371326d3008087950a11fc1c1845f`, base CMS-006 `6c74acbc25a8b7f76d48f376b075d9c2d2225831`. Đã triển khai trang nguồn riêng/lưu thủ công, shared Article token, manifest v2 và source cleanup guards; không schema/migration/dependency mới. Local Node22.23.2: 612/612 unit/action tests, Prisma validate/generate, lint, TypeScript, isolated build và discovery55 (36 baseline +19 SRC) PASS. Implementation UNSTAGED; Claude review/CI/staging/browser NOT RUN, chưa COMPLETE. Xem [implementation report](reports/CMS-007-implementation.md), [spec](tasks/CMS-007.md) và [handoff](tasks/CMS-007-IMPLEMENTATION.md). Tiếp tục CMS-007 không đóng nghiệm thu pending/deferred của task trước.
+**Bước hiện tại: CMS-008 — Category/Topic/Tags/Instruments, LOCAL IMPLEMENTATION / VALIDATION PASS; chờ Claude independent review.** Branch `feature/cms-008-taxonomy-instruments`, HEAD tài liệu `85f9eb55e5c63217d060e89f71780959cb00058a`, base main `9bd3ec8e7cc55ebcaf8a9782868a3ac93fcc7a34`. Đã triển khai catalog admin bốn loại và phân loại từng bài, shared Article token với autosave/sources, manifest v3 exact identities/intents/relations và cleanup 13 counters. Local Node 22.23.2: **761/761 unit/action tests**, Prisma validate/generate, lint, TypeScript, production build cô lập và diff-check PASS; discovery **90 =55 baseline +35 TAX**. Browser/MariaDB/cleanup thực tế, Claude review và CI **NOT RUN**. Diff implementation UNSTAGED, index rỗng; không commit/push/release và chưa COMPLETE. Mapping [36 AC/32 TAX và bằng chứng](reports/CMS-008-implementation.md); [spec](tasks/CMS-008.md), [handoff](tasks/CMS-008-IMPLEMENTATION.md). Manual UAT vẫn DEFERRED tới cuối dự án, không biến thành PASS.
 
 ## Quy trình delivery
 
-ChatGPT spec/Acceptance Criteria → feature branch → Codex implementation + local validation → Claude Code independent review ONLY → Codex fix/Claude regression nếu có bug → PR/CI → staging/browser validation → final triage → merge main → production deploy → smoke/monitoring.
+ChatGPT spec/Acceptance Criteria → feature branch → Codex implementation + local validation → Claude Code independent review ONLY → Codex fix/Claude regression nếu có bug → PR/CI → automated staging/browser validation → final triage → merge main → production deploy → anonymous smoke/monitoring.
+
+Manual UAT đăng nhập/thao tác thực hiện tập trung cuối dự án theo [quyết định PO](ACCEPTANCE.md). Khi PO yêu cầu, chuẩn bị bộ tài liệu để người khác kiểm chứng toàn bộ chức năng/yêu cầu. Hoãn manual UAT không bỏ technical gates hoặc biến kết quả chưa kiểm thử thành PASS.
 
 Codex implementation và Claude Code review chạy trong VS Code theo cách làm của Product Owner; Claude không sửa code trong lượt review. Khối lệnh PowerShell dán vào terminal PowerShell, prompt nhiệm vụ dán vào chat Codex/Claude tương ứng; không kèm dấu nhắc terminal. npm.cmd/npx.cmd dùng khi cần tránh PowerShell execution-policy shim. Không yêu cầu secrets trong chat.
 
@@ -25,10 +27,10 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 | CMS-002 | Creator/Admin publishing RBAC | COMPLETE; PR #17 |
 | CMS-003 | Author profiles | COMPLETE; PR #18 |
 | CMS-004 | Creator dashboard | COMPLETE; PR #19, deploy/production smoke/staging cleanup PASS |
-| CMS-005 | Draft editor + TipTap | DEPLOYED; review/CI/staging/cleanup/public smoke/monitoring PASS; authenticated production smoke DEFERRED by PO; chưa COMPLETE |
-| CMS-006 | Autosave | DEPLOYED; review/CI 493 tests/staging 36 cases/cleanup/public smoke/monitoring PASS; authenticated production smoke/autosave PENDING; chưa COMPLETE |
-| CMS-007 | Sources/citations | LOCAL IMPLEMENTATION / VALIDATION PASS; 612 tests, discovery55; diff UNSTAGED chờ Claude review; CI/staging NOT RUN, chưa COMPLETE |
-| CMS-008 | Category/Topic/Tags/Instruments | Planned |
+| CMS-005 | Draft editor + TipTap | DEPLOYED; technical release gates PASS; manual authenticated UAT DEFERRED tới cuối dự án; chưa COMPLETE |
+| CMS-006 | Autosave | DEPLOYED; CI 493/staging 36/cleanup/release PASS; manual authenticated UAT/autosave DEFERRED theo PO ngày 28/09; chưa COMPLETE |
+| CMS-007 | Sources/citations | DEPLOYED; CI 612 / staging 55 / cleanup 5 counters bằng 0 / deploy/anonymous smoke/monitoring PASS; manual authenticated UAT DEFERRED; chưa COMPLETE |
+| CMS-008 | Category/Topic/Tags/Instruments | LOCAL IMPLEMENTATION / VALIDATION PASS; 761 tests, discovery 90; diff UNSTAGED cho Claude review; review/CI/browser staging NOT RUN; manual UAT DEFERRED; chưa COMPLETE |
 | CMS-009 | Media library | Planned |
 | CMS-010 | Preview | Planned |
 | CMS-011 | Editorial review workflow | Planned |
@@ -42,7 +44,26 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 | CMS-019 | Search/archive/related | Planned |
 | CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; nền tảng CMS-005 đã staging 20/20 PASS; không thay thế full workflow regression CMS-020 |
 
-## CMS-006 → CMS-007: checkpoint 2026-09-27
+## CMS-008: checkpoint implementation 2026-09-29
+
+- Hai surfaces manual-only: `/creator/taxonomy` và `/creator/articles/[id]/classification`, dùng schema/quyền hiện có. Catalog identity bất biến/CAS/delete-used; Article CAS + category/mapping atomic, inactive retention, no-op và preserved body/source/owner.
+- Controller giữ draft khi offline/conflict/unknown ACK, single-flight và dirty navigation; thêm links qua guard hiện có, không đổi autosave/native paste/AUTO-21/FMT fixes.
+- Harness v3 kiểm ownership cả hai endpoints, reserved create intent và lost-ACK recovery; legacy v1/v2 không tăng quyền cleanup. Local mocks kiểm đủ 13 counters và rollback, chưa phải cleanup DB thật PASS.
+- Local gates PASS; 761/761 tests, discovery 55 EDIT/AUTO/SRC baseline +35 TAX. [Báo cáo](reports/CMS-008-implementation.md) có file list, mapping 36 AC/32 TAX, lệnh/runtime và giới hạn. Không đổi schema/dependency/auth/deploy workflow.
+- Chưa stage/commit/push. Tiếp theo: Claude independent review → commit/PR/CI khi được phép → automated guarded staging trên đúng commit CI PASS. Manual UAT DEFERRED theo ACCEPTANCE không chặn bước này, không được ghi PASS.
+
+## CMS-007 → CMS-008: checkpoint lịch sử 2026-09-28
+
+- PO yêu cầu triển khai CMS-008 đúng roadmap. Base là merge CMS-007 `9bd3ec8e7cc55ebcaf8a9782868a3ac93fcc7a34`; không implementation trên main.
+- CMS-007 local/review/addendum/CI đã PASS; PR #22 và deploy metadata đã đối chiếu trực tiếp GitHub. Staging/browser observations do Claude/Codex thực chạy, PO cung cấp, không nhận là ChatGPT tự chạy.
+- Lượt staging đầu `144c0bc66b8e1ad5c085b747` giữ FAIL (10 passed/ 4 failed/ 1 timedOut/ 40 skipped; CLEANUP_NOT_VERIFIED). Recovery sau đó qua guarded script CHECK_ONLY/APPLY exit 0, năm counters bằng 0. Nguyên nhân cascade chưa xác định chắc chắn.
+- Lượt mới `b27c36765fec1e586f51b5ab`, BUILD_ID `Mo8ODgdwdymem1iN-zNAc`, đúng head fe61d3d…: 55/55 PASS, Node exit 0, five-counter cleanup 0/0/0/0/0 và VERIFIED. Không trộn số liệu hai lượt.
+- Deploy run 36401463356/job 108860076040 SUCCESS đúng push/main/actual merge, gồm SSH deploy. Anonymous 7/7 HTTP/render; monitoring 16:13:42–16:18:45 ngày 28/09 UTC+7, 12/12 mẫu PASS. Raw smoke exit 1 do telemetry classifier thiếu .Inspector được giữ và attribution cụ thể, không ghi raw exit 0 giả.
+- Nghiệm thu thủ công đăng nhập/source CRUD/autosave của CMS-005/006/007 chuyển DEFERRED cuối dự án theo chỉ thị PO mới; xem [ACCEPTANCE](ACCEPTANCE.md). Không suy từ anonymous/staging sang manual production PASS.
+- CMS-008: quản trị catalogs bằng cms:admin, article classification bằng own/any + editable state, manual save, shared Article.updatedAt, không migration/dependency mới. Blueprint manifest v3 thêm exact catalog intents, category edges và composite mappings; không cấp quyền cleanup danh mục thật.
+- Baseline local 612 / browser 55. Codex bổ sung tests theo actual coverage; discovery =55+N TAX, không cố định count chưa triển khai. Technical stages còn NOT RUN; dừng local với diff UNSTAGED cho Claude review.
+
+## CMS-006 → CMS-007: checkpoint lịch sử 2026-09-27
 
 - PO yêu cầu “Triển khai cms 007”; được tiếp tục từ implementation CMS-006 đã phát hành, giữ CMS-005 authenticated smoke DEFERRED và CMS-006 authenticated smoke/autosave PENDING.
 - CMS-006 reviewed head `230f46c02b80d9257541dc955160c332857e4163`, PR #21 merge `6c74acbc25a8b7f76d48f376b075d9c2d2225831`. CI run 36254153773 SUCCESS, 493 tests và các gate PASS.
@@ -52,6 +73,8 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 - GitHub PR/deploy metadata được người chuẩn bị tài liệu đối chiếu trực tiếp; local tests/Claude staging và production browser results là bằng chứng PO cung cấp hoặc đã ghi trong PR, không nhận là tự chạy lại.
 - CMS-007 local đã dùng schema hiện có; nguồn là danh mục tham chiếu của từng bài, không inline citation mark/public rendering/URL metadata fetch. Source mutations atomic với Article.updatedAt qua Serializable/CAS; local action/controller/harness tests PASS. Harness đã mở rộng exact SourceReference ownership cả hai đầu và cleanup thành 5 counters; chưa chạy fixture/cleanup thực tế. Giữ toàn bộ 36 EDIT/AUTO baseline, thêm19 SRC cases mới discovery. Report map đủ30 AC/24 SRC và tách LOCAL PASS/BROWSER NOT RUN.
 - Thực hiện local implementation → Claude review → commit/PR/CI → staging đủ baseline + SRC mới → release như workflow hiện có. Không chạy lại gate của CMS-006 chỉ để cập nhật tài liệu, không mở lại cleanup cũ.
+
+Các PENDING/NOT RUN trong checkpoint lịch sử phía trên được thay bằng trạng thái mới nhất ở đầu ROADMAP; quyết định DEFERRED ngày 28/09 nằm tại ACCEPTANCE.
 
 ## CMS-005 → CMS-006: quyết định và bằng chứng lịch sử
 

@@ -149,6 +149,21 @@ test('SRC-04/10: readonly and empty states show context and no edit route or mut
   assert.equal(html.includes('/article-a/edit'), false); assert.match(html, /href="\/creator\/articles"/)
 })
 
+test('TAX-24: classification link preserves the actual source dirty navigation guard', async () => {
+  const form = mount()
+  const link = form.nodes().find(node => node.props?.children === 'Phân loại')
+  assert.equal(link.props.href, '/creator/articles/article-a/classification')
+  await form.click('Sửa nguồn Nguồn Việt')
+  form.change('source-title', 'Nguồn giữ khi hủy phân loại')
+  const target = new Element()
+  target.anchor = { href: `https://example.com${link.props.href}`, target: '', hasAttribute: () => false }
+  assert.equal(form.navigate(false, { target }), true)
+  assert.equal(form.input('source-title').props.value, 'Nguồn giữ khi hủy phân loại')
+  assert.equal(form.state.calls.length, 0)
+  assert.equal(form.navigate(true, { target }), false)
+  assert.equal(form.unload(), false)
+})
+
 test('SRC-20: beforeunload and internal-link cancellation retain source input; acceptance prevents follow-up', async () => {
   const form = mount(); await form.click('Thêm nguồn'); form.change('source-title', 'Giữ nội dung')
   assert.equal(form.unload(), true); assert.equal(form.navigate(false), true)

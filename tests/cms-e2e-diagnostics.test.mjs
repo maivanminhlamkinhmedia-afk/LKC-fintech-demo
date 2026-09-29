@@ -3,6 +3,7 @@ import test from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { formatDiagnosticRecord, createDiagnosticOutputFilter } from '../scripts/cms-e2e/diagnostics.mjs'
 import SafeReporter from './e2e/safe-reporter.mjs'
+import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS } from '../scripts/cms-e2e/taxonomy-diagnostics.mjs'
 
 // Pure synthetic reporter/stream callbacks only. No Playwright runner, browser,
 // app, credential lookup, environment file or database is initialized here.
@@ -476,6 +477,7 @@ test('autosave diagnostics reject title suffixes, support-file locations, cross-
 })
 
 const SOURCE_FILE = 'tests/e2e/cms-sources.spec.ts'
+const TAXONOMY_FILE = 'tests/e2e/cms-taxonomy.spec.ts'
 const SOURCE_CASES = [
   ['SRC-01', 'SRC-01 sources route denies anonymous non-CMS and foreign readers', ['SRC_ACCESS']],
   ['SRC-02/09', 'SRC-02/09 full source metadata retains fixed Vietnam time and millisecond precision', ['SRC_METADATA_INPUT', 'SRC_METADATA_SUBMIT', 'SRC_METADATA_DB', 'SRC_METADATA_RELOAD']],
@@ -506,8 +508,9 @@ test('source registry matches every actual test declaration and controlled step 
   assert.deepEqual(titles.sort(), SOURCE_CASES.map(row => row[1]).sort())
   assert.equal(titles.length, 19)
   const steps = [...new Set([...source.matchAll(/test\.step\('([^']+)'/g)].map(match => match[1]))].sort()
-  assert.deepEqual(steps, [...new Set(SOURCE_CASES.flatMap(row => row[2]))].sort())
-  assert.equal(steps.length, 27)
+  assert.deepEqual(steps, [...new Set([...SOURCE_CASES.flatMap(row => row[2]),
+    'SRC_TEARDOWN_DISPOSE', 'SRC_TEARDOWN_CONTEXT_CLOSE', 'SRC_TEARDOWN_RECOVER', 'SRC_TEARDOWN_DISCONNECT'])].sort())
+  assert.equal(steps.length, 31)
 })
 
 test('all source steps pass the reporter and runner filter with exact failed assertion locations', () => {
@@ -552,5 +555,79 @@ test('source diagnostics reject title suffixes cross-case steps helper locations
   }
   assert.equal(records().length, 38)
   assert.ok(records().every(row => row.kind === 'CASE' && row.record.caseId === 'UNKNOWN_CASE' && row.record.status === 'failed'))
+  assert.equal(lines.join('').includes(PRIVATE), false)
+})
+
+test('TAX registry covers every static and expanded actual case with exact controlled steps', async () => {
+  const source = await readFile(new URL('./e2e/cms-taxonomy.spec.ts', import.meta.url), 'utf8')
+  const titles = [...source.matchAll(/test\('([^']+)'/g)].map(match => match[1])
+  for (const actor of ['admin', 'super']) titles.push(`TAX-02 ${actor} creates all four catalog kinds through real forms`)
+  for (const first of ['classification', 'autosave']) titles.push(`TAX-16 ${first} wins against the other stale article surface`)
+  for (const operation of ['create', 'update', 'delete']) for (const first of ['classification', 'source']) titles.push(`TAX-17 ${first} wins against source ${operation} with the shared article token`)
+  for (const first of ['assignment', 'deactivate', 'delete']) titles.push(`TAX-30 ${first} commits first in catalog attachment race without dangling links`)
+  assert.deepEqual(titles.sort(), TAXONOMY_CASES.map(row => row[1]).sort())
+  assert.equal(titles.length, 35)
+  assert.equal(new Set(TAXONOMY_CASES.map(row => row[0])).size, 35)
+  const steps = [...new Set([...source.matchAll(/test\.step\('([^']+)'/g)].map(match => match[1]))].sort()
+  assert.deepEqual(steps, [...new Set([...TAXONOMY_CASES.map(row => row[2]), ...TAX_ROUNDTRIP_STEPS,
+    ...TAX_TEARDOWN_STEPS, ...TAX_GRAPH_STEPS])].sort())
+})
+
+test('TAX reporter retains failed assertions and filters unsafe titles files steps and raw fields', () => {
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  for (const [caseId, title, stepCode] of TAXONOMY_CASES) {
+    const known = freeze(testCase(title, TAXONOMY_FILE))
+    const parent = freeze({ category: 'test.step', title: stepCode, location: location(TAXONOMY_FILE, 50, 3) })
+    reporter.onStepEnd(known, {}, parent)
+    reporter.onStepEnd(known, {}, { category: 'expect', parent, title: PRIVATE,
+      error: { message: PRIVATE, location: location(TAXONOMY_FILE, 51, 5) } })
+    reporter.onTestEnd(known, { status: 'failed', error: { message: PRIVATE } })
+    assert.deepEqual(lines.slice(-3).map(parse).map(row => row.record.status), ['passed', 'failed', 'failed'])
+    assert.equal(parse(lines.at(-1)).record.caseId, caseId)
+    const valid = { caseId, stepCode, status: 'failed', testLocation: location(TAXONOMY_FILE),
+      stepLocation: null, assertionLocation: null, assertionSource: null }
+    for (const invalid of [{ ...valid, stepCode: 'SRC_ACCESS' }, { ...valid, stepCode: `${stepCode}_${PRIVATE}` },
+      { ...valid, testLocation: location(SOURCE_FILE) }, { ...valid, stepLocation: location('tests/e2e/cms-taxonomy-support.ts') },
+      { ...valid, requestBody: PRIVATE }]) assert.equal(formatDiagnosticRecord('DIAGNOSTIC', invalid), null)
+    reporter.onTestEnd(testCase(`${title} ${PRIVATE}`, TAXONOMY_FILE), { status: 'failed' })
+    assert.equal(parse(lines.at(-1)).record.caseId, 'UNKNOWN_CASE')
+  }
+  filter.end(); assert.equal(lines.join('').includes(PRIVATE), false)
+})
+
+test('TAX roundtrip phases identify helper failures without leaking locations or changing the final verdict', () => {
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  const [caseId, title] = TAXONOMY_CASES.find(row => row[0] === 'TAX-10/11')
+  const known = freeze(testCase(title, TAXONOMY_FILE))
+  for (const stepCode of TAX_ROUNDTRIP_STEPS) {
+    const phase = freeze({ category: 'test.step', title: stepCode, location: location(TAXONOMY_FILE, 320, 5) })
+    const helper = { category: 'expect', title: PRIVATE, parent: phase,
+      location: location('tests/e2e/cms-taxonomy-support.ts'), error: { message: PRIVATE,
+        location: location('tests/e2e/cms-taxonomy-support.ts') } }
+    reporter.onStepEnd(known, {}, helper)
+    const record = parse(lines.at(-1)).record
+    assert.equal(record.stepCode, stepCode)
+    assert.equal(record.status, 'failed')
+    assert.equal(record.assertionLocation, null)
+    assert.equal(record.assertionSource, null)
+    assert.deepEqual(record.stepLocation, phase.location)
+    for (const invalid of [
+      { ...record, caseId: 'TAX-24-LINKS' }, { ...record, stepCode: `${stepCode}_${PRIVATE}` },
+      { ...record, error: PRIVATE }, { ...record, assertionLocation: helper.location },
+    ]) assert.equal(formatDiagnosticRecord('DIAGNOSTIC', invalid), null)
+    reporter.onStepEnd(known, {}, phase)
+    assert.equal(parse(lines.at(-1)).record.status, 'passed')
+  }
+  reporter.onTestEnd(known, { status: 'failed', errors: [{ message: PRIVATE }] })
+  const result = { status: 'failed' }
+  assert.equal(reporter.onEnd(result), undefined)
+  assert.equal(result.status, 'failed')
+  filter.end()
+  assert.deepEqual(lines.slice(-2).map(parse).map(row => [row.kind, row.record.status]), [
+    ['CASE', 'failed'], ['RESULT', 'failed'],
+  ])
+  assert.equal(parse(lines.at(-2)).record.caseId, caseId)
   assert.equal(lines.join('').includes(PRIVATE), false)
 })

@@ -1,7 +1,18 @@
 import { diagnosticCase, diagnosticLocation, formatDiagnosticRecord } from '../../scripts/cms-e2e/diagnostics.mjs'
+import { TAX_TIMING_BODIES, TAX_TIMING_HOOKS } from '../../scripts/cms-e2e/taxonomy-diagnostics.mjs'
+
+function enclosingPhase(step, definition) {
+  const seen = new Set()
+  let current = step
+  while (current && seen.size < 64 && !seen.has(current)) {
+    if (current.category === 'test.step' && definition.steps.includes(current.title)) return current
+    seen.add(current); current = current.parent
+  }
+  return null
+}
 
 export default class SafeReporter {
-  constructor({ write = line => process.stdout.write(line) } = {}) { this.write = write }
+  constructor({ write = line => process.stdout.write(line) } = {}) { this.write = write; this.bodies = new WeakMap() }
 
   emit(kind, record) {
     const line = formatDiagnosticRecord(kind, record)
@@ -10,7 +21,42 @@ export default class SafeReporter {
 
   onBegin(_config, suite) { this.emit('DISCOVERY', { count: suite.allTests().length }) }
 
+  timing(test, result, step, ended) {
+    const definition = diagnosticCase(test), bodyCode = TAX_TIMING_BODIES[definition.caseId]
+    if (!bodyCode) return
+    let scope, phaseCode
+    if (step.category === 'hook' && Object.hasOwn(TAX_TIMING_HOOKS, step.title)) {
+      scope = 'hook'; phaseCode = TAX_TIMING_HOOKS[step.title]
+    } else if (step.category === 'fixture') { scope = 'fixture'; phaseCode = 'PW_FIXTURE' }
+    else if (step.category === 'test.step' && definition.steps.includes(step.title)) { scope = 'phase'; phaseCode = step.title }
+    else if (step.category === 'expect') {
+      const phase = enclosingPhase(step.parent, definition)
+      if (!phase) return
+      scope = 'assertion'; phaseCode = phase.title
+    } else return
+    // Prefer the worker's public structured times/duration. No browser clock or
+    // raw API titles/params/errors are read. Missing or invalid metadata drops
+    // only TIMING; existing DIAGNOSTIC/CASE verdict reporting is unchanged.
+    if (!(step.startTime instanceof Date) || !(result.startTime instanceof Date)) return
+    const start = step.startTime.getTime(), duration = ended ? step.duration : 0
+    if (!Number.isFinite(start) || !Number.isFinite(duration) || duration < 0) return
+    if (scope === 'phase' && phaseCode === bodyCode) {
+      this.bodies.set(result, { start, ended, duration })
+    }
+    const body = this.bodies.get(result)
+    this.emit('TIMING', {
+      caseId: definition.caseId, phaseCode, scope, status: ended ? step.error ? 'failed' : 'passed' : 'started',
+      durationMs: Math.round(duration), testOffsetMs: Math.round(start - result.startTime.getTime()),
+      bodyState: !body ? 'notStarted' : body.ended ? 'ended' : 'running',
+      bodyElapsedMs: !body ? 0 : Math.round(body.ended ? body.duration : start + duration - body.start),
+      testTimeoutMs: test.timeout, location: diagnosticLocation(step.location, definition.file),
+    })
+  }
+
+  onStepBegin(test, result, step) { this.timing(test, result, step, false) }
+
   onStepEnd(test, _result, step) {
+    this.timing(test, _result, step, true)
     const definition = diagnosticCase(test)
     let controlled = step
     // Only explicit test.step codes or failed expect leaves carry diagnostics.

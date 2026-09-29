@@ -270,6 +270,8 @@ function DraftFormInstance({ initial }: { initial?: DraftEditorData }) {
         <Link href="/creator/articles" className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium">Danh sách bài viết</Link>
         {initial ? <Link href={`/creator/articles/${encodeURIComponent(initial.id)}/sources`} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium">Nguồn tham khảo</Link>
           : <p className="text-sm text-slate-600">Lưu nháp trước khi thêm nguồn</p>}
+        {initial ? <Link href={`/creator/articles/${encodeURIComponent(initial.id)}/classification`} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium">Phân loại</Link>
+          : <p className="text-sm text-slate-600">Lưu bài trước để chọn phân loại</p>}
         {currentError?.code === 'EDIT_CONFLICT' && <button type="button" disabled={pending} className="rounded-xl border border-amber-500 px-5 py-3 text-sm" onClick={() => {
           if (window.confirm('Tải lại sẽ bỏ nội dung chưa lưu trong tab này. Bạn có muốn tiếp tục?')) {
             dirtyRef.current = false

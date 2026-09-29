@@ -19,7 +19,9 @@ const matches = (row, where) => Object.entries(where).every(([key, value]) => {
 })
 
 function setup(options = {}) {
-  const manifest = createFixturePlan(runId)
+  // Keep the historical v2 fixture graph explicit: new v3 permissions must not
+  // silently broaden any of the EDIT/SRC recovery/cleanup regression assertions.
+  const manifest = createFixturePlan(runId, 2)
   const state = {
     users: manifest.users.map(user => ({ ...user, status: 'ACTIVE', customerProfile: null, _count: { articlesAuthored: 0, auditLogs: 0, salesMemberships: 0 } })),
     articles: manifest.articles.map(article => ({ ...article, updatedAt: new Date('2026-09-24T00:00:00Z'), editorId: null, categoryId: null, coverMediaId: null, _count: { versions: 0, topics: 0, publicationEvents: 0 } })),

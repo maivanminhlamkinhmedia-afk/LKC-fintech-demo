@@ -131,6 +131,15 @@ const render = async () => renderToStaticMarkup(await CreatorPage())
 const hrefs = html => [...html.matchAll(/\bhref="([^"]*)"/g)].map(match => match[1])
 const countWhere = index => calls('count')[index].args.where
 const expectedWhere = (scope, extra = {}) => ({ AND: [scope, extra] })
+
+test('TAX-01: creator dashboard exposes global catalog only with existing cms:admin permission', async () => {
+  for (const role of ['CREATOR', 'ADMIN', 'SUPER_ADMIN']) {
+    scenario(role)
+    const links = hrefs(await render())
+    assert.equal(links.includes('/creator/taxonomy'), hasPermission(role, 'cms:admin'))
+    assert.equal(calls('auth')[0].args, 'cms:access')
+  }
+})
 const roleScope = role => role === 'CREATOR' ? { authorId: current.session.user.id } : {}
 
 for (const [id, role] of [['DASH-01', 'CREATOR'], ['DASH-02', 'ADMIN'], ['DASH-03', 'SUPER_ADMIN']]) {

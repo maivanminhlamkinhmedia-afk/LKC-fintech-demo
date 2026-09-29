@@ -4,7 +4,7 @@ import { mkdir, open, readFile, writeFile, unlink, copyFile, symlink } from 'nod
 import { resolve, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { assertPortAvailable, connectStaging, demand, DUMMY_DATABASE_URL, HarnessError, safeFailure, validateStagingEnvironment, withCleanup } from './guard.mjs'
-import { createFixturePlan, createFixtures, manifestPath, saveManifest, loadManifest, discoverCreatedArticles, discoverCreatedSources, cleanupFixtures } from './fixtures.mjs'
+import { createFixturePlan, createFixtures, manifestPath, saveManifest, loadManifest, discoverCreatedArticles, discoverCreatedSources, discoverFixtureGraph, cleanupFixtures } from './fixtures.mjs'
 import { createDiagnosticOutputFilter } from './diagnostics.mjs'
 
 function launch(args, env, cwd) {
@@ -70,6 +70,13 @@ async function stopOwnChild(child) {
   await closed
 }
 
+// Exposed solely to exercise the real uncertain-setup gate with local callbacks.
+// A collision or missing commit acknowledgement must never enter recovery/delete.
+export async function cleanupConfirmedFixtures(fixturesCommitted, cleanup) {
+  demand(fixturesCommitted === true, 'FIXTURE_SETUP_UNCONFIRMED_NO_AUTOMATIC_DELETE')
+  return cleanup()
+}
+
 export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
   demand(argv.length === 2 && argv.includes('--staging') && argv.includes('--ci-reviewed'), 'REQUIRES_EXPLICIT_STAGING_AND_CI_REVIEWED_FLAGS')
   validateStagingEnvironment(sourceEnv)
@@ -130,12 +137,13 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
       await stopOwnChild(app)
       // A setup collision or uncertain commit response does not establish
       // ownership of existing rows. Preserve the manifest for operator review.
-      demand(fixturesCommitted, 'FIXTURE_SETUP_UNCONFIRMED_NO_AUTOMATIC_DELETE')
-      const latest = await loadManifest(path)
-      const recover = latest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
-      await recover(db, runtimeEnv, latest, updated => saveManifest(path, updated))
-      const counts = await cleanupFixtures(db, runtimeEnv, latest, { apply: true })
-      process.stdout.write(`CMS_E2E CLEANUP ${JSON.stringify(counts)}\n`)
+      await cleanupConfirmedFixtures(fixturesCommitted, async () => {
+        const latest = await loadManifest(path)
+        const recover = latest.version === 3 ? discoverFixtureGraph : latest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
+        await recover(db, runtimeEnv, latest, updated => saveManifest(path, updated))
+        const counts = await cleanupFixtures(db, runtimeEnv, latest, { apply: true })
+        process.stdout.write(`CMS_E2E CLEANUP ${JSON.stringify(counts)}\n`)
+      })
     })
     process.stdout.write(`CMS_E2E VERIFIED runId=${manifest.runId} commit=${commit}\n`)
   } finally {

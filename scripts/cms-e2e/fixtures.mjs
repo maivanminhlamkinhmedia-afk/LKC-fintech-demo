@@ -2,14 +2,18 @@ import { randomBytes } from 'node:crypto'
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
 import { resolve, dirname, relative, isAbsolute } from 'node:path'
 import { assertDatabaseIdentity, demand, validateStagingEnvironment } from './guard.mjs'
+import { CATALOG_MODELS, MAPPING_MODELS, catalogIdentity, seedCatalogPlan, seedCatalogData,
+  validateTaxonomyManifest, validateCatalogExpected, readTaxonomyGraph, taxonomyRemainingCounts, deleteTaxonomyEdges, deleteTaxonomyCatalogs } from './taxonomy-fixtures.mjs'
+export { catalogCreateData } from './taxonomy-fixtures.mjs'
 
 export const ACTOR_ROLES = { creator: 'CREATOR', other: 'CREATOR', admin: 'ADMIN', super: 'SUPER_ADMIN', analyst: 'ANALYST', client: 'CLIENT' }
 export const FIXTURE_STATUSES = ['DRAFT', 'CHANGES_REQUESTED', 'SUBMITTED', 'EDITORIAL_REVIEW', 'FACT_CHECK', 'APPROVED', 'SCHEDULED', 'PUBLISHED', 'CORRECTED', 'ARCHIVED']
 const EMPTY_DOCUMENT = { type: 'doc', content: [{ type: 'paragraph' }] }
 const transactionOptions = { isolationLevel: 'Serializable', maxWait: 10000, timeout: 30000 }
 
-export function createFixturePlan(runId = randomBytes(12).toString('hex')) {
+export function createFixturePlan(runId = randomBytes(12).toString('hex'), version = 3) {
   demand(/^[a-f0-9]{24}$/.test(runId), 'RUN_ID_INVALID')
+  demand([1, 2, 3].includes(version), 'MANIFEST_INVALID')
   const namespace = `cms005-e2e-${runId}`
   const users = Object.entries(ACTOR_ROLES).map(([key, role]) => ({ key, role, id: `${namespace}-${key}`, email: `${namespace}-${key}@example.invalid` }))
   const creator = users.find(user => user.key === 'creator')
@@ -23,11 +27,15 @@ export function createFixturePlan(runId = randomBytes(12).toString('hex')) {
     articles.push({ key: `${key}-draft`, id: `${namespace}-${key}-draft`, slug: `${namespace}-${key}-draft`,
       authorId: user.id, allowedOwnerIds: [user.id], status: 'DRAFT' })
   }
-  return { version: 2, runId, namespace, createdAt: new Date().toISOString(), users, articles, profiles: [], sources: [] }
+  const manifest = { version, runId, namespace, createdAt: new Date().toISOString(), users, articles, profiles: [] }
+  if (version >= 2) manifest.sources = []
+  if (version === 3) Object.assign(manifest, { catalogs: seedCatalogPlan(manifest), catalogIntents: [],
+    categoryLinks: [], topicMappings: [], tagMappings: [], articleInstruments: [] })
+  return manifest
 }
 
 export function validateManifest(manifest) {
-  demand([1, 2].includes(manifest?.version) && /^[a-f0-9]{24}$/.test(manifest.runId), 'MANIFEST_INVALID')
+  demand([1, 2, 3].includes(manifest?.version) && /^[a-f0-9]{24}$/.test(manifest.runId), 'MANIFEST_INVALID')
   const expected = createFixturePlan(manifest.runId)
   demand(manifest.namespace === expected.namespace && Array.isArray(manifest.users)
     && manifest.users.length === 6 && Array.isArray(manifest.articles)
@@ -56,6 +64,7 @@ export function validateManifest(manifest) {
       && ids.includes(source.createdById), 'MANIFEST_SOURCE_MISMATCH')
     demand(new Set(manifest.sources.map(source => source.id)).size === manifest.sources.length, 'MANIFEST_DUPLICATE_SOURCE_IDS')
   }
+  validateTaxonomyManifest(manifest)
   return manifest
 }
 
@@ -91,6 +100,9 @@ export async function createFixtures(db, env, manifest, hashPassword) {
   // New runs start empty; source scenarios create through the real UI and then
   // journal identities. A populated journal is recovery state, not a seed plan.
   demand(!manifest.sources?.length, 'FIXTURE_SOURCE_CREATE_REQUIRES_EMPTY_PLAN')
+  if (manifest.version === 3) demand(manifest.catalogIntents.length === 0
+    && manifest.catalogs.every(row => row.seedKey !== null)
+    && ['categoryLinks', ...Object.keys(MAPPING_MODELS)].every(field => manifest[field].length === 0), 'FIXTURE_TAXONOMY_CREATE_REQUIRES_SEED_PLAN')
   const credentials = Object.fromEntries(manifest.users.map(user => [user.key, { email: user.email, password: randomBytes(24).toString('base64url') }]))
   const users = await Promise.all(manifest.users.map(async user => ({
     id: user.id, email: user.email, name: `${manifest.namespace} ${user.key}`, role: user.role,
@@ -100,6 +112,16 @@ export async function createFixtures(db, env, manifest, hashPassword) {
     await assertDatabaseIdentity(tx)
     demand(await tx.user.count({ where: { OR: [{ id: { in: users.map(user => user.id) } }, { email: { in: users.map(user => user.email) } }] } }) === 0, 'FIXTURE_ALREADY_EXISTS')
     demand(await tx.article.count({ where: { OR: [{ id: { in: manifest.articles.map(article => article.id) } }, { slug: { in: manifest.articles.map(article => article.slug) } }] } }) === 0, 'FIXTURE_ALREADY_EXISTS')
+    if (manifest.version === 3) for (const [kind, model] of Object.entries(CATALOG_MODELS)) {
+      const rows = manifest.catalogs.filter(row => row.kind === kind)
+      const key = kind === 'instrument' ? 'canonicalKey' : 'slug'
+      demand(await tx[model].count({ where: { OR: [{ id: { in: rows.map(row => row.id) } },
+        { [key]: { in: rows.map(row => row.identity[key]) } }] } }) === 0, 'FIXTURE_CATALOG_ALREADY_EXISTS')
+    }
+    if (manifest.version === 3) for (const [kind, model] of Object.entries(CATALOG_MODELS)) {
+      const data = manifest.catalogs.filter(row => row.kind === kind).map(row => seedCatalogData(manifest, row))
+      demand((await tx[model].createMany({ data })).count === data.length, 'FIXTURE_CATALOG_CREATE_COUNT_MISMATCH')
+    }
     demand((await tx.user.createMany({ data: users })).count === 6, 'FIXTURE_CREATE_COUNT_MISMATCH')
     const data = manifest.articles.map(article => ({
       id: article.id, slug: article.slug, authorId: article.authorId, title: `${manifest.namespace} ${article.key}`,
@@ -132,7 +154,7 @@ export async function remainingCounts(db, manifest) {
     db.auditLog.count({ where: auditWhere(manifest) }),
     db.sourceReference.count({ where: sourceWhere(manifest) }),
   ])
-  return { articles, profiles, users, logs, sources }
+  return { articles, profiles, users, logs, sources, ...(manifest.version === 3 ? await taxonomyRemainingCounts(db, manifest) : {}) }
 }
 
 // After a lost browser response/runner interruption, discover only articles owned
@@ -156,6 +178,7 @@ export async function discoverCreatedArticles(db, env, manifest, persist) {
 async function readFixtureSnapshot(db, manifest, recoverSources = false) {
   validateManifest(manifest)
   await assertDatabaseIdentity(db)
+  const taxonomy = manifest.version === 3 ? await readTaxonomyGraph(db, manifest, recoverSources) : null
   const [articles, profiles, users, logs, sources] = await Promise.all([
     db.article.findMany({ where: articleWhere(manifest), select: { id: true, slug: true, authorId: true, editorId: true, categoryId: true, coverMediaId: true, _count: true } }),
     db.authorProfile.findMany({ where: { userId: { in: userIds(manifest) } }, select: { id: true, userId: true } }),
@@ -164,7 +187,7 @@ async function readFixtureSnapshot(db, manifest, recoverSources = false) {
     db.sourceReference.findMany({ where: sourceWhere(manifest), select: { id: true, articleId: true, createdById: true } }),
   ])
   demand(profiles.length === 0, 'UNEXPECTED_AUTHOR_PROFILE')
-  demand(manifest.version === 2 || sources.length === 0, 'MANIFEST_V1_SOURCE_NOT_AUTHORIZED')
+  demand(manifest.version >= 2 || sources.length === 0, 'MANIFEST_V1_SOURCE_NOT_AUTHORIZED')
   demand(new Set(sources.map(source => source.id)).size === sources.length, 'DUPLICATE_SOURCE_IDENTITY')
   for (const source of sources) {
     demand(typeof source.id === 'string' && source.id.length > 0 && source.id.length <= 191
@@ -178,14 +201,19 @@ async function readFixtureSnapshot(db, manifest, recoverSources = false) {
     const known = manifest.articles.find(fixture => fixture.id === article.id)
     demand(known && known.allowedOwnerIds.includes(article.authorId) && article.slug.startsWith(`${manifest.namespace}-`), 'ARTICLE_FIXTURE_MISMATCH')
     const sourceCount = sources.filter(source => source.articleId === article.id).length
-    demand(!article.editorId && !article.categoryId && !article.coverMediaId
+    const related = { sources: sourceCount }
+    if (taxonomy) for (const [relation, field] of [['topics', 'topicMappings'], ['tags', 'tagMappings'], ['instruments', 'articleInstruments']]) {
+      related[relation] = taxonomy[field].filter(row => row.articleId === article.id).length
+    }
+    demand(!article.editorId && (!article.categoryId || taxonomy?.categoryLinks.some(row => row.articleId === article.id && row.categoryId === article.categoryId)) && !article.coverMediaId
       && article._count && (article._count.sources ?? 0) === sourceCount
-      && Object.entries(article._count).every(([relation, count]) => relation === 'sources' || count === 0), 'ARTICLE_HAS_UNEXPECTED_RELATIONS')
+      && Object.entries(related).every(([relation, count]) => (article._count[relation] ?? 0) === count)
+      && Object.entries(article._count).every(([relation, count]) => Object.hasOwn(related, relation) || count === 0), 'ARTICLE_HAS_UNEXPECTED_RELATIONS')
   }
   for (const user of users) {
     const expected = manifest.users.find(fixture => fixture.id === user.id)
     demand(expected && user.email === expected.email
-      && (user.role === expected.role || (expected.role === 'CREATOR' && user.role === 'CLIENT'))
+      && (user.role === expected.role || (expected.role === 'CREATOR' || manifest.version === 3 && ['ADMIN', 'SUPER_ADMIN'].includes(expected.role)) && user.role === 'CLIENT')
       && ['ACTIVE', 'SUSPENDED'].includes(user.status), 'USER_FIXTURE_MISMATCH')
     const sourceCount = sources.filter(source => source.createdById === user.id).length
     demand(!user.customerProfile && user._count && (user._count.sourceReferencesCreated ?? 0) === sourceCount
@@ -194,7 +222,7 @@ async function readFixtureSnapshot(db, manifest, recoverSources = false) {
   }
   for (const log of logs) demand(userIds(manifest).includes(log.actorId) && log.action === 'AUTH_LOGIN'
     && log.entityType === 'User' && log.entityId === log.actorId, 'UNEXPECTED_FIXTURE_AUDIT')
-  return { articles, profiles, users, logs, sources }
+  return { articles, profiles, users, logs, sources, taxonomy }
 }
 
 export async function fixturePreflight(db, manifest) {
@@ -207,6 +235,7 @@ export async function fixturePreflight(db, manifest) {
 export async function discoverCreatedSources(db, env, manifest, persist) {
   validateStagingEnvironment(env)
   validateManifest(manifest)
+  if (manifest.version === 3) return discoverFixtureGraph(db, env, manifest, persist)
   if (manifest.version === 1) {
     await fixturePreflight(db, manifest)
     return manifest
@@ -222,6 +251,70 @@ export async function discoverCreatedSources(db, env, manifest, persist) {
   return manifest
 }
 
+// v3 recovery validates the whole catalog/relation/source batch before extending
+// any identity journal. An unconfirmed CREATE must still match its initial data.
+export async function discoverFixtureGraph(db, env, manifest, persist) {
+  validateStagingEnvironment(env); validateManifest(manifest)
+  if (manifest.version !== 3) return discoverCreatedSources(db, env, manifest, persist)
+  await discoverCreatedArticles(db, env, manifest, persist)
+  const fixture = await db.$transaction(tx => readFixtureSnapshot(tx, manifest, true), transactionOptions)
+  const updated = { ...manifest, sources: [...manifest.sources], catalogs: [...manifest.catalogs] }
+  for (const source of fixture.sources) if (!updated.sources.some(row => row.id === source.id)) updated.sources.push(source)
+  for (const { entry } of fixture.taxonomy.catalogs) if (!updated.catalogs.some(row => row.kind === entry.kind && row.id === entry.id)) updated.catalogs.push(entry)
+  for (const [field, termKey] of [['categoryLinks', 'categoryId'], ...Object.entries(MAPPING_MODELS).map(([field, [, termKey]]) => [field, termKey])]) {
+    updated[field] = [...manifest[field]]
+    for (const pair of fixture.taxonomy[field]) if (!updated[field].some(row => row.articleId === pair.articleId && row[termKey] === pair[termKey])) updated[field].push(pair)
+  }
+  validateManifest(updated)
+  await persist(updated)
+  for (const field of ['sources', 'catalogs', 'categoryLinks', ...Object.keys(MAPPING_MODELS)]) manifest[field] = updated[field]
+  return manifest
+}
+
+// Must be called BEFORE UI CREATE. A prefix or a successful-looking UI message
+// alone never authorizes adoption of a global catalog row without this journal.
+export async function reserveCatalogIntent(db, env, manifest, kind, key, expected, persist) {
+  validateStagingEnvironment(env); validateManifest(manifest)
+  demand(manifest.version === 3 && Object.hasOwn(CATALOG_MODELS, kind), 'CATALOG_INTENT_NOT_AUTHORIZED')
+  validateCatalogExpected(manifest, kind, key, expected)
+  const intent = { kind, key, identity: catalogIdentity(kind, expected), expected: { ...expected }, absent: true }
+  const updated = { ...manifest, catalogIntents: [...manifest.catalogIntents, intent] }
+  validateManifest(updated)
+  demand(!manifest.catalogs.some(row => row.kind === kind && Object.keys(row.identity).every(field => row.identity[field] === intent.identity[field])), 'CATALOG_INTENT_KEY_REUSED')
+  await db.$transaction(async tx => {
+    await fixturePreflight(tx, manifest)
+    const field = kind === 'instrument' ? 'canonicalKey' : 'slug'
+    demand(await tx[CATALOG_MODELS[kind]].count({ where: { [field]: intent.identity[field] } }) === 0, 'CATALOG_INTENT_COLLISION')
+  }, transactionOptions)
+  await persist(updated)
+  manifest.catalogIntents = updated.catalogIntents
+  return intent
+}
+
+export async function fixtureCatalog(db, manifest, kind, id) {
+  validateManifest(manifest)
+  demand(manifest.version === 3 && Object.hasOwn(CATALOG_MODELS, kind), 'CATALOG_NOT_IN_MANIFEST')
+  const known = manifest.catalogs.find(row => row.kind === kind && row.id === id)
+  demand(known, 'CATALOG_NOT_IN_MANIFEST')
+  return db.$transaction(async tx => {
+    await fixturePreflight(tx, manifest)
+    const row = await tx[CATALOG_MODELS[kind]].findFirst({ where: { id, ...known.identity } })
+    demand(row, 'CATALOG_IDENTITY_MISMATCH'); return row
+  }, transactionOptions)
+}
+
+export async function fixtureClassification(db, manifest, id) {
+  validateManifest(manifest)
+  demand(manifest.version === 3 && manifest.articles.some(row => row.id === id), 'ARTICLE_NOT_IN_MANIFEST')
+  return db.$transaction(async tx => {
+    await fixturePreflight(tx, manifest)
+    return { article: await fixtureArticle(tx, manifest, id),
+      topicMappings: await tx.articleTopicMapping.findMany({ where: { articleId: id }, orderBy: { topicId: 'asc' } }),
+      tagMappings: await tx.articleTagMapping.findMany({ where: { articleId: id }, orderBy: { tagId: 'asc' } }),
+      articleInstruments: await tx.articleInstrument.findMany({ where: { articleId: id }, orderBy: { instrumentId: 'asc' } }) }
+  }, transactionOptions)
+}
+
 export async function cleanupFixtures(db, env, manifest, { apply = false } = {}) {
   validateStagingEnvironment(env)
   validateManifest(manifest)
@@ -231,6 +324,7 @@ export async function cleanupFixtures(db, env, manifest, { apply = false } = {})
     for (const source of fixture.sources) demand((await tx.sourceReference.deleteMany({ where: {
       id: source.id, articleId: source.articleId, createdById: source.createdById,
     } })).count === 1, 'SOURCE_DELETE_COUNT_MISMATCH')
+    if (fixture.taxonomy) await deleteTaxonomyEdges(tx, fixture.taxonomy)
     if (fixture.logs.length) demand((await tx.auditLog.deleteMany({ where: {
       id: { in: fixture.logs.map(log => log.id) }, actorId: { in: userIds(manifest) }, action: 'AUTH_LOGIN', entityType: 'User', entityId: { in: userIds(manifest) },
     } })).count === fixture.logs.length, 'AUDIT_DELETE_COUNT_MISMATCH')
@@ -240,6 +334,7 @@ export async function cleanupFixtures(db, env, manifest, { apply = false } = {})
     if (fixture.users.length) demand((await tx.user.deleteMany({ where: {
       id: { in: fixture.users.map(user => user.id) }, email: { in: fixture.users.map(user => user.email) },
     } })).count === fixture.users.length, 'USER_DELETE_COUNT_MISMATCH')
+    if (fixture.taxonomy) await deleteTaxonomyCatalogs(tx, manifest, fixture.taxonomy)
     demand(Object.values(await remainingCounts(tx, manifest)).every(count => count === 0), 'FIXTURES_REMAIN_IN_TRANSACTION')
   }, transactionOptions)
   await assertDatabaseIdentity(db)
@@ -259,7 +354,7 @@ export async function fixtureArticle(db, manifest, id) {
 export async function fixtureSource(db, manifest, id) {
   validateManifest(manifest)
   const known = manifest.sources?.find(source => source.id === id)
-  demand(manifest.version === 2 && known, 'SOURCE_NOT_IN_MANIFEST')
+  demand(manifest.version >= 2 && known, 'SOURCE_NOT_IN_MANIFEST')
   await fixturePreflight(db, manifest)
   const row = await db.sourceReference.findFirst({ where: { id, articleId: known.articleId, createdById: known.createdById } })
   demand(row && row.id === known.id && row.articleId === known.articleId && row.createdById === known.createdById, 'SOURCE_IDENTITY_MISMATCH')
@@ -273,13 +368,22 @@ export async function alterFixture(db, env, manifest, kind, id, data, persist) {
   if (kind === 'user') {
     const user = manifest.users.find(user => user.id === id)
     demand(user && Object.keys(data).every(key => ['role', 'status'].includes(key))
-      && (data.role === undefined || data.role === user.role || (user.role === 'CREATOR' && data.role === 'CLIENT'))
+      && (data.role === undefined || data.role === user.role || (user.role === 'CREATOR' || manifest.version === 3 && ['ADMIN', 'SUPER_ADMIN'].includes(user.role)) && data.role === 'CLIENT')
       && (data.status === undefined || ['ACTIVE', 'SUSPENDED'].includes(data.status)), 'FIXTURE_MUTATION_REJECTED')
   } else if (kind === 'source') {
-    demand(manifest.version === 2 && manifest.sources.some(source => source.id === id)
+    demand(manifest.version >= 2 && manifest.sources.some(source => source.id === id)
       && Object.keys(data).length > 0 && Object.keys(data).every(key => ['title', 'publisher', 'url', 'note'].includes(key))
       && Object.entries(data).every(([key, value]) => key === 'title' ? typeof value === 'string' && value.length <= 180
         : value === null || typeof value === 'string' && value.length <= (key === 'publisher' ? 180 : 4000)), 'FIXTURE_MUTATION_REJECTED')
+  } else if (Object.hasOwn(CATALOG_MODELS, kind)) {
+    const allowed = ['name', 'updatedAt', ...(kind === 'tag' ? [] : ['isActive']), ...(['category', 'topic'].includes(kind) ? ['description'] : []), ...(kind === 'category' ? ['sortOrder'] : [])]
+    demand(manifest.version === 3 && manifest.catalogs.some(row => row.kind === kind && row.id === id)
+      && Object.keys(data).length > 0 && Object.keys(data).every(key => allowed.includes(key))
+      && (data.updatedAt === undefined || data.updatedAt instanceof Date && Number.isFinite(data.updatedAt.getTime()))
+      && (data.name === undefined || typeof data.name === 'string' && data.name.length <= 180)
+      && (data.description === undefined || data.description === null || typeof data.description === 'string' && data.description.length <= 4000)
+      && (data.isActive === undefined || typeof data.isActive === 'boolean')
+      && (data.sortOrder === undefined || Number.isInteger(data.sortOrder) && Math.abs(data.sortOrder) <= 10000), 'FIXTURE_MUTATION_REJECTED')
   } else {
     const article = manifest.articles.find(article => article.id === id)
     demand(kind === 'article' && article && Object.keys(data).every(key => ['status', 'authorId', 'updatedAt', 'editorSchemaVersion'].includes(key))
@@ -294,7 +398,7 @@ export async function alterFixture(db, env, manifest, kind, id, data, persist) {
       const expected = manifest.users.find(user => user.id === id)
       const current = await tx.user.findUnique({ where: { id }, select: { id: true, email: true, role: true, status: true } })
       demand(current && current.id === expected.id && current.email === expected.email
-        && (current.role === expected.role || expected.role === 'CREATOR' && current.role === 'CLIENT')
+        && (current.role === expected.role || (expected.role === 'CREATOR' || manifest.version === 3 && ['ADMIN', 'SUPER_ADMIN'].includes(expected.role)) && current.role === 'CLIENT')
         && ['ACTIVE', 'SUSPENDED'].includes(current.status), 'USER_FIXTURE_MISMATCH')
       demand((await tx.user.updateMany({ where: { AND: [
         { id, email: expected.email }, { role: current.role, status: current.status },
@@ -305,6 +409,12 @@ export async function alterFixture(db, env, manifest, kind, id, data, persist) {
       demand((await tx.sourceReference.updateMany({ where: {
         id, articleId: expected.articleId, createdById: expected.createdById,
       }, data })).count === 1, 'FIXTURE_MUTATION_COUNT_MISMATCH')
+    } else if (Object.hasOwn(CATALOG_MODELS, kind)) {
+      await fixturePreflight(tx, manifest)
+      const expected = manifest.catalogs.find(row => row.kind === kind && row.id === id)
+      const current = await tx[CATALOG_MODELS[kind]].findFirst({ where: { id, ...expected.identity } })
+      demand(current, 'CATALOG_IDENTITY_MISMATCH')
+      demand((await tx[CATALOG_MODELS[kind]].updateMany({ where: { id, ...expected.identity, updatedAt: current.updatedAt }, data })).count === 1, 'FIXTURE_MUTATION_COUNT_MISMATCH')
     } else {
       const expected = manifest.articles.find(article => article.id === id)
       const current = await tx.article.findUnique({ where: { id }, select: {
