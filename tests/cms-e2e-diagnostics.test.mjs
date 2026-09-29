@@ -3,7 +3,7 @@ import test from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { formatDiagnosticRecord, createDiagnosticOutputFilter } from '../scripts/cms-e2e/diagnostics.mjs'
 import SafeReporter from './e2e/safe-reporter.mjs'
-import { TAXONOMY_CASES } from '../scripts/cms-e2e/taxonomy-diagnostics.mjs'
+import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS } from '../scripts/cms-e2e/taxonomy-diagnostics.mjs'
 
 // Pure synthetic reporter/stream callbacks only. No Playwright runner, browser,
 // app, credential lookup, environment file or database is initialized here.
@@ -508,8 +508,9 @@ test('source registry matches every actual test declaration and controlled step 
   assert.deepEqual(titles.sort(), SOURCE_CASES.map(row => row[1]).sort())
   assert.equal(titles.length, 19)
   const steps = [...new Set([...source.matchAll(/test\.step\('([^']+)'/g)].map(match => match[1]))].sort()
-  assert.deepEqual(steps, [...new Set(SOURCE_CASES.flatMap(row => row[2]))].sort())
-  assert.equal(steps.length, 27)
+  assert.deepEqual(steps, [...new Set([...SOURCE_CASES.flatMap(row => row[2]),
+    'SRC_TEARDOWN_DISPOSE', 'SRC_TEARDOWN_CONTEXT_CLOSE', 'SRC_TEARDOWN_RECOVER', 'SRC_TEARDOWN_DISCONNECT'])].sort())
+  assert.equal(steps.length, 31)
 })
 
 test('all source steps pass the reporter and runner filter with exact failed assertion locations', () => {
@@ -568,7 +569,7 @@ test('TAX registry covers every static and expanded actual case with exact contr
   assert.equal(titles.length, 35)
   assert.equal(new Set(TAXONOMY_CASES.map(row => row[0])).size, 35)
   const steps = [...new Set([...source.matchAll(/test\.step\('([^']+)'/g)].map(match => match[1]))].sort()
-  assert.deepEqual(steps, [...new Set(TAXONOMY_CASES.map(row => row[2]))].sort())
+  assert.deepEqual(steps, [...new Set([...TAXONOMY_CASES.map(row => row[2]), ...TAX_ROUNDTRIP_STEPS])].sort())
 })
 
 test('TAX reporter retains failed assertions and filters unsafe titles files steps and raw fields', () => {
@@ -592,4 +593,40 @@ test('TAX reporter retains failed assertions and filters unsafe titles files ste
     assert.equal(parse(lines.at(-1)).record.caseId, 'UNKNOWN_CASE')
   }
   filter.end(); assert.equal(lines.join('').includes(PRIVATE), false)
+})
+
+test('TAX roundtrip phases identify helper failures without leaking locations or changing the final verdict', () => {
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  const [caseId, title] = TAXONOMY_CASES.find(row => row[0] === 'TAX-10/11')
+  const known = freeze(testCase(title, TAXONOMY_FILE))
+  for (const stepCode of TAX_ROUNDTRIP_STEPS) {
+    const phase = freeze({ category: 'test.step', title: stepCode, location: location(TAXONOMY_FILE, 320, 5) })
+    const helper = { category: 'expect', title: PRIVATE, parent: phase,
+      location: location('tests/e2e/cms-taxonomy-support.ts'), error: { message: PRIVATE,
+        location: location('tests/e2e/cms-taxonomy-support.ts') } }
+    reporter.onStepEnd(known, {}, helper)
+    const record = parse(lines.at(-1)).record
+    assert.equal(record.stepCode, stepCode)
+    assert.equal(record.status, 'failed')
+    assert.equal(record.assertionLocation, null)
+    assert.equal(record.assertionSource, null)
+    assert.deepEqual(record.stepLocation, phase.location)
+    for (const invalid of [
+      { ...record, caseId: 'TAX-24-LINKS' }, { ...record, stepCode: `${stepCode}_${PRIVATE}` },
+      { ...record, error: PRIVATE }, { ...record, assertionLocation: helper.location },
+    ]) assert.equal(formatDiagnosticRecord('DIAGNOSTIC', invalid), null)
+    reporter.onStepEnd(known, {}, phase)
+    assert.equal(parse(lines.at(-1)).record.status, 'passed')
+  }
+  reporter.onTestEnd(known, { status: 'failed', errors: [{ message: PRIVATE }] })
+  const result = { status: 'failed' }
+  assert.equal(reporter.onEnd(result), undefined)
+  assert.equal(result.status, 'failed')
+  filter.end()
+  assert.deepEqual(lines.slice(-2).map(parse).map(row => [row.kind, row.record.status]), [
+    ['CASE', 'failed'], ['RESULT', 'failed'],
+  ])
+  assert.equal(parse(lines.at(-2)).record.caseId, caseId)
+  assert.equal(lines.join('').includes(PRIVATE), false)
 })

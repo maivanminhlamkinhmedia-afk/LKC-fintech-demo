@@ -1,7 +1,7 @@
 import { isAbsolute, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { StringDecoder } from 'node:string_decoder'
-import { TAXONOMY_CASES } from './taxonomy-diagnostics.mjs'
+import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS } from './taxonomy-diagnostics.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
 const draftFile = 'tests/e2e/cms-draft.spec.ts'
@@ -9,6 +9,9 @@ const safetyFile = 'tests/e2e/cms-editor-safety.spec.ts'
 const autosaveFile = 'tests/e2e/cms-autosave.spec.ts'
 const sourcesFile = 'tests/e2e/cms-sources.spec.ts'
 const taxonomyFile = 'tests/e2e/cms-taxonomy.spec.ts'
+const sourceTeardownSteps = [
+  'SRC_TEARDOWN_DISPOSE', 'SRC_TEARDOWN_CONTEXT_CLOSE', 'SRC_TEARDOWN_RECOVER', 'SRC_TEARDOWN_DISCONNECT',
+]
 const formatSteps = [
   'FMT_LOGIN', 'FMT_INPUT', 'FMT_BOLD', 'FMT_LIST', 'FMT_CODE_BLOCK',
   'FMT_NO_WRITE', 'FMT_SAVE_NAVIGATE', 'FMT_DB', 'FMT_RELOAD',
@@ -83,8 +86,10 @@ const definitions = [
   ['SRC-20', 'SRC-20 dirty navigation cancellation retains source form and accepted leave has no followup', sourcesFile, ['SRC_NAVIGATION_CANCEL', 'SRC_NAVIGATION_LEAVE']],
   ['SRC-21', 'SRC-21 editor source links retain the autosave navigation guard', sourcesFile, ['SRC_EDITOR_LINKS']],
   ['SRC-23', 'SRC-23 source form labels keyboard errors and long URLs fit all viewports', sourcesFile, ['SRC_ACCESSIBLE_LAYOUT']],
-  ...TAXONOMY_CASES.map(([id, title, step]) => [id, title, taxonomyFile, [step]]),
-].map(([caseId, title, file = draftFile, steps = []]) => Object.freeze({ caseId, title, file, steps: Object.freeze(steps) }))
+  ...TAXONOMY_CASES.map(([id, title, step]) => [id, title, taxonomyFile,
+    id === 'TAX-10/11' ? [step, ...TAX_ROUNDTRIP_STEPS] : [step]]),
+].map(([caseId, title, file = draftFile, steps = []]) => Object.freeze({ caseId, title, file,
+  steps: Object.freeze(file === sourcesFile ? [...steps, ...sourceTeardownSteps] : steps) }))
 const byTitle = new Map(definitions.map(definition => [definition.title, definition]))
 const byId = new Map(definitions.map(definition => [definition.caseId, definition]))
 const unknownCase = Object.freeze({ caseId: 'UNKNOWN_CASE', file: null, steps: Object.freeze([]) })

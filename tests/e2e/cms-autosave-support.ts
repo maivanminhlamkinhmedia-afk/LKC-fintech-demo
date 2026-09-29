@@ -1,7 +1,14 @@
 import { expect, type Page, type Request } from '@playwright/test'
 
-export const isArticleAction = (request: Request) => request.method() === 'POST'
-  && 'next-action' in request.headers() && new URL(request.url()).pathname.startsWith('/creator/articles/')
+export const isArticleAction = (request: Request) => {
+  if (request.method() !== 'POST') return false
+  const action = request.headers()['next-action']
+  // The current draft form creates on /new and updates on /[id]/edit.
+  // Sibling sources/classification routes also POST Server Functions, including
+  // read-only picker searches. They must not count as saves or consume a hold.
+  return typeof action === 'string' && action.length > 0
+    && /^\/creator\/articles\/(?:new|[^/]+\/edit)$/.test(new URL(request.url()).pathname)
+}
 
 export async function pauseEditorClock(page: Page) {
   // Clean/new pages only, after hydration and before edits/composition (or after

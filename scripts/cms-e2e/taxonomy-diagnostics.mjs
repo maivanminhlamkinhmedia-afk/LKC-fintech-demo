@@ -30,3 +30,11 @@ export const TAXONOMY_CASES = [
   ...['assignment', 'deactivate', 'delete'].map(first => [`TAX-30-${first.toUpperCase()}`, `TAX-30 ${first} commits first in catalog attachment race without dangling links`, 'TAX_CATALOG_ATTACHMENT_RACE']),
 ].map(row => Object.freeze(row))
 Object.freeze(TAXONOMY_CASES)
+
+// TAX-10/11 only: static phase names disambiguate helper polls without exposing
+// their raw errors, action data, fixture IDs or database snapshots.
+export const TAX_ROUNDTRIP_STEPS = Object.freeze([
+  'TAX_ROUNDTRIP_SETUP', 'TAX_ROUNDTRIP_INITIAL_SAVE', 'TAX_ROUNDTRIP_NOOP',
+  'TAX_ROUNDTRIP_PRIMARY_SWITCH', 'TAX_ROUNDTRIP_PRIMARY_CLEAR', 'TAX_ROUNDTRIP_REPLACE', 'TAX_ROUNDTRIP_CLEAR',
+  'TAX_ROUNDTRIP_OBSERVER_READY', 'TAX_ROUNDTRIP_RESPONSE_READY', 'TAX_ROUNDTRIP_ACK',
+])

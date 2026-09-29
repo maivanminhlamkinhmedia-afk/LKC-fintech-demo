@@ -102,11 +102,20 @@ test.beforeAll(async () => {
   db = await connectStaging(process.env)
 })
 test.afterEach(async () => {
-  for (const release of releases.splice(0)) release()
-  try { await Promise.all(contexts.splice(0).map(context => context.close())) }
-  finally { if (db) await recover() }
+  await test.step('SRC_TEARDOWN_DISPOSE', async () => {
+    for (const release of releases.splice(0)) release()
+  })
+  try {
+    await test.step('SRC_TEARDOWN_CONTEXT_CLOSE', async () => {
+      await Promise.all(contexts.splice(0).map(context => context.close()))
+    })
+  } finally {
+    await test.step('SRC_TEARDOWN_RECOVER', async () => { if (db) await recover() })
+  }
 })
-test.afterAll(async () => { if (db) await db.$disconnect() })
+test.afterAll(async () => {
+  await test.step('SRC_TEARDOWN_DISCONNECT', async () => { if (db) await db.$disconnect() })
+})
 
 test('SRC-01 sources route denies anonymous non-CMS and foreign readers', async ({ browser }) => {
   await test.step('SRC_ACCESS', async () => {

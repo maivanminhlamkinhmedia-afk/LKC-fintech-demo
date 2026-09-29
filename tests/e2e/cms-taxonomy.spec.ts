@@ -307,72 +307,86 @@ test('TAX-09 bounded search pagination retains selected outside current page wit
 
 test('TAX-10/11 classification round trip primary replacement clear and no-op preserve unrelated fields', async ({ browser }) => {
   await test.step('TAX_SELECTION_ROUNDTRIP', async () => {
-    const { page } = await login(browser), id = await article(page, 'roundtrip')
-    const src = await source(page, id, 'Nguồn cần giữ'); const before = await read(id)
-    await open(page, id); for (const kind of kinds) await choose(page, seed(kind, 1))
-    await choose(page, seed('instrument', 7)); const instrument = await fixtureCatalog(db, manifest, 'instrument', seed('instrument', 7).id)
-    await page.getByLabel(`Chính: ${instrument.name}`, { exact: true }).check(); await saveClass(page)
-    const saved = await graph(id)
-    expect(saved.article.categoryId).toBe(seed('category', 1).id)
-    expect(saved.topicMappings).toEqual([{ articleId: id, topicId: seed('topic', 1).id }])
-    expect(saved.tagMappings).toEqual([{ articleId: id, tagId: seed('tag', 1).id }])
-    expect(saved.articleInstruments.filter((row: { isPrimary: boolean }) => row.isPrimary).map((row: { instrumentId: string }) => row.instrumentId)).toEqual([seed('instrument', 7).id])
-    expect(preserved(saved.article)).toEqual(preserved(before)); expect(await db.sourceReference.findUnique({ where: { id: src.id } })).toEqual(src)
-    await page.reload(); await acknowledgedReadonlyLoad(page)
-    for (const kind of kinds) await expect(selected(page, seed(kind, 1))).toBeVisible()
-    await expect(page.getByLabel(`Chính: ${instrument.name}`, { exact: true })).toBeChecked()
-    const noop = await hold(page, 'updateArticleClassification'); await saveSelection(page).click(); await noop.ready()
-    expect(await graph(id)).toEqual(saved); noop.release(); await acknowledged(page)
-
-    // Persist the primary change separately from removal, proving 0/1 primary
-    // while both instrument mappings continue to exist, then verify reload.
-    const otherInstrument = await fixtureCatalog(db, manifest, 'instrument', seed('instrument', 1).id)
-    await page.getByLabel(`Chính: ${otherInstrument.name}`, { exact: true }).check()
-    const switchPrimary = await hold(page, 'updateArticleClassification'); await saveSelection(page).click(); await switchPrimary.ready()
-    const switched = await graph(id)
-    expect(switched.articleInstruments.map((row: { instrumentId: string }) => row.instrumentId).sort()).toEqual([seed('instrument', 1).id, seed('instrument', 7).id].sort())
-    expect(switched.articleInstruments.filter((row: { isPrimary: boolean }) => row.isPrimary).map((row: { instrumentId: string }) => row.instrumentId)).toEqual([seed('instrument', 1).id])
-    expect(preserved(switched.article)).toEqual(preserved(before)); switchPrimary.release(); await acknowledged(page)
-    await page.reload(); await acknowledgedReadonlyLoad(page)
-    await expect(page.getByLabel(`Chính: ${otherInstrument.name}`, { exact: true })).toBeChecked()
-    await expect(page.getByLabel(`Chính: ${instrument.name}`, { exact: true })).not.toBeChecked()
-
-    await page.getByLabel('Không chọn công cụ chính', { exact: true }).check()
-    const clearPrimary = await hold(page, 'updateArticleClassification'); await saveSelection(page).click(); await clearPrimary.ready()
-    const withoutPrimary = await graph(id)
-    expect(withoutPrimary.articleInstruments.map((row: { instrumentId: string }) => row.instrumentId).sort()).toEqual([seed('instrument', 1).id, seed('instrument', 7).id].sort())
-    expect(withoutPrimary.articleInstruments.every((row: { isPrimary: boolean }) => row.isPrimary === false)).toBe(true)
-    expect(preserved(withoutPrimary.article)).toEqual(preserved(before)); clearPrimary.release(); await acknowledged(page)
-    await page.reload(); await acknowledgedReadonlyLoad(page)
-    await expect(page.getByLabel('Không chọn công cụ chính', { exact: true })).toBeChecked()
-    for (const term of [seed('instrument', 1), seed('instrument', 7)]) await expect(selected(page, term)).toBeVisible()
-
-    // A nonempty replacement is distinct from clearing the entire snapshot.
-    for (const term of [seed('topic', 1), seed('tag', 1), seed('instrument', 1)]) {
-      await selected(page, term).getByRole('button', { name: /^Gỡ / }).click()
-    }
-    const replacements = [seed('category', 7), seed('topic', 7), seed('tag', 7), seed('instrument', 8)]
-    for (const term of replacements) await choose(page, term)
-    const replaceSelection = await hold(page, 'updateArticleClassification'); await saveSelection(page).click(); await replaceSelection.ready()
-    const replaced = await graph(id)
-    expect(replaced.article.categoryId).toBe(seed('category', 7).id)
-    expect(replaced.topicMappings).toEqual([{ articleId: id, topicId: seed('topic', 7).id }])
-    expect(replaced.tagMappings).toEqual([{ articleId: id, tagId: seed('tag', 7).id }])
-    expect(replaced.articleInstruments.map((row: { instrumentId: string }) => row.instrumentId).sort()).toEqual([seed('instrument', 7).id, seed('instrument', 8).id].sort())
-    expect(replaced.articleInstruments.every((row: { isPrimary: boolean }) => row.isPrimary === false)).toBe(true)
-    expect(preserved(replaced.article)).toEqual(preserved(before)); expect(await db.sourceReference.findUnique({ where: { id: src.id } })).toEqual(src)
-    replaceSelection.release(); await acknowledged(page); await page.reload(); await acknowledgedReadonlyLoad(page)
-    for (const term of [...replacements, seed('instrument', 7)]) await expect(selected(page, term)).toBeVisible()
-    for (const kind of kinds) await expect(selected(page, seed(kind, 1))).toHaveCount(0)
-    for (const term of [...replacements, seed('instrument', 7)]) {
-      await selected(page, term).getByRole('button', { name: /^Gỡ / }).click()
-    }
-    await saveClass(page); const cleared = await graph(id)
-    expect(cleared.article.categoryId).toBeNull(); expect(cleared.topicMappings).toEqual([]); expect(cleared.tagMappings).toEqual([]); expect(cleared.articleInstruments).toEqual([])
-    expect(preserved(cleared.article)).toEqual(preserved(before))
-    await page.reload(); await acknowledgedReadonlyLoad(page)
-    await expect(page.locator('[data-selected-kind]')).toHaveCount(0)
-    await expect(page.getByLabel('Không chọn công cụ chính', { exact: true })).toBeChecked()
+    const { page, id, src, before, instrument } = await test.step('TAX_ROUNDTRIP_SETUP', async () => {
+      const { page } = await login(browser), id = await article(page, 'roundtrip')
+      const src = await source(page, id, 'Nguồn cần giữ'); const before = await read(id)
+      await open(page, id); for (const kind of kinds) await choose(page, seed(kind, 1))
+      await choose(page, seed('instrument', 7)); const instrument = await fixtureCatalog(db, manifest, 'instrument', seed('instrument', 7).id)
+      return { page, id, src, before, instrument }
+    })
+    const saved = await test.step('TAX_ROUNDTRIP_INITIAL_SAVE', async () => {
+      await page.getByLabel(`Chính: ${instrument.name}`, { exact: true }).check(); await saveClass(page)
+      const saved = await graph(id)
+      expect(saved.article.categoryId).toBe(seed('category', 1).id)
+      expect(saved.topicMappings).toEqual([{ articleId: id, topicId: seed('topic', 1).id }])
+      expect(saved.tagMappings).toEqual([{ articleId: id, tagId: seed('tag', 1).id }])
+      expect(saved.articleInstruments.filter((row: { isPrimary: boolean }) => row.isPrimary).map((row: { instrumentId: string }) => row.instrumentId)).toEqual([seed('instrument', 7).id])
+      expect(preserved(saved.article)).toEqual(preserved(before)); expect(await db.sourceReference.findUnique({ where: { id: src.id } })).toEqual(src)
+      await page.reload(); await acknowledgedReadonlyLoad(page)
+      for (const kind of kinds) await expect(selected(page, seed(kind, 1))).toBeVisible()
+      await expect(page.getByLabel(`Chính: ${instrument.name}`, { exact: true })).toBeChecked()
+      return saved
+    })
+    await test.step('TAX_ROUNDTRIP_NOOP', async () => {
+      const noop = await test.step('TAX_ROUNDTRIP_OBSERVER_READY', () => hold(page, 'updateArticleClassification')); await saveSelection(page).click(); await test.step('TAX_ROUNDTRIP_RESPONSE_READY', () => noop.ready())
+      expect(await graph(id)).toEqual(saved); noop.release(); await test.step('TAX_ROUNDTRIP_ACK', () => acknowledged(page))
+    })
+    await test.step('TAX_ROUNDTRIP_PRIMARY_SWITCH', async () => {
+      // Persist the primary change separately from removal, proving 0/1 primary
+      // while both instrument mappings continue to exist, then verify reload.
+      const otherInstrument = await fixtureCatalog(db, manifest, 'instrument', seed('instrument', 1).id)
+      await page.getByLabel(`Chính: ${otherInstrument.name}`, { exact: true }).check()
+      const switchPrimary = await test.step('TAX_ROUNDTRIP_OBSERVER_READY', () => hold(page, 'updateArticleClassification')); await saveSelection(page).click(); await test.step('TAX_ROUNDTRIP_RESPONSE_READY', () => switchPrimary.ready())
+      const switched = await graph(id)
+      expect(switched.articleInstruments.map((row: { instrumentId: string }) => row.instrumentId).sort()).toEqual([seed('instrument', 1).id, seed('instrument', 7).id].sort())
+      expect(switched.articleInstruments.filter((row: { isPrimary: boolean }) => row.isPrimary).map((row: { instrumentId: string }) => row.instrumentId)).toEqual([seed('instrument', 1).id])
+      expect(preserved(switched.article)).toEqual(preserved(before)); switchPrimary.release(); await test.step('TAX_ROUNDTRIP_ACK', () => acknowledged(page))
+      await page.reload(); await acknowledgedReadonlyLoad(page)
+      await expect(page.getByLabel(`Chính: ${otherInstrument.name}`, { exact: true })).toBeChecked()
+      await expect(page.getByLabel(`Chính: ${instrument.name}`, { exact: true })).not.toBeChecked()
+    })
+    await test.step('TAX_ROUNDTRIP_PRIMARY_CLEAR', async () => {
+      await page.getByLabel('Không chọn công cụ chính', { exact: true }).check()
+      const clearPrimary = await test.step('TAX_ROUNDTRIP_OBSERVER_READY', () => hold(page, 'updateArticleClassification')); await saveSelection(page).click(); await test.step('TAX_ROUNDTRIP_RESPONSE_READY', () => clearPrimary.ready())
+      const withoutPrimary = await graph(id)
+      expect(withoutPrimary.articleInstruments.map((row: { instrumentId: string }) => row.instrumentId).sort()).toEqual([seed('instrument', 1).id, seed('instrument', 7).id].sort())
+      expect(withoutPrimary.articleInstruments.every((row: { isPrimary: boolean }) => row.isPrimary === false)).toBe(true)
+      expect(preserved(withoutPrimary.article)).toEqual(preserved(before)); clearPrimary.release(); await test.step('TAX_ROUNDTRIP_ACK', () => acknowledged(page))
+      await page.reload(); await acknowledgedReadonlyLoad(page)
+      await expect(page.getByLabel('Không chọn công cụ chính', { exact: true })).toBeChecked()
+      for (const term of [seed('instrument', 1), seed('instrument', 7)]) await expect(selected(page, term)).toBeVisible()
+    })
+    const replacements = await test.step('TAX_ROUNDTRIP_REPLACE', async () => {
+      // A nonempty replacement is distinct from clearing the entire snapshot.
+      for (const term of [seed('topic', 1), seed('tag', 1), seed('instrument', 1)]) {
+        await selected(page, term).getByRole('button', { name: /^Gỡ / }).click()
+      }
+      const replacements = [seed('category', 7), seed('topic', 7), seed('tag', 7), seed('instrument', 8)]
+      for (const term of replacements) await choose(page, term)
+      const replaceSelection = await test.step('TAX_ROUNDTRIP_OBSERVER_READY', () => hold(page, 'updateArticleClassification')); await saveSelection(page).click(); await test.step('TAX_ROUNDTRIP_RESPONSE_READY', () => replaceSelection.ready())
+      const replaced = await graph(id)
+      expect(replaced.article.categoryId).toBe(seed('category', 7).id)
+      expect(replaced.topicMappings).toEqual([{ articleId: id, topicId: seed('topic', 7).id }])
+      expect(replaced.tagMappings).toEqual([{ articleId: id, tagId: seed('tag', 7).id }])
+      expect(replaced.articleInstruments.map((row: { instrumentId: string }) => row.instrumentId).sort()).toEqual([seed('instrument', 7).id, seed('instrument', 8).id].sort())
+      expect(replaced.articleInstruments.every((row: { isPrimary: boolean }) => row.isPrimary === false)).toBe(true)
+      expect(preserved(replaced.article)).toEqual(preserved(before)); expect(await db.sourceReference.findUnique({ where: { id: src.id } })).toEqual(src)
+      replaceSelection.release(); await test.step('TAX_ROUNDTRIP_ACK', () => acknowledged(page)); await page.reload(); await acknowledgedReadonlyLoad(page)
+      for (const term of [...replacements, seed('instrument', 7)]) await expect(selected(page, term)).toBeVisible()
+      for (const kind of kinds) await expect(selected(page, seed(kind, 1))).toHaveCount(0)
+      return replacements
+    })
+    await test.step('TAX_ROUNDTRIP_CLEAR', async () => {
+      for (const term of [...replacements, seed('instrument', 7)]) {
+        await selected(page, term).getByRole('button', { name: /^Gỡ / }).click()
+      }
+      await saveClass(page); const cleared = await graph(id)
+      expect(cleared.article.categoryId).toBeNull(); expect(cleared.topicMappings).toEqual([]); expect(cleared.tagMappings).toEqual([]); expect(cleared.articleInstruments).toEqual([])
+      expect(preserved(cleared.article)).toEqual(preserved(before))
+      await page.reload(); await acknowledgedReadonlyLoad(page)
+      await expect(page.locator('[data-selected-kind]')).toHaveCount(0)
+      await expect(page.getByLabel('Không chọn công cụ chính', { exact: true })).toBeChecked()
+    })
   })
 })
 
@@ -642,7 +656,15 @@ test('TAX-25/26 catalog text safety keyboard labels and responsive classificatio
     })
     let external = 0
     page.on('request', request => { if (new URL(request.url()).hostname === 'taxonomy-fixture.example.invalid') external++ })
-    await page.getByLabel('Tên', { exact: true }).fill('   '); await saveCatalog(page).click(); await expect(page.getByRole('alert')).toBeVisible()
+    await page.getByLabel('Tên', { exact: true }).fill('   '); await saveCatalog(page).click()
+    // Next also has a route-announcement alert. Assert the catalog validation
+    // error and its accessible field association, not an unrelated live region.
+    const validationAlert = page.getByRole('alert').and(error(page, 'VALIDATION_ERROR'))
+    await expect(validationAlert).toHaveCount(1); await expect(validationAlert).toBeVisible()
+    await expect(page.getByLabel('Tên', { exact: true })).toHaveAttribute('aria-invalid', 'true')
+    await expect(page.getByLabel('Tên', { exact: true })).toHaveAttribute('aria-describedby', 'taxonomy-name-error')
+    await expect(page.getByLabel('Tên', { exact: true })).toHaveAccessibleDescription('Vui lòng kiểm tra thông tin danh mục.')
+    await expect(page.getByLabel('Tên', { exact: true })).toBeFocused()
     await page.getByLabel('Tên', { exact: true }).fill(input.name)
     const barrier = await hold(page, 'createTaxonomy'); await saveCatalog(page).focus(); await page.keyboard.press('Enter'); await barrier.ready()
     const term = await createdTerm('topic', input); barrier.release(); await expect(saveCatalog(page)).toBeEnabled()
