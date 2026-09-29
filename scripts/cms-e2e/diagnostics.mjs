@@ -1,12 +1,14 @@
 import { isAbsolute, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { StringDecoder } from 'node:string_decoder'
+import { TAXONOMY_CASES } from './taxonomy-diagnostics.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
 const draftFile = 'tests/e2e/cms-draft.spec.ts'
 const safetyFile = 'tests/e2e/cms-editor-safety.spec.ts'
 const autosaveFile = 'tests/e2e/cms-autosave.spec.ts'
 const sourcesFile = 'tests/e2e/cms-sources.spec.ts'
+const taxonomyFile = 'tests/e2e/cms-taxonomy.spec.ts'
 const formatSteps = [
   'FMT_LOGIN', 'FMT_INPUT', 'FMT_BOLD', 'FMT_LIST', 'FMT_CODE_BLOCK',
   'FMT_NO_WRITE', 'FMT_SAVE_NAVIGATE', 'FMT_DB', 'FMT_RELOAD',
@@ -81,6 +83,7 @@ const definitions = [
   ['SRC-20', 'SRC-20 dirty navigation cancellation retains source form and accepted leave has no followup', sourcesFile, ['SRC_NAVIGATION_CANCEL', 'SRC_NAVIGATION_LEAVE']],
   ['SRC-21', 'SRC-21 editor source links retain the autosave navigation guard', sourcesFile, ['SRC_EDITOR_LINKS']],
   ['SRC-23', 'SRC-23 source form labels keyboard errors and long URLs fit all viewports', sourcesFile, ['SRC_ACCESSIBLE_LAYOUT']],
+  ...TAXONOMY_CASES.map(([id, title, step]) => [id, title, taxonomyFile, [step]]),
 ].map(([caseId, title, file = draftFile, steps = []]) => Object.freeze({ caseId, title, file, steps: Object.freeze(steps) }))
 const byTitle = new Map(definitions.map(definition => [definition.title, definition]))
 const byId = new Map(definitions.map(definition => [definition.caseId, definition]))
@@ -92,7 +95,7 @@ export const MAX_DIAGNOSTIC_LINE_LENGTH = 4096
 function sourceFile(file) {
   if (typeof file !== 'string' || file.length > 4096) return null
   const candidate = (isAbsolute(file) ? relative(repositoryRoot, file) : file).replaceAll('\\', '/')
-  return [draftFile, safetyFile, autosaveFile, sourcesFile].includes(candidate) ? candidate : null
+  return [draftFile, safetyFile, autosaveFile, sourcesFile, taxonomyFile].includes(candidate) ? candidate : null
 }
 
 export function diagnosticCase(test) {

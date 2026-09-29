@@ -1,7 +1,7 @@
 import { test, expect, type Browser, type BrowserContext, type Page, type Locator } from '@playwright/test'
 import type { Article, SourceReference } from '@prisma/client'
 import { connectStaging, demand, STAGING_BASE_URL } from '../../scripts/cms-e2e/guard.mjs'
-import { loadManifest, saveManifest, discoverCreatedArticles, discoverCreatedSources, fixtureArticle, alterFixture } from '../../scripts/cms-e2e/fixtures.mjs'
+import { loadManifest, saveManifest, discoverCreatedArticles, discoverCreatedSources, discoverFixtureGraph, fixtureArticle, alterFixture } from '../../scripts/cms-e2e/fixtures.mjs'
 import { countArticleActions, holdActionResponses, pauseEditorClock } from './cms-autosave-support'
 import { countSourceActions, holdSourceResponses } from './cms-sources-support'
 
@@ -17,6 +17,10 @@ let sequence = 0
 const contexts: BrowserContext[] = []
 const releases: (() => void)[] = []
 const persist = (value: unknown) => saveManifest(process.env.CMS_E2E_MANIFEST, value)
+// V3 recovery validates catalog edges as well as sources; legacy v2 retains its existing authority.
+const recover = () => manifest.version === 3
+  ? discoverFixtureGraph(db, process.env, manifest, persist)
+  : discoverCreatedSources(db, process.env, manifest, persist)
 const userId = (actor: Actor) => manifest.users.find(user => user.key === actor)!.id
 const path = (id: string) => `/creator/articles/${id}/sources`
 const body = (page: Page) => page.getByRole('textbox', { name: 'Nội dung bài viết', exact: true })
@@ -29,7 +33,7 @@ const read = async (id: string) => await fixtureArticle(db, manifest, id) as Art
 const withoutToken = (row: Article) => { const { updatedAt: _token, ...rest } = row; void _token; return rest }
 const acknowledge = (page: Page) => expect(page.getByRole('status').filter({ hasText: /^Đã lưu nguồn\.$/ })).toBeVisible()
 async function sources(id: string): Promise<SourceReference[]> {
-  await discoverCreatedSources(db, process.env, manifest, persist)
+  await recover()
   demand(manifest.articles.some(article => article.id === id), 'ARTICLE_NOT_IN_MANIFEST')
   return db.sourceReference.findMany({ where: { articleId: id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })
 }
@@ -93,14 +97,14 @@ async function verifyField(page: Page, label: string, value: string) { await exp
 test.beforeAll(async () => {
   demand(process.env.CMS_E2E_RUNNING === 'YES', 'USE_GUARDED_STAGING_RUNNER')
   manifest = await loadManifest(process.env.CMS_E2E_MANIFEST) as Manifest
-  demand(manifest.version === 2 && manifest.runId === process.env.CMS_E2E_RUN_ID, 'RUN_PROVENANCE_MISMATCH')
+  demand([2, 3].includes(manifest.version) && manifest.runId === process.env.CMS_E2E_RUN_ID, 'RUN_PROVENANCE_MISMATCH')
   credentials = JSON.parse(process.env.CMS_E2E_CREDENTIALS ?? '{}')
   db = await connectStaging(process.env)
 })
 test.afterEach(async () => {
   for (const release of releases.splice(0)) release()
   try { await Promise.all(contexts.splice(0).map(context => context.close())) }
-  finally { if (db) await discoverCreatedSources(db, process.env, manifest, persist) }
+  finally { if (db) await recover() }
 })
 test.afterAll(async () => { if (db) await db.$disconnect() })
 

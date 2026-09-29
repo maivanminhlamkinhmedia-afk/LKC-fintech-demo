@@ -1,0 +1,32 @@
+// Static reviewed browser inventory only; titles never enter diagnostic output.
+export const TAXONOMY_CASES = [
+  ['TAX-01', 'TAX-01 protected catalog and classification enforce anonymous role and ownership scope', 'TAX_ACCESS'],
+  ...['admin', 'super'].map(actor => [`TAX-02-${actor.toUpperCase()}`, `TAX-02 ${actor} creates all four catalog kinds through real forms`, 'TAX_CATALOG_CREATE']),
+  ['TAX-03', 'TAX-03 catalog metadata edits preserve identity article tokens and source rows', 'TAX_CATALOG_METADATA'],
+  ['TAX-05', 'TAX-05 instrument canonical identity normalizes case rejects reserved venue and duplicate key', 'TAX_INSTRUMENT_IDENTITY'],
+  ['TAX-06', 'TAX-06 catalog stale token conflicts future timestamps advance and no-op does not write', 'TAX_CATALOG_TOKEN'],
+  ['TAX-07', 'TAX-07 inactive attachments remain visible removable and cannot be newly added', 'TAX_INACTIVE'],
+  ['TAX-08', 'TAX-08 delete cancel unused rows and used guards preserve category and every mapping', 'TAX_DELETE_GUARDS'],
+  ['TAX-09', 'TAX-09 bounded search pagination retains selected outside current page without writes', 'TAX_SEARCH_PAGING'],
+  ['TAX-10/11', 'TAX-10/11 classification round trip primary replacement clear and no-op preserve unrelated fields', 'TAX_SELECTION_ROUNDTRIP'],
+  ['TAX-13', 'TAX-13 admin and super classify foreign articles without changing owner or source creator', 'TAX_ASSIGNMENT_SCOPE'],
+  ['TAX-14', 'TAX-14 editable statuses and unsupported documents preserve readonly selected metadata', 'TAX_READ_ONLY'],
+  ['TAX-15', 'TAX-15 simultaneous classification tabs have one winner and preserve the losing selection', 'TAX_TWO_TABS'],
+  ...['classification', 'autosave'].map(first => [`TAX-16-${first.toUpperCase()}`, `TAX-16 ${first} wins against the other stale article surface`, 'TAX_AUTOSAVE_CONFLICT']),
+  ...['create', 'update', 'delete'].flatMap(operation => ['classification', 'source'].map(first => [
+    `TAX-17-${first.toUpperCase()}-${operation.toUpperCase()}`, `TAX-17 ${first} wins against source ${operation} with the shared article token`, 'TAX_SOURCE_CONFLICT',
+  ])),
+  ['TAX-18', 'TAX-18 classification persists successive future DATETIME millisecond tokens and rejects stale noop', 'TAX_ARTICLE_TOKEN'],
+  ['TAX-19-ACTOR', 'TAX-19 revoked actor or session keeps classification draft and does not redirect mutation', 'TAX_ACTOR_REVOKED'],
+  ['TAX-19-PARENT', 'TAX-19 changed article owner or status blocks classification with input preserved', 'TAX_PARENT_REVOKED'],
+  ['TAX-20', 'TAX-20 revoked admin or expired session stops catalog writes without discarding input', 'TAX_ADMIN_REVOKED'],
+  ['TAX-21', 'TAX-21 both panels stay manual and pending double submissions dispatch one write', 'TAX_MANUAL_SINGLE_FLIGHT'],
+  ['TAX-22-CATALOG', 'TAX-22 lost real catalog create ACK blocks retries and recovery adopts only reserved identity', 'TAX_CATALOG_UNKNOWN_ACK'],
+  ['TAX-22-CLASSIFICATION', 'TAX-22 lost classification ACK preserves selection and explicit reload never resubmits', 'TAX_CLASSIFICATION_UNKNOWN_ACK'],
+  ['TAX-23', 'TAX-23 offline blocks dispatch and reconnect requires explicit manual save on both panels', 'TAX_OFFLINE'],
+  ['TAX-24-PANEL', 'TAX-24 native navigation cancel preserves selections and accepted leave ignores late ACK', 'TAX_PANEL_NAVIGATION'],
+  ['TAX-24-LINKS', 'TAX-24 classification links preserve editor debounce and dirty source drafts', 'TAX_LINKS_REGRESSION'],
+  ['TAX-25/26', 'TAX-25/26 catalog text safety keyboard labels and responsive classification remain usable', 'TAX_ACCESSIBLE_TEXT'],
+  ...['assignment', 'deactivate', 'delete'].map(first => [`TAX-30-${first.toUpperCase()}`, `TAX-30 ${first} commits first in catalog attachment race without dangling links`, 'TAX_CATALOG_ATTACHMENT_RACE']),
+].map(row => Object.freeze(row))
+Object.freeze(TAXONOMY_CASES)

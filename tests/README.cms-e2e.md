@@ -1,9 +1,17 @@
-# CMS staging E2E — CMS-005, CMS-006 and CMS-007
+# CMS staging E2E — CMS-005 through CMS-008
 
 This is a **staging-only** harness. Local implementation/review runs unit mocks,
 lint/type checks and discovery only. No database, browser installation, tunnel or
 staging run is part of local validation. CMS-004 fixtures were already cleaned;
 do not run its cleanup script or recreate its accounts.
+
+Current implementation checkpoint: **CMS-008 local**, new manifest **v3** and
+**90 discovered cases = 55 baseline + 35 TAX**. This is discovery only;
+CMS-008 browser/MariaDB/real cleanup are **NOT RUN**. Prior CMS-007 release
+evidence remains historical. Manual production UAT for the project is
+**DEFERRED to project end** under the PO decision in
+[ACCEPTANCE](../docs/cms/ACCEPTANCE.md), never relabeled PASS and not a blocker
+for this separately authorized local implementation.
 
 ## Safe local checks
 
@@ -15,7 +23,7 @@ or read `.env`. The local implementation report records the filtered wrapper and
 actual commands. In that filtered child process the checks are:
 
 ```text
-node --test tests/cms-e2e-harness.test.mjs tests/cms-e2e-diagnostics.test.mjs
+node --test tests/cms-e2e-harness.test.mjs tests/cms-e2e-taxonomy-harness.test.mjs tests/cms-e2e-diagnostics.test.mjs
 node node_modules/@playwright/test/cli.js test --list
 ```
 
@@ -86,9 +94,11 @@ The wrapper performs the following ordered operations:
 4. Record the exact Git HEAD and new `BUILD_ID`, and recheck checkout provenance.
 5. Lazily create the staging Prisma client; verify `SELECT DATABASE()` and
    `CURRENT_USER()` against the allowlist before fixture writes.
-6. Write a run manifest, then create exactly six accounts and the declared article
-   fixtures in a Serializable transaction. Passwords are random in memory; only
-   hashes enter the database. No AuthorProfile is created, exercising that case.
+6. Write a v3 run manifest, then create exactly six accounts, the declared article
+   fixtures and 108 exact catalog seed rows (27 per kind) in a Serializable
+   transaction. All catalog IDs/natural keys are checked absent before any write.
+   Passwords are random in memory; only hashes enter the database. No AuthorProfile
+   is created, exercising that case. Catalog seeds are not assigned to baseline articles.
 7. Start the snapshot's production app through Node's Next CLI with explicit
    `--hostname 127.0.0.1 --port 3001`. Windows never invokes the Unix-style npm
    `start` script. Runtime receives the validated staging URL and a fresh auth
@@ -100,11 +110,12 @@ The wrapper performs the following ordered operations:
    articles and sources belonging to this exact fixture graph, and perform verified cleanup
    in `finally`, whether browser tests passed or failed.
 
-Run lock, manifests and build snapshots are ignored artifacts. Manifest v2 contains
+Run lock, manifests and build snapshots are ignored artifacts. Legacy manifest v2 contains
 run IDs, fixture user identities, exact article IDs/approved fixture owners and
 source IDs with their exact article and creator IDs;
-they do not contain passwords, password hashes, cookies or auth state. Article
-IDs remain tracked when the test changes a slug. Browser-created slugs must retain
+they do not contain passwords, password hashes, cookies or auth state.
+V3 adds exact catalog identities, reserved CREATE intents and relation pairs as
+described below. IDs remain tracked when the test changes a slug. Browser-created slugs must retain
 the run namespace; unexpected ownership or namespace changes stop cleanup.
 
 ## Cases and evidence levels
@@ -207,9 +218,9 @@ reporter and runner filtering, reject cross-case/file/suffix/payload forgeries,
 and preserve failed verdicts. There are 17 diagnostics unit cases; no raw action
 body, DOM, cookie, clipboard, error message or response is emitted.
 
-## CMS-007 sources: current discovery and evidence map
+## CMS-007 sources: retained baseline and evidence map
 
-Local discovery now finds **55 cases = 20 EDIT + 16 AUTO + 19 SRC**. All 36
+The CMS-007 checkpoint discovered **55 cases = 20 EDIT + 16 AUTO + 19 SRC**. All 36
 baseline cases and their assertions are retained. The FMT_CODE_BLOCK real-focus
 wait/raw textContent check, AUTO-21 native cancelled-reload trigger and native
 clipboard flows are unchanged. Discovery is **LOCAL PASS**, while all CMS-007
@@ -269,7 +280,143 @@ for source-only request matching/counting, exact fetched-response forwarding,
 held/dropped ACKs, disposal and fetch-error propagation. Its mocked callbacks are
 not evidence of real browser or DB behavior.
 
-## Cleanup and interrupted-run recovery
+## CMS-008 taxonomy: v3 inventory, recovery and browser mapping
+
+`createFixturePlan()` now creates v3; explicit `createFixturePlan(runId, 1|2)`
+exists for historical contract tests. The original 35 EDIT/SRC harness tests use
+an explicit v2 setup, retaining their assertions and five-counter expectations.
+The source browser setup accepts validated v2/v3 and dispatches full graph
+recovery for v3; its source business assertions remain unchanged. The 20 EDIT,
+16 AUTO and 19 SRC baseline case objectives are retained, including FMT_CODE_BLOCK,
+AUTO-21 native cancelled reload, native clipboard and persisted DATETIME(3).
+
+V3 fields, in addition to the existing users/articles/profiles/sources:
+
+| Field | Exact journal data |
+|---|---|
+| `catalogs` | `{kind,id,identity,seedKey}`; slug identity for category/topic/tag, or canonicalKey/symbol/instrumentType/exchange for instrument. `seedKey` is `seed-01`..`seed-27` for setup rows and null for UI-created rows. |
+| `catalogIntents` | `{kind,key,identity,expected,absent:true}`; run-bound natural identity and full canonical synthetic initial create fields, persisted only after exact-key absence check. |
+| `categoryLinks` | `{articleId,categoryId}` pairs; both endpoints validated, including reverse references from any article. |
+| `topicMappings` / `tagMappings` | `{articleId,topicId}` / `{articleId,tagId}` composite keys. |
+| `articleInstruments` | `{articleId,instrumentId}` composite keys; isPrimary is mutable mapping data, not identity. |
+
+Seeds provide 26 active plus one inactive category/topic/instrument and 27 tags
+(tags have no active flag). Seed names and slug/key identities are run-specific;
+the inventory supports real server pagination beyond page size 25. All seed IDs,
+keys and immutable tuples are deterministic from this run. Catalog terms are
+never assigned to shared baseline article fixtures during setup.
+
+Before every new intended UI catalog CREATE, browser helpers use
+`catalogCreateData(manifest, kind, key, overrides)` for canonical synthetic fields
+and `reserveCatalogIntent(db, env, manifest, kind, key, expected, persist)`.
+Reservation validates strict keys and normalized expected values, verifies the
+whole fixture graph, checks the exact natural key is absent, then persists the
+intent before the browser dispatch. No global row is adopted because its title
+or key merely starts with a prefix. Duplicate-key rejection tests refer only to
+already known exact owned identities; tombstoned keys are never reused.
+
+`discoverFixtureGraph` validates articles first, then in one read transaction
+queries catalogs by known exact IDs OR reserved exact natural keys, mappings by
+either exact endpoint, and all reverse category references. A CREATE without a
+journaled returned ID must match the intent's full initial metadata and immutable
+identity. Once ID is journaled, metadata may change through actual UI tests while
+identity remains immutable. Known IDs remain in the lookup even if their keys
+drift. Source ownership still requires both exact article and creator and retains
+known-ID drift detection. The entire catalog/source/mapping candidate graph must
+pass before any new identity/pair is journaled. Missing/deleted IDs remain as
+tombstones; replaced keys, mismatched metadata, foreign endpoints, duplicate or
+conflicting identities stop recovery and cleanup.
+
+Catalogs have no creator column. Recovery establishes authority through a
+pre-reserved run identity, proven absence, matching initial metadata and exclusive
+guarded-run conditions; it does not prove who created an arbitrary global row.
+Failed or uncertain fixture setup never reaches automatic recovery/deletion:
+the actual runner's `cleanupConfirmedFixtures` gate requires a true committed
+flag before invoking cleanup. Retain manifests for operator review on ambiguity.
+
+`fixtureCatalog` and `fixtureClassification` perform full-graph preflight and
+scoped reads inside a transaction. `alterFixture` accepts only exact owned catalog
+metadata/active/token changes needed for scenarios; identity and arbitrary SQL
+remain prohibited. V3 permits controlled fixture admin/super demotion to CLIENT
+and restoration for the revoke tests; legacy role-mutation scope is unchanged.
+
+Cleanup v3 validates the complete graph before destructive writes, then in one
+Serializable transaction deletes sources, exact mapping pairs, clears exact
+owned category edges, deletes exact login logs/articles/users, rechecks catalog
+references and deletes catalog rows. Catalog deletes are finite OR batches of
+exact ID+slug/key/immutable tuple with exact affected counts, not prefix deletes.
+Any intermediate failure rolls back the whole graph. Both in-transaction and
+post-commit verification require all **13 counters** to be zero:
+
+```json
+{"articles":0,"profiles":0,"users":0,"logs":0,"sources":0,"categories":0,"topics":0,"tags":0,"instruments":0,"categoryLinks":0,"topicMappings":0,"tagMappings":0,"articleInstruments":0}
+```
+
+Catalog counters include reserved keys as well as known IDs, including potential
+lost-ACK orphan rows. Mapping/category counters cover both directions. A fixture
+article linked to a foreign term or a fixture term referenced by a foreign article
+blocks the entire batch. No Cascade/SetNull fallback, FK disabling or relation
+detachment is used to make foreign references disappear.
+
+Legacy v1/v2 journals are not upgraded or given taxonomy fields. They retain the
+existing five-counter output contract; v1 still forbids sources, v2 still forbids
+taxonomy links/catalog deletion. Both runner and cleanup CLI explicitly dispatch
+v3 recovery; source hooks delegate to full graph recovery on v3 as well.
+
+The local harness result is **57/57 PASS = 35 legacy + 22 v3 tests**. V3 tests
+exercise strict identities/intents, pre-create collisions, lost ACKs and initial
+metadata mismatch, immutable drift/key replacement, tombstones, journal failure,
+full-batch validation, both endpoints for all relation types, category reverse
+references, exact relation counts, scoped reads/mutations, legacy permissions,
+rollback at child/parent/catalog stages, uncertain setup, and each of 13 counters
+individually blocking verification in TX and after commit. These are mocked DB
+tests, not evidence that real cleanup succeeded.
+
+The 35 TAX cases add these browser assertions to the unchanged 55 baseline cases:
+
+| TAX scenarios | Browser case grouping / static steps | Required real staging evidence |
+|---|---|---|
+| 01 | `TAX-01` / `TAX_ACCESS` | Anonymous/role catalog guards and own/foreign classification route scope. Exhaustive direct-action matrix additionally local. |
+| 02 | admin/super `TAX-02` / `TAX_CATALOG_CREATE` | All four catalog kinds created through UI under reserved identities, actual ACK/DB/reload/search. |
+| 03 | `TAX-03` / `TAX_CATALOG_METADATA` | Mutable metadata/active/sort edits preserve identity, createdAt, article token and source rows. |
+| 05 | `TAX-05` / `TAX_INSTRUMENT_IDENTITY` | Canonical instrument case/venue, reserved prefix rejection, duplicate key and immutable edit identity. |
+| 06 | `TAX-06` / `TAX_CATALOG_TOKEN` | Real stale catalog token conflict, no-op and future persisted +1ms across successive writes. |
+| 07 | `TAX-07` / `TAX_INACTIVE` | Attached inactive entries remain visible/removable; new selection blocked, reactivation eligible, stale options rechecked. |
+| 08 | `TAX-08` / `TAX_DELETE_GUARDS` | Cancel/unused delete all kinds, used terms denied without detaching category/mappings. |
+| 09 | `TAX-09` / `TAX_SEARCH_PAGING` | Real bounded search/page and empty results, selections retained outside page without writes. |
+| 10,11 | `TAX-10/11` / `TAX_SELECTION_ROUNDTRIP` | Four-kind assignment/primary, exact DB+reload, clear/no-op and unrelated article/source fields preserved. |
+| 13 | `TAX-13` / `TAX_ASSIGNMENT_SCOPE` | Admin/super classification of foreign article without changing article/source creator ownership. |
+| 14 | `TAX-14` / `TAX_READ_ONLY` | DRAFT/CHANGES_REQUESTED write; eight other statuses and unsupported document read-only, selected metadata retained. |
+| 15 | `TAX-15` / `TAX_TWO_TABS` | Simultaneous requests, one winner, stale loser retains selection and explicitly reloads. |
+| 16 | two commit-order `TAX-16` cases / `TAX_AUTOSAVE_CONFLICT` | Classification vs autosave same token, real held response, losing input and exact DB state. |
+| 17 | six `TAX-17` cases / `TAX_SOURCE_CONFLICT` | Create/update/delete source races in both commit orders, same parent token and actual source/selection outcome. |
+| 18 | `TAX-18` / `TAX_ARTICLE_TOKEN` | Consecutive future DATETIME(3) classification tokens +1ms; stale no-op rejected. |
+| 19,20 | actor/parent `TAX-19` and admin `TAX-20` / `TAX_ACTOR_REVOKED`, `TAX_PARENT_REVOKED`, `TAX_ADMIN_REVOKED` | Session/status/role/owner changes after opening safely deny without redirect/input loss or unauthorized write. |
+| 21 | `TAX-21` / `TAX_MANUAL_SINGLE_FLIGHT` | Both panels idle/change have zero mutations; pending competing/double submits dispatch once. |
+| 22 | two `TAX-22` cases / `TAX_CATALOG_UNKNOWN_ACK`, `TAX_CLASSIFICATION_UNKNOWN_ACK` | Actual commit with response dropped; barrier blocks retries, exact reserved recovery, explicit reload no duplicate. |
+| 23 | `TAX-23` / `TAX_OFFLINE` | Known offline zero dispatch, reconnect never auto-saves, manual recovery. |
+| 24 | two `TAX-24` cases / `TAX_PANEL_NAVIGATION`, `TAX_LINKS_REGRESSION` | Native beforeunload/app-link/form cancellation, accepted leave/late ACK, editor debounce and dirty source links retained. |
+| 25,26 | `TAX-25/26` / `TAX_ACCESSIBLE_TEXT` | Literal HTML-like metadata, keyboard/errors/labels, both surfaces at 390/768/1280 without overflow. |
+| 30 | three order `TAX-30` cases / `TAX_CATALOG_ATTACHMENT_RACE` | Assignment-first, deactivate-first, delete-first genuine serial outcomes with no lost category or dangling references. |
+| 31 | All 55 EDIT/AUTO/SRC baseline cases in the same run | Baseline business assertions, native paste/focus/reload, rich transport and token precision retain their own PASS evidence. |
+| 32 | Every case through guarded hooks/runner | Fresh reviewed commit/runId/BUILD_ID, actual exit0, full exact graph cleanup with 13 zeros and VERIFIED. |
+
+There are **27 L+B scenarios and 5 L-only (TAX-04/12/27/28/29)**. Strict hostile
+data, limits/malformed arrays, rollback injection, query order, post-commit cache
+failure and Flight/lifecycle/legacy anomalies require local tests; a browser
+route result alone cannot prove them. Browser counts refer to real discovered
+`test()` instances, not scenario IDs.
+
+Taxonomy response counters distinguish mutation and search actions by exact public
+Next client action references AND route, with no private manifest/encryption-key
+read. Source, editor and login traffic are excluded. Response barriers forward
+the real authenticated request and only hold/drop its real ACK; no synthetic
+success or relaxed authorization. The safe registry uses exact static title/file/
+step identities in `taxonomy-diagnostics.mjs`; raw metadata, errors, payloads and
+headers never enter reporter output. Preserve retries0, one worker, artifact
+suppression, lock/build provenance and actual-process exit requirements.
+
+## Legacy v1/v2 cleanup and common interrupted-run recovery
 
 Normal cleanup revalidates both URL and actual server identity. It refuses:
 
@@ -400,7 +547,8 @@ Location fields have deliberately distinct meanings:
   field supplied the coordinate; `null` if none is available.
 
 Only `tests/e2e/cms-draft.spec.ts`, `tests/e2e/cms-editor-safety.spec.ts`,
-`tests/e2e/cms-autosave.spec.ts` and `tests/e2e/cms-sources.spec.ts`
+`tests/e2e/cms-autosave.spec.ts`, `tests/e2e/cms-sources.spec.ts` and
+`tests/e2e/cms-taxonomy.spec.ts`
 with positive integer line/column values are allowed. Absolute source paths are
 normalized to these approved repository-relative paths. Missing/disallowed
 locations are `null`; no stack parsing, line-number guessing or substitution of
@@ -425,7 +573,7 @@ a suite PASS. Unit tests exercise synthetic failures, hostile output metadata
 and chunk boundaries without starting Playwright/browser/DB.
 
 The next staging run requires **Claude independent review and CI PASS for the
-exact CMS-007 commit**, followed by separately authorized Claude staging
+exact CMS-008 commit**, followed by separately authorized Claude staging
 QA. The previous commit's CI/staging results do not satisfy that gate. Keep the
 existing trace/video/screenshot suppression, `preserveOutput: 'never'`,
 `PLAYWRIGHT_NO_COPY_PROMPT=1`, one worker, zero retries, provenance, lock and fixture
