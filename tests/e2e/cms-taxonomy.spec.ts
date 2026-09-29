@@ -273,6 +273,8 @@ test('TAX-07 inactive attachments remain visible removable and cannot be newly a
 async function acknowledgedReadonlyLoad(page: Page) { await expect(page.getByRole('heading', { name: 'Phân loại bài viết', exact: true })).toBeVisible() }
 
 test('TAX-08 delete cancel unused rows and used guards preserve category and every mapping', async ({ browser }) => {
+  // Four-kind delete/cancel/used guards and full-graph checks reached the 60s deadline in staging.
+  test.setTimeout(120_000)
   await test.step('TAX_DELETE_GUARDS', async () => {
     const { page, context } = await login(browser, 'admin'), id = await article(page, 'delete-guards')
     await open(page, id); for (const kind of kinds) await choose(page, seed(kind, 5)); await saveClass(page)
