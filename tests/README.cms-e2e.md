@@ -579,3 +579,68 @@ existing trace/video/screenshot suppression, `preserveOutput: 'never'`,
 `PLAYWRIGHT_NO_COPY_PROMPT=1`, one worker, zero retries, provenance, lock and fixture
 guards. Do not run CMS-004 cleanup. See
 [diagnostic implementation report](../docs/cms/reports/CMS-005-staging-diagnostics.md).
+
+## CMS-008 TAX-08 / TAX-10 timeout timing
+
+The existing `DISCOVERY`, `CASE`, `DIAGNOSTIC`, and `RESULT` shapes remain
+compatible. A new `CMS_E2E TIMING` record is emitted only for TAX-08 and TAX-10/11,
+and validated by the same reporter/runner formatter. No raw errors or request
+metadata are enabled. It contains exact keys:
+
+`caseId`, `phaseCode`, `scope`, `status`, `durationMs`, `testOffsetMs`,
+`bodyState`, `bodyElapsedMs`, `testTimeoutMs`, `location`.
+
+- `scope` is `phase`, `assertion`, `hook`, or `fixture`; `status` is `started`,
+  `passed`, or `failed`. `started` records have zero `durationMs`. They make a
+  last entered operation visible even when interruption prevents its completion.
+- `durationMs` is the rounded public Playwright step duration; `testOffsetMs`
+  is that step's public start time minus the result start time. These are
+  structured worker wall-clock metadata, independent of `page.clock`.
+- `bodyState` is `notStarted`, `running`, or `ended`. `bodyElapsedMs` is zero
+  before the explicit body step, elapsed from its start while running, and
+  frozen at its duration once it ends. It never substitutes `result.duration`.
+- All numeric fields must be finite integers in `[0, 3600000]`. `testTimeoutMs`
+  is the public configured test timeout, not a computed remaining allowance.
+  Locations retain the existing source allowlist. Unknown fields/codes/cases,
+  invalid enums, negative/nonfinite/oversized numbers and oversized lines are
+  rejected; test stdout cannot forge reporter records.
+
+TAX-10/11 replacement wraps the existing `choose()` calls in fixed
+`TAX_REPLACE_CATEGORY`, `TAX_REPLACE_TOPIC`, `TAX_REPLACE_TAG`, and
+`TAX_REPLACE_INSTRUMENT` steps. Their assertion `started`/end records identify
+the kind, assertion onset and actual wait duration without logging query/ID/name.
+`TAX_GRAPH_RECOVER` and `TAX_GRAPH_SNAPSHOT` measure the unchanged full checks.
+Teardown records distinguish `TAX_TEARDOWN_DISPOSE`, `CONTEXT_CLOSE`, `RECOVER`
+and `DISCONNECT` (each with the `TAX_TEARDOWN_` prefix). Hook titles are mapped
+only through fixed `PW_*` codes; fixture names are never printed (`PW_FIXTURE`).
+
+Interpretation for installed Playwright 1.63.0:
+
+- Default fixture setup/beforeEach/body consume the test's default slot.
+  afterEach and ordinary test-fixture teardown get a **fresh shared slot**.
+  beforeAll and afterAll each get a separate slot; custom-timeout fixtures may
+  also have their own slots. Do not subtract body duration from teardown budget.
+- `testOffsetMs` includes beforeAll/setup lifecycle time; it is **not exact
+  default-slot consumption**. Body elapsed excludes setup/beforeEach and measures
+  the body callback span. An overdue callback may continue into teardown, so even
+  that span is not an exact slot counter or remaining allowance. Public reporter
+  metadata does not expose the active-slot counter at assertion onset. Wall-clock adjustments can also
+  affect offsets; negative/invalid values are dropped, not clamped into evidence.
+- `PW_AFTER_HOOKS` also contains afterAll work, so its full duration is not the
+  afterEach slot counter. `result.duration` combines default and after-hooks
+  slot elapsed values, excluding the separate all-hook slots; it is neither body
+  duration nor full testBegin-to-end wall time.
+- Compare the body elapsed, assertion onset/duration and final CASE status.
+  An interrupted wait shorter than its configured 10-second expect budget near
+  the 60-second body limit differs from a full expect failure with ample body
+  time. Neither alone identifies a slow/missing search response. A passed body
+  followed by a timedOut CASE requires checking teardown/hook/fixture timing.
+  Timeout does not cancel arbitrary promises: a step can settle PASS after its
+  slot expires while the CASE remains timedOut. Check timings and final verdict
+  together, not just the last controlled step's status.
+
+Timeout/retry settings, all 90 cases, assertions, ownership/identity/full-graph
+checks, journal writes and cleanup guards remain unchanged. These diagnostics
+do not turn a timedOut CASE or hook failure into PASS. Any subsequent staging
+execution still requires review, CI, explicit authorization and the guarded
+runner; local synthetic probes do not establish a staging root cause.

@@ -1,7 +1,7 @@
 import { isAbsolute, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { StringDecoder } from 'node:string_decoder'
-import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS } from './taxonomy-diagnostics.mjs'
+import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS, TAX_TIMING_BODIES, TAX_TIMING_HOOKS } from './taxonomy-diagnostics.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
 const draftFile = 'tests/e2e/cms-draft.spec.ts'
@@ -87,7 +87,8 @@ const definitions = [
   ['SRC-21', 'SRC-21 editor source links retain the autosave navigation guard', sourcesFile, ['SRC_EDITOR_LINKS']],
   ['SRC-23', 'SRC-23 source form labels keyboard errors and long URLs fit all viewports', sourcesFile, ['SRC_ACCESSIBLE_LAYOUT']],
   ...TAXONOMY_CASES.map(([id, title, step]) => [id, title, taxonomyFile,
-    id === 'TAX-10/11' ? [step, ...TAX_ROUNDTRIP_STEPS] : [step]]),
+    [step, ...(id === 'TAX-10/11' ? TAX_ROUNDTRIP_STEPS : []),
+      ...(Object.hasOwn(TAX_TIMING_BODIES, id) ? [...TAX_TEARDOWN_STEPS, ...TAX_GRAPH_STEPS] : [])]]),
 ].map(([caseId, title, file = draftFile, steps = []]) => Object.freeze({ caseId, title, file,
   steps: Object.freeze(file === sourcesFile ? [...steps, ...sourceTeardownSteps] : steps) }))
 const byTitle = new Map(definitions.map(definition => [definition.title, definition]))
@@ -96,6 +97,7 @@ const unknownCase = Object.freeze({ caseId: 'UNKNOWN_CASE', file: null, steps: O
 const caseStatuses = ['passed', 'failed', 'timedOut', 'skipped', 'interrupted', 'unknown']
 const resultStatuses = ['passed', 'failed', 'timedout', 'interrupted', 'unknown', 'infrastructure-error-details-redacted']
 export const MAX_DIAGNOSTIC_LINE_LENGTH = 4096
+export const MAX_TIMING_MS = 3_600_000
 
 function sourceFile(file) {
   if (typeof file !== 'string' || file.length > 4096) return null
@@ -128,6 +130,8 @@ function wireLocation(location, file) {
     && location.file === file && coordinate(location.line) && coordinate(location.column)
 }
 
+function milliseconds(value) { return Number.isSafeInteger(value) && value >= 0 && value <= MAX_TIMING_MS }
+
 // Both reporter and runner use this schema. No free text, absolute paths or
 // extra fields can survive the runner's second validation boundary.
 export function formatDiagnosticRecord(kind, record) {
@@ -143,6 +147,24 @@ export function formatDiagnosticRecord(kind, record) {
     const definition = byId.get(record.caseId) ?? (record.caseId === unknownCase.caseId ? unknownCase : null)
     if (!definition || !caseStatuses.includes(record.status) || !wireLocation(record.testLocation, definition.file)) return null
     canonical = { caseId: definition.caseId, status: record.status, testLocation: record.testLocation }
+  } else if (kind === 'TIMING') {
+    if (!exactKeys(record, ['caseId', 'phaseCode', 'scope', 'status', 'durationMs', 'testOffsetMs',
+      'bodyState', 'bodyElapsedMs', 'testTimeoutMs', 'location'])) return null
+    const definition = byId.get(record.caseId)
+    if (!definition || !Object.hasOwn(TAX_TIMING_BODIES, record.caseId)) return null
+    const phaseAllowed = record.scope === 'hook' ? Object.values(TAX_TIMING_HOOKS).includes(record.phaseCode)
+      : record.scope === 'fixture' ? record.phaseCode === 'PW_FIXTURE'
+        : ['phase', 'assertion'].includes(record.scope) && definition.steps.includes(record.phaseCode)
+    if (!phaseAllowed || !['started', 'passed', 'failed'].includes(record.status)
+      || !['notStarted', 'running', 'ended'].includes(record.bodyState)
+      || ![record.durationMs, record.testOffsetMs, record.bodyElapsedMs, record.testTimeoutMs].every(milliseconds)
+      || record.status === 'started' && record.durationMs !== 0
+      || record.bodyState === 'notStarted' && record.bodyElapsedMs !== 0
+      || !wireLocation(record.location, definition.file)) return null
+    canonical = { caseId: record.caseId, phaseCode: record.phaseCode, scope: record.scope, status: record.status,
+      durationMs: record.durationMs, testOffsetMs: record.testOffsetMs,
+      bodyState: record.bodyState, bodyElapsedMs: record.bodyElapsedMs, testTimeoutMs: record.testTimeoutMs,
+      location: record.location }
   } else if (kind === 'DIAGNOSTIC') {
     if (!exactKeys(record, ['caseId', 'stepCode', 'status', 'testLocation', 'stepLocation', 'assertionLocation', 'assertionSource'])) return null
     const definition = byId.get(record.caseId)
@@ -159,7 +181,7 @@ export function formatDiagnosticRecord(kind, record) {
 
 function filterLine(line) {
   if (line.length > MAX_DIAGNOSTIC_LINE_LENGTH) return null
-  const match = /^CMS_E2E (DISCOVERY|CASE|DIAGNOSTIC|RESULT) (\{[^\r\n]*\})$/.exec(line)
+  const match = /^CMS_E2E (DISCOVERY|CASE|DIAGNOSTIC|TIMING|RESULT) (\{[^\r\n]*\})$/.exec(line)
   if (!match) return null
   try { return formatDiagnosticRecord(match[1], JSON.parse(match[2])) } catch { return null }
 }

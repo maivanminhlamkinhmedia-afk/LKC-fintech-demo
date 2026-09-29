@@ -22,7 +22,7 @@ const observations = new WeakMap<Page, ReturnType<typeof observeTaxonomyActions>
 const labels = { category: 'Chuyên mục', topic: 'Chủ đề', tag: 'Thẻ', instrument: 'Công cụ tài chính' }
 const kinds: Kind[] = ['category', 'topic', 'tag', 'instrument']
 const persist = (value: unknown) => saveManifest(process.env.CMS_E2E_MANIFEST, value)
-const recover = () => discoverFixtureGraph(db, process.env, manifest, persist)
+const recover = () => test.step('TAX_GRAPH_RECOVER', () => discoverFixtureGraph(db, process.env, manifest, persist))
 const userId = (key: Actor) => manifest.users.find(user => user.key === key)!.id
 const path = (id: string) => `/creator/articles/${id}/classification`
 const keyOf = (term: Catalog) => term.identity.slug ?? term.identity.canonicalKey!
@@ -33,7 +33,10 @@ const error = (page: Page, code: string) => page.locator(`[data-error-code="${co
 const item = (page: Page, id: string) => page.locator(`li[data-taxonomy-id="${id}"]`)
 const selected = (page: Page, term: Catalog) => page.locator(`[data-selected-kind="${term.kind}"][data-taxonomy-id="${term.id}"]`)
 const read = async (id: string) => await fixtureArticle(db, manifest, id) as Article
-const graph = async (id: string) => { await recover(); return fixtureClassification(db, manifest, id) }
+const graph = async (id: string) => {
+  await recover()
+  return test.step('TAX_GRAPH_SNAPSHOT', () => fixtureClassification(db, manifest, id))
+}
 const preserved = (row: Article) => { const { updatedAt: _token, categoryId: _category, ...rest } = row; void _token; void _category; return rest }
 const acknowledged = (page: Page) => expect(page.getByRole('status').filter({ hasText: /^Đã lưu phân loại\.$/ })).toBeVisible()
 const observer = (page: Page) => {
@@ -141,11 +144,16 @@ test.beforeAll(async () => {
   credentials = JSON.parse(process.env.CMS_E2E_CREDENTIALS ?? '{}'); db = await connectStaging(process.env)
 })
 test.afterEach(async () => {
-  for (const release of releases.splice(0)) release()
-  try { await Promise.all(contexts.splice(0).map(context => context.close())) }
-  finally { if (db) await recover() }
+  await test.step('TAX_TEARDOWN_DISPOSE', async () => { for (const release of releases.splice(0)) release() })
+  try {
+    await test.step('TAX_TEARDOWN_CONTEXT_CLOSE', async () => { await Promise.all(contexts.splice(0).map(context => context.close())) })
+  } finally {
+    await test.step('TAX_TEARDOWN_RECOVER', async () => { if (db) await recover() })
+  }
 })
-test.afterAll(async () => { if (db) await db.$disconnect() })
+test.afterAll(async () => {
+  await test.step('TAX_TEARDOWN_DISCONNECT', async () => { if (db) await db.$disconnect() })
+})
 
 test('TAX-01 protected catalog and classification enforce anonymous role and ownership scope', async ({ browser }) => {
   await test.step('TAX_ACCESS', async () => {
@@ -362,7 +370,10 @@ test('TAX-10/11 classification round trip primary replacement clear and no-op pr
         await selected(page, term).getByRole('button', { name: /^Gỡ / }).click()
       }
       const replacements = [seed('category', 7), seed('topic', 7), seed('tag', 7), seed('instrument', 8)]
-      for (const term of replacements) await choose(page, term)
+      await test.step('TAX_REPLACE_CATEGORY', () => choose(page, replacements[0]))
+      await test.step('TAX_REPLACE_TOPIC', () => choose(page, replacements[1]))
+      await test.step('TAX_REPLACE_TAG', () => choose(page, replacements[2]))
+      await test.step('TAX_REPLACE_INSTRUMENT', () => choose(page, replacements[3]))
       const replaceSelection = await test.step('TAX_ROUNDTRIP_OBSERVER_READY', () => hold(page, 'updateArticleClassification')); await saveSelection(page).click(); await test.step('TAX_ROUNDTRIP_RESPONSE_READY', () => replaceSelection.ready())
       const replaced = await graph(id)
       expect(replaced.article.categoryId).toBe(seed('category', 7).id)
