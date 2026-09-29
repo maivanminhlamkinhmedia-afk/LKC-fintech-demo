@@ -314,6 +314,8 @@ test('TAX-09 bounded search pagination retains selected outside current page wit
 })
 
 test('TAX-10/11 classification round trip primary replacement clear and no-op preserve unrelated fields', async ({ browser }) => {
+  // Six saves, five reloads and graph checks reached 60s in staging, cutting short an expect before its own timeout.
+  test.setTimeout(120_000)
   await test.step('TAX_SELECTION_ROUNDTRIP', async () => {
     const { page, id, src, before, instrument } = await test.step('TAX_ROUNDTRIP_SETUP', async () => {
       const { page } = await login(browser), id = await article(page, 'roundtrip')

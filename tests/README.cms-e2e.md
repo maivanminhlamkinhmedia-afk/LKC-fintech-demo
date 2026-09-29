@@ -644,3 +644,23 @@ checks, journal writes and cleanup guards remain unchanged. These diagnostics
 do not turn a timedOut CASE or hook failure into PASS. Any subsequent staging
 execution still requires review, CI, explicit authorization and the guarded
 runner; local synthetic probes do not establish a staging root cause.
+
+### TAX-10/11 time-budget exception after staging timing
+
+The default test timeout remains 60 seconds, with a 10-second `expect` timeout.
+Only TAX-10/11 calls `test.setTimeout(120_000)` at the start of its callback.
+Its six saves, five reloads and full-graph checks reached the 60-second test
+limit in staging before `TAX_REPLACE_TOPIC` could use its own assertion budget.
+This is a bounded budget for the complete case, not a measured completion time
+or evidence that the remaining phases pass. Playwright 1.63.0 also gives this
+case's `afterEach` and ordinary test-fixture teardown a fresh shared 120-second
+slot; they do not consume the body slot. All other cases, retries, workers,
+assertions, guards and cleanup remain as documented above. Claude's later
+metadata probe confirmed that the override applies to the test and its fresh
+afterEach/ordinary fixture-teardown slot. `SafeReporter` reads reporter-side
+`test.timeout` during steps, but Playwright 1.63.0 updates that metadata at
+`onTestEnd`. Therefore step `TIMING.testTimeoutMs` can still show `60000` while
+the effective TAX-10/11 timeout is `120000`; do not use that field as a staging
+gate or infer that the override failed. `bodyElapsedMs` and `durationMs` help
+interpret progression but are not the exact active-slot counter or remaining
+budget. A staging rerun must still meet the full-suite gates.
