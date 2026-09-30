@@ -9,6 +9,8 @@ const safetyFile = 'tests/e2e/cms-editor-safety.spec.ts'
 const autosaveFile = 'tests/e2e/cms-autosave.spec.ts'
 const sourcesFile = 'tests/e2e/cms-sources.spec.ts'
 const taxonomyFile = 'tests/e2e/cms-taxonomy.spec.ts'
+const mediaFile = 'tests/e2e/cms-media.spec.ts'
+const mediaTeardownSteps = ['MED_TEARDOWN_CONTEXT_CLOSE', 'MED_TEARDOWN_RECOVER', 'MED_TEARDOWN_DISCONNECT']
 const sourceTeardownSteps = [
   'SRC_TEARDOWN_DISPOSE', 'SRC_TEARDOWN_CONTEXT_CLOSE', 'SRC_TEARDOWN_RECOVER', 'SRC_TEARDOWN_DISCONNECT',
 ]
@@ -89,8 +91,41 @@ const definitions = [
   ...TAXONOMY_CASES.map(([id, title, step]) => [id, title, taxonomyFile,
     [step, ...(id === 'TAX-10/11' ? TAX_ROUNDTRIP_STEPS : []),
       ...(Object.hasOwn(TAX_TIMING_BODIES, id) ? [...TAX_TEARDOWN_STEPS, ...TAX_GRAPH_STEPS] : [])]]),
+  ['MED-01', 'MED-01 protected media routes and bytes enforce role and article scope', mediaFile, ['MED_ACCESS']],
+  ['MED-02/05/10', 'MED-02/05/10 PNG and JPEG upload persist canonical private bytes and protected GET HEAD', mediaFile, ['MED_UPLOAD_CANONICAL']],
+  ['MED-03/24', 'MED-03/24 invalid files and origin leave no media row or canonical residue', mediaFile, ['MED_VALIDATION']],
+  ['MED-08/11', 'MED-08/11 own library excludes foreign asset while admin can find it', mediaFile, ['MED_SCOPE_SEARCH']],
+  ['MED-08-PAGE', 'MED-08 paging keeps selected metadata while foreign scope stays hidden', mediaFile, ['MED_PAGING_SCOPE']],
+  ['MED-09/19/34', 'MED-09/19/34 metadata edit uses exact CAS and preserves immutable binary identity', mediaFile, ['MED_METADATA_CAS']],
+  ['MED-12/13', 'MED-12/13 cover select and clear preserve article fields and use shared token', mediaFile, ['MED_COVER_ROUNDTRIP']],
+  ['MED-16', 'MED-16 used cover rejects deletion without SetNull', mediaFile, ['MED_DELETE_USED']],
+  ['MED-16-MATRIX', 'MED-16 all fixture statuses and owners remain attached after denied delete', mediaFile, ['MED_DELETE_USED_MATRIX']],
+  ['MED-17', 'MED-17 confirmed unused delete removes exact DB row and canonical file', mediaFile, ['MED_DELETE_UNUSED']],
+  ['MED-21/28', 'MED-21/28 controls remain labelled and usable at 390px and 768px', mediaFile, ['MED_ACCESSIBLE_LAYOUT']],
+  ['MED-10-XSS', 'MED-10-XSS HTML-like metadata is escaped after reload and cannot execute', mediaFile, ['MED_ESCAPED_METADATA']],
+  ['MED-11-COVER', 'MED-11-COVER foreign direct bytes and operation deny, current foreign cover preview stays narrow', mediaFile, ['MED_COVER_READ_SCOPE']],
+  ['MED-12/13-REPLACE', 'MED-12/13-REPLACE cover no-op, replace and clear use persisted shared token', mediaFile, ['MED_COVER_REPLACE']],
+  ['MED-17-CANCEL', 'MED-17-CANCEL cancel delete preserves DB row and canonical file', mediaFile, ['MED_DELETE_CANCEL']],
+  ['MED-22', 'MED-22 committed upload with lost response is recovered through the same operation', mediaFile, ['MED_UPLOAD_LOST_ACK']],
+  ['MED-24/27', 'MED-24/27 offline and cancelled navigation retain unsaved File without dispatch', mediaFile, ['MED_OFFLINE_NAVIGATION']],
+  ['MED-14-COVER', 'MED-14 cover wins against the stale Article surface without losing input', mediaFile, ['MED_AUTOSAVE_CONFLICT']],
+  ['MED-14-AUTOSAVE', 'MED-14 autosave wins against the stale Article surface without losing input', mediaFile, ['MED_AUTOSAVE_CONFLICT']],
+  ['MED-15-COVER-SOURCE', 'MED-15 cover wins between cover and source creation', mediaFile, ['MED_SOURCE_CONFLICT']],
+  ['MED-15-SOURCE', 'MED-15 source wins between cover and source creation', mediaFile, ['MED_SOURCE_CONFLICT']],
+  ['MED-15-COVER-CLASS', 'MED-15 cover wins between cover and classification', mediaFile, ['MED_CLASSIFICATION_CONFLICT']],
+  ['MED-15-CLASS', 'MED-15 classification wins between cover and classification', mediaFile, ['MED_CLASSIFICATION_CONFLICT']],
+  ['MED-18', 'MED-18 concurrent cover attach and unused delete cannot detach implicitly or dangle', mediaFile, ['MED_ATTACH_DELETE_RACE']],
+  ['MED-20', 'MED-20 fresh actor and Article status are checked again on mutation', mediaFile, ['MED_FRESH_AUTH']],
+  ['MED-20-ROLE-OWNER', 'MED-20 role revocation and parent owner change reject a preloaded mutation', mediaFile, ['MED_FRESH_ROLE_OWNER']],
+  ['MED-20-SESSION', 'MED-20 expired session returns a safe mutation failure without discarding metadata input', mediaFile, ['MED_SESSION_LOST']],
+  ['MED-21', 'MED-21 synchronous double submit dispatches one metadata update', mediaFile, ['MED_SINGLE_FLIGHT']],
+  ['MED-23-METADATA', 'MED-23 committed metadata with lost Server Action ACK retains input until explicit reload', mediaFile, ['MED_METADATA_LOST_ACK']],
+  ['MED-23-DELETE', 'MED-23 committed delete with lost ACK does not recreate the row or resend', mediaFile, ['MED_DELETE_LOST_ACK']],
+  ['MED-23-COVER', 'MED-23 committed cover with lost ACK keeps the chosen asset until explicit reload', mediaFile, ['MED_COVER_LOST_ACK']],
+  ['MED-26', 'MED-26 legacy media is read-only and a current cover can be retained or cleared without external fetch', mediaFile, ['MED_LEGACY_MEDIA']],
 ].map(([caseId, title, file = draftFile, steps = []]) => Object.freeze({ caseId, title, file,
-  steps: Object.freeze(file === sourcesFile ? [...steps, ...sourceTeardownSteps] : steps) }))
+  steps: Object.freeze(file === sourcesFile ? [...steps, ...sourceTeardownSteps]
+    : file === mediaFile ? [...steps, ...mediaTeardownSteps] : steps) }))
 const byTitle = new Map(definitions.map(definition => [definition.title, definition]))
 const byId = new Map(definitions.map(definition => [definition.caseId, definition]))
 const unknownCase = Object.freeze({ caseId: 'UNKNOWN_CASE', file: null, steps: Object.freeze([]) })
@@ -102,7 +137,7 @@ export const MAX_TIMING_MS = 3_600_000
 function sourceFile(file) {
   if (typeof file !== 'string' || file.length > 4096) return null
   const candidate = (isAbsolute(file) ? relative(repositoryRoot, file) : file).replaceAll('\\', '/')
-  return [draftFile, safetyFile, autosaveFile, sourcesFile, taxonomyFile].includes(candidate) ? candidate : null
+  return [draftFile, safetyFile, autosaveFile, sourcesFile, taxonomyFile, mediaFile].includes(candidate) ? candidate : null
 }
 
 export function diagnosticCase(test) {

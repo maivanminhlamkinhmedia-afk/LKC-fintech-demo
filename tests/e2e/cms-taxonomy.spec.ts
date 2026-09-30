@@ -140,7 +140,7 @@ async function source(page: Page, id: string, title: string) {
 test.beforeAll(async () => {
   demand(process.env.CMS_E2E_RUNNING === 'YES', 'USE_GUARDED_STAGING_RUNNER')
   manifest = await loadManifest(process.env.CMS_E2E_MANIFEST) as Manifest
-  demand(manifest.version === 3 && manifest.runId === process.env.CMS_E2E_RUN_ID, 'RUN_PROVENANCE_MISMATCH')
+  demand([3, 4].includes(manifest.version) && manifest.runId === process.env.CMS_E2E_RUN_ID, 'RUN_PROVENANCE_MISMATCH')
   credentials = JSON.parse(process.env.CMS_E2E_CREDENTIALS ?? '{}'); db = await connectStaging(process.env)
 })
 test.afterEach(async () => {

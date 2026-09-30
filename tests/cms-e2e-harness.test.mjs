@@ -154,7 +154,7 @@ test('invalid staging target prevents even starting a fixture/cleanup transactio
 })
 
 test('run manifests have six unique scoped actors, no passwords, and reject path/identity expansion', () => {
-  const manifest = createFixturePlan(runId)
+  const manifest = createFixturePlan(runId, 3)
   assert.equal(new Set(manifest.users.map(user => user.id)).size, 6)
   assert.equal(manifest.users.filter(user => user.role === 'CREATOR').length, 2)
   assert.equal(JSON.stringify(manifest).includes('password'), false)

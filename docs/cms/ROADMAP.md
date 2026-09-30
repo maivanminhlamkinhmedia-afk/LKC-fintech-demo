@@ -9,7 +9,7 @@ Nguồn: bàn giao Product Owner, GitHub và các báo cáo triển khai trong p
 
 **CMS-008 đã phát hành:** PR23 merged, main 89269dc806a9800f6582ea1a37a909aa60c944cd. Tested head3a5b135ac94a34bc21708cf232981ca452aa01ea; CI36582559834 SUCCESS với788tests; staging Claude thực chạy/PO cung cấp90/90PASS, runId33b5edd2e7ebaafd3070f220 / BUILD_ID XYB-lSk-r07z_FlL16mnx,13zero/exit0/VERIFIED. Deploy36592082460 SUCCESS đúng actual merge; anonymous9/9 và monitoring12/12 trong304giây PASS trong phạm vi báo cáo. Nguồn/giới hạn và lịch sử tại [release checkpoint](reports/CMS-008-release-checkpoint.md). CMS-008 chưa COMPLETE.
 
-**Bước hiện tại: CMS-009 — Media library, SPEC / IMPLEMENTATION HANDOFF READY; source NOT IMPLEMENTED.** PO giao ngày30/09/2026. Branch feature/cms-009-media-library từ main89269dc…. [Spec40AC/36MED](tasks/CMS-009.md), [handoff Codex](tasks/CMS-009-IMPLEMENTATION.md), [storage runbook](operations/cms009-media-storage.md). Scope ảnh PNG/JPEG, library/upload/metadata/delete-unused và Article cover; private durable root ngoài deploy, không inline TipTap/cloud account/schema change. Local/Claude review/CI/browser staging cho CMS-009 NOT RUN. Production storage chưa provision/verify; manual UAT DEFERRED.
+**Bước hiện tại: CMS-009 — Media library, LOCAL REVIEW-FIX HANDOFF.** Branch `feature/cms-009-media-library` từ main `89269dc…`, checkpoint tài liệu `b68f83f…`. [Spec40AC/36MED](tasks/CMS-009.md), [handoff Codex](tasks/CMS-009-IMPLEMENTATION.md), [storage runbook](operations/cms009-media-storage.md), [báo cáo implementation](reports/CMS-009-implementation.md), [báo cáo sửa sau review](reports/CMS-009-review-fixes.md). Claude independent review do Product Owner cung cấp đã xác định BUG-001 và các khoảng trống kiểm chứng; bản sửa local cần Claude delta review. CI/browser staging NOT RUN. Production storage chưa provision/verify; manual authenticated production UAT DEFERRED. Không đánh dấu COMPLETE.
 
 ## Quy trình delivery
 
@@ -31,7 +31,7 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 | CMS-006 | Autosave | DEPLOYED; CI 493/staging 36/cleanup/release PASS; manual authenticated UAT/autosave DEFERRED theo PO ngày 28/09; chưa COMPLETE |
 | CMS-007 | Sources/citations | DEPLOYED; CI 612 / staging 55 / cleanup 5 counters bằng 0 / deploy/anonymous smoke/monitoring PASS; manual authenticated UAT DEFERRED; chưa COMPLETE |
 | CMS-008 | Category/Topic/Tags/Instruments | DEPLOYED; CI788/staging90/cleanup13/deploy/anonymous smoke/monitoring PASS; manual UAT DEFERRED; chưa COMPLETE |
-| CMS-009 | Media library | SPEC / IMPLEMENTATION HANDOFF READY;40AC/36MED; implementation/local/review/CI/staging NOT RUN |
+| CMS-009 | Media library | LOCAL REVIEW-FIX HANDOFF; 40AC/36MED cập nhật trong delta report; Claude delta review/CI/staging NOT RUN; production root gate pending |
 | CMS-010 | Preview | Planned |
 | CMS-011 | Editorial review workflow | Planned |
 | CMS-012 | Fact-check/request changes | Planned |

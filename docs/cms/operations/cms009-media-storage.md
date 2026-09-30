@@ -1,6 +1,6 @@
 # CMS-009 — Private media storage: thiết kế, provision và recovery
 
-Prepared: 2026-09-30 (UTC+7). Đây là runbook thiết kế cho CMS-009; chưa có adapter/CLI đã implement tại checkpoint spec. Không thực thi lệnh recovery tưởng tượng. Codex phải thay phần interface bằng tên/flags thật và regression trước bàn giao.
+Prepared: 2026-09-30 (UTC+7). Adapter và CLI local đã được thêm trên branch CMS-009; chúng **chưa được Claude review, CI, staging hoặc production xác minh**. Phần production dưới đây là gate vận hành trước release, không phải bằng chứng root đã được provision.
 
 ## 1. Vì sao cần root riêng
 
@@ -32,7 +32,7 @@ Sau source review/CI và staging đạt, nhiệm vụ release phải có evidenc
 - Runtime CMS_MEDIA_ROOT cấu hình qua cPanel; không đưa giá trị vào build artifact/client NEXT_PUBLIC_*.
 - Proxy/Apache/cPanel cho phép request cần thiết tới raw upload route; application cap5MiB vẫn bắt buộc. Chưa đo request cap thì ghi chưa xác minh, không tự sửa webserver global.
 - App build/start khi thiếu root vẫn không ghi temp fallback; media UI trả lỗi cấu hình có kiểm soát.
-- Worker/codec traced trong standalone Linux bundle, không lệ thuộc node_modules/source ở máy phát triển.
+- `npm run build` phải báo `CMS_MEDIA_STANDALONE_READY worker=1 codecs=2`: postbuild chép worker vào `src/features/cms/media-codec-worker.cjs` và hai codec exact-pinned vào standalone. Xác minh worker chạy từ bundle Linux/cPanel, không lệ thuộc source/node_modules ở máy phát triển.
 
 Nếu chưa có evidence root/proxy/codec gate, không merge rồi hy vọng upload chạy. Hoãn manual UAT không miễn kiểm hạ tầng storage cần thiết cho release.
 
@@ -48,8 +48,21 @@ Giới hạn pending intents/quota phải atomic liên process. Intent chưa dis
 
 ## 5. Check-only và apply recovery
 
-Implement CLI/entrypoint có:
-- Default CHECK-ONLY, không DB mutation, file unlink, lock removal hay journal update.
+CLI hiện tại: `node scripts/cms-media/recover.mjs`. Nó không tự tải `.env`; người vận hành phải cung cấp `CMS_MEDIA_ROOT` và `DATABASE_URL` qua cơ chế secret runtime đã được duyệt. Không chạy CLI này trong local validation với DB thật. Mặc định là **CHECK-ONLY**; cần `--apply` và confirmation exact để ghi. Flags check-only: `--operation <32-hex> --root-identity <32-hex> --database-name <name> --database-user <user>`. Khi apply, thêm `--confirm-operation <same-operation-id> --asset <32-hex> --actor <actor-id> --key <32-hex.png|jpg>`. CLI đối chiếu `DATABASE()`/`CURRENT_USER()` và marker root trước khi đọc journal; output chỉ gồm operation ID, state, applied. Không in SQL, credentials, bytes, metadata hay path riêng.
+
+Giao thức local đã implement:
+
+| Operation | Pha và side effect | Kết quả khi thiếu ACK |
+|---|---|---|
+| Upload | `intent` được fsync; `dispatched` trước body; `canonical-ready` trước temp/file; `file-ready` trước `MediaAsset.create` trong Serializable TX; `committed` sau ACK DB | GET status đọc exact row/identity, không tự sửa. Nếu row tồn tại trả DTO cùng operation; nếu không rõ trả UNKNOWN_OUTCOME. |
+| Upload invalid đã xác định | Trước DB/file publish, journal thành `abandoned`; giữ receipt, nhả pending quota | Client giữ File và hiển thị safe error. |
+| Delete | `intent` và `dispatched` trước Serializable TX/row lock/cover count; `db-deleted` sau ACK DB; unlink exact digest; `complete` sau unlink | Unknown commit giữ file/journal. Sau DB ACK nhưng unlink lỗi trả `storagePending`, không giả rollback. |
+| Delete bị từ chối chắc chắn | Journal thành `rejected`; DB/file không thay đổi | Client giữ trạng thái và error; chỉ lần lưu mới có token hợp lệ mới thử lại. |
+
+Intent upload chưa dispatch hết hạn sau 30 phút và không tính vào quota 4 pending/actor; `dispatched`/`file-ready` giữ đến khi xác minh. Receipt/tombstone đã hoàn tất giữ lại, chưa có background pruning; cần kế hoạch backup và quota trước release. `withMediaLock` dùng mkdir exclusive; không tự steal lock theo tuổi/PID. Bản kiểm local không chứng minh atomic DB+FS hoặc zero orphan sau crash.
+
+Check-only/apply có:
+- Default CHECK-ONLY, không DB mutation, file unlink, lock removal hay journal update. Regression local đã kiểm bytes/journal không đổi.
 - Explicit --apply + exact operation selection + root/DB identity/provenance + confirmation scope.
 - Không cho web client gọi apply; status GET không ngầm recovery mutation.
 - Không recursive cleanup root, không prefix-wide DB/file delete, không auto adopt orphans.
@@ -58,7 +71,7 @@ Implement CLI/entrypoint có:
 - Upload chắc chắn chưa có DB row: chỉ bỏ orphan/temp được ownership proof cho phép.
 - Delete DB absent sau confirmed commit: chỉ bỏ canonical file đúng recorded identity.
 - Nếu file expected đã absent và DB state hợp lệ: idempotent report, không tìm file khác thay thế.
-- Apply từng phase có durable progress, chạy lại sau interruption không mở rộng scope.
+- Apply từng phase ghi journal bằng temp fsync + rename, chạy lại sau interruption chỉ nhắm exact identity. Không xóa lock active/uncertain.
 - Log chỉ safe code/counter/opaque ids cần thiết, không bytes/metadata/private full paths/raw errors.
 
 Production recovery là nhiệm vụ vận hành riêng, không nằm trong local implementation hoặc QA mặc định. Staging recovery dùng guarded runner/cleanup review, same SQL target/current manifest/root; không reuse production CLI credentials.
@@ -78,6 +91,6 @@ Cleanup không thể dựa nội dung manifest đơn lẻ khi có foreign revers
 
 ## 7. Giới hạn và trạng thái
 
-Tại checkpoint spec: production root/ACL/proxy/backup và media pipeline đều NOT VERIFIED/NOT IMPLEMENTED. Nội dung này không chứng minh storage được provision hoặc release CMS-009 đã sẵn sàng. Manual authenticated UAT vẫn DEFERRED.
+Tại checkpoint local implementation: production root/ACL/proxy/backup và assembled Linux runtime vẫn NOT VERIFIED; Claude review/CI/staging/browser cũng NOT RUN. Windows isolated standalone worker smoke local PASS không thay thế Linux/cPanel gate. Nội dung này không chứng minh storage được provision hoặc release CMS-009 đã sẵn sàng. Manual authenticated UAT vẫn DEFERRED.
 
 Xem [CMS-009 spec](../tasks/CMS-009.md) và [handoff](../tasks/CMS-009-IMPLEMENTATION.md).

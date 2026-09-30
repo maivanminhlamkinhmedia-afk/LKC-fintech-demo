@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { assertPortAvailable, connectStaging, demand, DUMMY_DATABASE_URL, HarnessError, safeFailure, validateStagingEnvironment, withCleanup } from './guard.mjs'
 import { createFixturePlan, createFixtures, manifestPath, saveManifest, loadManifest, discoverCreatedArticles, discoverCreatedSources, discoverFixtureGraph, cleanupFixtures } from './fixtures.mjs'
 import { createDiagnosticOutputFilter } from './diagnostics.mjs'
+import { mediaRootPath, provisionRunMediaRoot } from './media-fixtures.mjs'
 
 function launch(args, env, cwd) {
   const child = spawn(process.execPath, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -95,7 +96,8 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
       NEXT_TELEMETRY_DISABLED: '1', GOOGLE_SHEET_ID: '', NODE_ENV: 'production', DOTENV_CONFIG_PATH: 'NUL' }
     // Build never receives staging credentials. A fresh build plus HEAD/BUILD_ID
     // provenance prevents accidentally running an earlier checkout's artifact.
-    const buildEnv = { ...runtimeEnv, DATABASE_URL: DUMMY_DATABASE_URL, NEXTAUTH_SECRET: 'cms005-local-build-dummy-secret' }
+    const buildEnv = { ...runtimeEnv, DATABASE_URL: DUMMY_DATABASE_URL, NEXTAUTH_SECRET: 'cms005-local-build-dummy-secret',
+      CMS_MEDIA_ROOT: resolve(cwd, '.next', 'cms009-local', 'build-not-provisioned'), CMS_MEDIA_ROOT_MODE: 'local' }
     delete buildEnv.CMS_E2E_CREDENTIALS
     const snapshot = await buildSnapshot(cwd, manifest.runId)
     demand(await completed(launch([resolve(cwd, 'node_modules/next/dist/bin/next'), 'build', snapshot], buildEnv, snapshot)) === 0, 'DUMMY_BUILD_FAILED')
@@ -103,6 +105,10 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
     const buildId = (await readFile(resolve(snapshot, '.next', 'BUILD_ID'), 'utf8')).trim()
     demand(buildId.length > 0, 'BUILD_ID_MISSING')
     await writeFile(resolve(snapshot, '.next', 'cms-e2e-build.json'), JSON.stringify({ commit, buildId }), { mode: 0o600 })
+    const mediaRoot = await provisionRunMediaRoot(manifest, cwd)
+    demand(mediaRoot === mediaRootPath(manifest, cwd), 'MEDIA_ROOT_IDENTITY_INVALID')
+    Object.assign(runtimeEnv, { CMS_MEDIA_ROOT: mediaRoot, CMS_MEDIA_ROOT_MODE: 'staging', CMS_E2E_RUN_ID: manifest.runId,
+      CMS_E2E_WORKSPACE: cwd })
     await assertPortAvailable()
     db = await connectStaging(runtimeEnv)
     await saveManifest(path, manifest)
@@ -139,7 +145,7 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
       // ownership of existing rows. Preserve the manifest for operator review.
       await cleanupConfirmedFixtures(fixturesCommitted, async () => {
         const latest = await loadManifest(path)
-        const recover = latest.version === 3 ? discoverFixtureGraph : latest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
+        const recover = latest.version >= 3 ? discoverFixtureGraph : latest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
         await recover(db, runtimeEnv, latest, updated => saveManifest(path, updated))
         const counts = await cleanupFixtures(db, runtimeEnv, latest, { apply: true })
         process.stdout.write(`CMS_E2E CLEANUP ${JSON.stringify(counts)}\n`)

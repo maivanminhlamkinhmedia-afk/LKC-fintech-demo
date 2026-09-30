@@ -87,6 +87,7 @@ export default async function CreatorPage() {
             <div className="mt-4 flex flex-wrap gap-3">
               {canCreateArticle(user) && <Link href="/creator/articles/new" className="rounded-xl bg-[#167563] px-5 py-3 font-semibold text-white">Tạo bài nháp</Link>}
               <Link href="/creator/articles" className="rounded-xl border border-slate-300 bg-white px-5 py-3 font-medium">Danh sách bài viết</Link>
+              <Link href="/creator/media" className="rounded-xl border border-slate-300 bg-white px-5 py-3 font-medium">Thư viện ảnh</Link>
               {hasPermission(user.role, 'cms:admin') && <Link href="/creator/taxonomy" className="rounded-xl border border-slate-300 bg-white px-5 py-3 font-medium">Quản lý danh mục</Link>}
             </div>
           </header>

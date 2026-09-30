@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFile } from 'node:fs/promises'
-import { formatDiagnosticRecord, createDiagnosticOutputFilter } from '../scripts/cms-e2e/diagnostics.mjs'
+import { formatDiagnosticRecord, createDiagnosticOutputFilter, diagnosticCase } from '../scripts/cms-e2e/diagnostics.mjs'
 import SafeReporter from './e2e/safe-reporter.mjs'
 import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS } from '../scripts/cms-e2e/taxonomy-diagnostics.mjs'
 
@@ -10,11 +10,25 @@ import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEP
 const FORMAT_FILE = 'tests/e2e/cms-draft.spec.ts'
 const CLIP_FILE = 'tests/e2e/cms-editor-safety.spec.ts'
 const AUTO_FILE = 'tests/e2e/cms-autosave.spec.ts'
+const MEDIA_FILE = 'tests/e2e/cms-media.spec.ts'
 const FORMAT_CASE = 'EDIT-04/05/06/21'
 const CLIP_CASE = 'EDIT-18'
 const FORMAT_TITLE = 'EDIT-04/05/06/21 create and refresh Vietnamese formatting with no writes from GET or typing'
 const CLIP_TITLE = 'EDIT-18 real HTML clipboard paste removes unsafe content and persists canonical safe links'
 const PRIVATE = 'SYNTHETIC_PRIVATE_PASSWORD_COOKIE_BODY_EXPECTED_ACTUAL'
+
+test('MED registry accepts only exact file/title/step and rejects forged metadata payload', () => {
+  const title = 'MED-02/05/10 PNG and JPEG upload persist canonical private bytes and protected GET HEAD'
+  assert.equal(diagnosticCase({ title, location: { file: MEDIA_FILE, line: 1, column: 1 } }).caseId, 'MED-02/05/10')
+  assert.equal(diagnosticCase({ title: `${title} ${PRIVATE}`, location: { file: MEDIA_FILE, line: 1, column: 1 } }).caseId, 'UNKNOWN_CASE')
+  const base = { caseId: 'MED-02/05/10', stepCode: 'MED_UPLOAD_CANONICAL', status: 'failed',
+    testLocation: { file: MEDIA_FILE, line: 1, column: 1 }, stepLocation: { file: MEDIA_FILE, line: 2, column: 2 },
+    assertionLocation: null, assertionSource: null }
+  assert.match(formatDiagnosticRecord('DIAGNOSTIC', base), /MED_UPLOAD_CANONICAL/)
+  assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...base, stepCode: 'FMT_DB' }), null)
+  assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...base, originalFilename: PRIVATE }), null)
+  assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...base, assertionLocation: { file: MEDIA_FILE, line: 3, column: 3 }, assertionSource: 'raw-error' }), null)
+})
 const FORMAT_STEPS = ['FMT_LOGIN', 'FMT_INPUT', 'FMT_BOLD', 'FMT_LIST', 'FMT_CODE_BLOCK',
   'FMT_NO_WRITE', 'FMT_SAVE_NAVIGATE', 'FMT_DB', 'FMT_RELOAD', 'FMT_DOM_TEXT', 'FMT_DOM_BOLD',
   'FMT_DOM_LIST', 'FMT_DOM_CODE', 'FMT_LIST_LINK', 'FMT_DASHBOARD']

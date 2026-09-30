@@ -14,7 +14,7 @@ export async function cleanupRun(argv, env) {
   try {
     // Only --apply updates a recovery manifest; default check remains read-only.
     if (argv.includes('--apply')) {
-      const recover = manifest.version === 3 ? discoverFixtureGraph : manifest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
+      const recover = manifest.version >= 3 ? discoverFixtureGraph : manifest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
       await recover(db, env, manifest, updated => saveManifest(path, updated))
     }
     const counts = await cleanupFixtures(db, env, manifest, { apply: argv.includes('--apply') })
