@@ -238,6 +238,18 @@ test('MED-03/24 invalid files and origin leave no media row or canonical residue
 })
 test('MED-08/11 own library excludes foreign asset while admin can find it', async ({ browser }) => {
   await test.step('MED_SCOPE_SEARCH', async () => {
+    const origin = performance.now()
+    const observed = async <T,>(phase: string, run: () => Promise<T>, httpStatus = () => 0): Promise<T> => {
+      const start = performance.now()
+      const note = (status: 'started' | 'passed' | 'failed', durationMs: number) =>
+        test.info().annotations.push({ type: 'cms-media-observation', description: JSON.stringify({
+          phase, status, elapsedMs: Math.round(performance.now() - origin), durationMs,
+          httpStatus: httpStatus(), errorCode: null, intentCount: 1,
+        }) })
+      note('started', 0)
+      try { const result = await test.step(phase, run); note('passed', Math.round(performance.now() - start)); return result }
+      catch (error) { note('failed', Math.round(performance.now() - start)); throw error }
+    }
     const { asset, name } = await test.step('MED_SCOPE_CREATOR_UPLOAD', async () => {
       const creator = await login(browser)
       const name = `scope-${randomBytes(3).toString('hex')}.png`
@@ -245,17 +257,23 @@ test('MED-08/11 own library excludes foreign asset while admin can find it', asy
       return { asset, name }
     })
     await test.step('MED_SCOPE_OTHER', async () => {
-      const other = await login(browser, 'other'); await other.page.goto('/creator/media')
-      await other.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name)
-      await other.page.getByRole('button', { name: 'Tìm kiếm' }).click()
-      await expect(other.page.locator(`li[data-media-id="${asset.id}"]`)).toHaveCount(0)
-      expect((await other.context.request.get(asset.url)).status()).toBe(404)
+      const other = await observed('MED_SCOPE_OTHER_LOGIN', () => login(browser, 'other'))
+      await observed('MED_SCOPE_OTHER_NAVIGATE', () => other.page.goto('/creator/media'))
+      await observed('MED_SCOPE_OTHER_INPUT', () => other.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name))
+      await observed('MED_SCOPE_OTHER_SEARCH', () => other.page.getByRole('button', { name: 'Tìm kiếm' }).click())
+      await observed('MED_SCOPE_OTHER_HIDDEN', () => expect(other.page.locator(`li[data-media-id="${asset.id}"]`)).toHaveCount(0))
+      let responseStatus = 0
+      await observed('MED_SCOPE_OTHER_GET', async () => {
+        responseStatus = (await other.context.request.get(asset.url)).status()
+        expect(responseStatus).toBe(404)
+      }, () => responseStatus)
     })
     await test.step('MED_SCOPE_ADMIN', async () => {
-      const admin = await login(browser, 'admin'); await admin.page.goto('/creator/media')
-      await admin.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name)
-      await admin.page.getByRole('button', { name: 'Tìm kiếm' }).click()
-      await expect(admin.page.locator(`li[data-media-id="${asset.id}"]`)).toBeVisible()
+      const admin = await observed('MED_SCOPE_ADMIN_LOGIN', () => login(browser, 'admin'))
+      await observed('MED_SCOPE_ADMIN_NAVIGATE', () => admin.page.goto('/creator/media'))
+      await observed('MED_SCOPE_ADMIN_INPUT', () => admin.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name))
+      await observed('MED_SCOPE_ADMIN_SEARCH', () => admin.page.getByRole('button', { name: 'Tìm kiếm' }).click())
+      await observed('MED_SCOPE_ADMIN_VISIBLE', () => expect(admin.page.locator(`li[data-media-id="${asset.id}"]`)).toBeVisible())
     })
   })
 })
@@ -859,14 +877,19 @@ test('MED-23 committed cover with lost ACK keeps the chosen asset until explicit
     page.once('dialog', dialog => void dialog.accept())
     await page.reload()
     await expect(page.getByText(asset.originalFilename, { exact: true }).first()).toBeVisible()
-    await expect(page.locator(`input[name="cover"][data-media-id="${asset.id}"]`)).toBeChecked()
+    // Reload starts with the committed cover but an empty search result list.
+    await expect(page.getByLabel(`Giữ ảnh bìa hiện tại (${asset.originalFilename})`)).toBeChecked()
+    await expect(page.getByLabel('Không dùng ảnh bìa')).not.toBeChecked()
   })
 })
 
 test('MED-26 legacy media is read-only and a current cover can be retained or cleared without external fetch', async ({ browser }) => {
   await test.step('MED_LEGACY_MEDIA', async () => {
-    const legacy = await createLegacyMediaFixture(db, process.env, manifest, actorId('creator'), persist)
-    const { page, context } = await login(browser)
+    // MED-23 keeps the creator DRAFT cover after its lost ACK; use another
+    // owned DRAFT so the legacy helper's null-cover precondition remains strict.
+    const legacyArticleId = manifest.articles.find(row => row.key === 'other-draft')!.id
+    const legacy = await createLegacyMediaFixture(db, process.env, manifest, actorId('other'), persist)
+    const { page, context } = await login(browser, 'other')
     const externalAttempts: string[] = []
     await context.route('https://legacy.invalid/**', async route => {
       externalAttempts.push(new URL(route.request().url()).pathname)
@@ -884,24 +907,24 @@ test('MED-26 legacy media is read-only and a current cover can be retained or cl
       await expect(item.getByRole('button', { name: 'Sửa metadata' })).toHaveCount(0)
       await expect(item.getByRole('button', { name: 'Xóa ảnh chưa dùng' })).toHaveCount(0)
       await expect(item.locator('img')).toHaveCount(0)
-      await attachLegacyCoverFixture(db, process.env, manifest, draftId(), legacy.id, persist)
-      const before = await fixtureArticle(db, manifest, draftId())
-      await page.goto(`/creator/articles/${draftId()}/media`)
+      await attachLegacyCoverFixture(db, process.env, manifest, legacyArticleId, legacy.id, persist)
+      const before = await fixtureArticle(db, manifest, legacyArticleId)
+      await page.goto(`/creator/articles/${legacyArticleId}/media`)
       await expect(page.getByText('Ảnh cũ không được quản lý; có thể giữ hoặc gỡ, không tải URL bên ngoài.')).toBeVisible()
       await page.getByLabel('Tìm trong thư viện').fill(legacy.filename)
       await page.getByRole('button', { name: 'Tìm kiếm', exact: true }).click()
       await expect(page.locator(`input[name="cover"][data-media-id="${legacy.id}"]`)).toHaveCount(0)
       await page.getByRole('button', { name: 'Lưu ảnh bìa', exact: true }).click()
       await expect(page.getByRole('status').filter({ hasText: 'Ảnh bìa đã được lưu.' })).toBeVisible()
-      const retained = await fixtureArticle(db, manifest, draftId())
+      const retained = await fixtureArticle(db, manifest, legacyArticleId)
       expect(retained.coverMediaId).toBe(legacy.id)
       expect(retained.updatedAt.getTime()).toBe(before.updatedAt.getTime())
       await page.reload()
       await expect(page.getByText(legacy.filename, { exact: true }).first()).toBeVisible()
       await page.getByLabel('Không dùng ảnh bìa').check()
       await page.getByRole('button', { name: 'Lưu ảnh bìa', exact: true }).click()
-      await expect.poll(async () => (await fixtureArticle(db, manifest, draftId())).coverMediaId).toBeNull()
-      const cleared = await fixtureArticle(db, manifest, draftId())
+      await expect.poll(async () => (await fixtureArticle(db, manifest, legacyArticleId)).coverMediaId).toBeNull()
+      const cleared = await fixtureArticle(db, manifest, legacyArticleId)
       expect(cleared.updatedAt.getTime()).toBeGreaterThan(retained.updatedAt.getTime())
       for (const field of ['title', 'slug', 'contentJson', 'contentText', 'authorId', 'status', 'editorSchemaVersion', 'categoryId'] as const)
         expect(cleared[field]).toEqual(before[field])

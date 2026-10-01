@@ -20,7 +20,12 @@ export const MEDIA_ERROR_CODES = Object.freeze([
 export const MEDIA_OBSERVATION_PHASES = Object.freeze([
   'PAGE', 'INPUT', 'SUBMIT', 'INTENT_RESERVED', 'POST_FORWARDED', 'POST_RESPONSE',
   'POST_FAILURE', 'SUCCESS_UI', 'UI_ERROR_CODE', 'RECOVER', 'DB_CHECK',
+  'MED_SCOPE_OTHER_LOGIN', 'MED_SCOPE_OTHER_NAVIGATE', 'MED_SCOPE_OTHER_INPUT',
+  'MED_SCOPE_OTHER_SEARCH', 'MED_SCOPE_OTHER_HIDDEN', 'MED_SCOPE_OTHER_GET',
+  'MED_SCOPE_ADMIN_LOGIN', 'MED_SCOPE_ADMIN_NAVIGATE', 'MED_SCOPE_ADMIN_INPUT',
+  'MED_SCOPE_ADMIN_SEARCH', 'MED_SCOPE_ADMIN_VISIBLE',
 ])
+const mediaScopePhases = MEDIA_OBSERVATION_PHASES.filter(phase => phase.startsWith('MED_SCOPE_'))
 const sourceTeardownSteps = [
   'SRC_TEARDOWN_DISPOSE', 'SRC_TEARDOWN_CONTEXT_CLOSE', 'SRC_TEARDOWN_RECOVER', 'SRC_TEARDOWN_DISCONNECT',
 ]
@@ -105,7 +110,7 @@ const definitions = [
   ['MED-02/05/10', 'MED-02/05/10 PNG and JPEG upload persist canonical private bytes and protected GET HEAD', mediaFile, ['MED_UPLOAD_CANONICAL']],
   ['MED-03/24', 'MED-03/24 invalid files and origin leave no media row or canonical residue', mediaFile, ['MED_VALIDATION']],
   ['MED-08/11', 'MED-08/11 own library excludes foreign asset while admin can find it', mediaFile,
-    ['MED_SCOPE_SEARCH', 'MED_SCOPE_CREATOR_UPLOAD', 'MED_SCOPE_OTHER', 'MED_SCOPE_ADMIN']],
+    ['MED_SCOPE_SEARCH', 'MED_SCOPE_CREATOR_UPLOAD', 'MED_SCOPE_OTHER', 'MED_SCOPE_ADMIN', ...mediaScopePhases]],
   ['MED-08-PAGE', 'MED-08 paging keeps selected metadata while foreign scope stays hidden', mediaFile, ['MED_PAGING_SCOPE']],
   ['MED-09/19/34', 'MED-09/19/34 metadata edit uses exact CAS and preserves immutable binary identity', mediaFile, ['MED_METADATA_CAS']],
   ['MED-12/13', 'MED-12/13 cover select and clear preserve article fields and use shared token', mediaFile, ['MED_COVER_ROUNDTRIP']],
@@ -228,6 +233,7 @@ export function formatDiagnosticRecord(kind, record) {
     if (!exactKeys(record, ['caseId', 'phase', 'status', 'elapsedMs', 'durationMs', 'httpStatus', 'errorCode', 'intentCount'])
       || !Object.hasOwn(MEDIA_TIMING_BODIES, record.caseId)
       || !MEDIA_OBSERVATION_PHASES.includes(record.phase)
+      || mediaScopePhases.includes(record.phase) && record.caseId !== 'MED-08/11'
       || !['started', 'passed', 'failed'].includes(record.status)
       || !milliseconds(record.elapsedMs) || !milliseconds(record.durationMs)
       || record.status === 'started' && record.durationMs !== 0

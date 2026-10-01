@@ -689,3 +689,25 @@ Manifest **v4** extends v3 with `mediaRootIdentity`, exact upload/delete intents
 Read-only graph preflight validates managed DB identities against operation receipts, digest/size and regular files, both directions of cover references, and the exact objects/tmp/operations/locks inventory. Unknown files, foreign references, symlinks, hardlinks, active locks and drift stop the batch before cleanup. After the runner stops its own app, cleanup verifies 15 DB counters in its transaction and after commit, then removes only the preflighted exact files/journals and verifies four filesystem counters. **All 19 counters** must be zero, with full suite PASS, exit 0 and matching commit/runId/BUILD_ID, before `CMS_E2E VERIFIED`. Zero DB counts alone are insufficient. Legacy v1/v2/v3 manifests cannot acquire media cleanup authority; corresponding unit fixtures pin their historical versions.
 
 Staging browser, MariaDB concurrency, storage recovery and cleanup have **not run** at this local checkpoint. Production root/ACL/proxy/backup and Linux standalone codec require separate release gates. See [storage runbook](../docs/cms/operations/cms009-media-storage.md) for the implemented check-only recovery CLI and its guarded apply contract; never use it merely to clear a failed run.
+
+## CMS-009 MED-08/11 scope diagnostics after the first guarded staging run
+
+The earlier local-only checkpoint above is historical. PO-supplied staging run
+`68d3a3f5573aa535affdbea2` ended 119 passed, two failed and one timed out;
+its 19 zero cleanup counters do not make the suite verified. MED-08/11 uploaded
+successfully, then timed out within `MED_SCOPE_OTHER`. The prior registry had no
+phase records for the navigation, query, search, hidden-row assertion or asset
+GET, so it cannot identify the stalled await.
+
+The next run emits fixed `MED_SCOPE_OTHER_*` and `MED_SCOPE_ADMIN_*` phases for
+login, navigation, query input, search click and visibility assertions; the
+other actor also records the asset GET. `TIMING` marks each controlled step's
+start/end and `MEDIA_OBSERVATION` records elapsed/duration/status. Only the GET
+observation may carry an HTTP status; `0` means no response status was observed.
+The scope observations retain the one already captured creator upload intent;
+they do not represent an additional upload.
+`errorCode` remains null unless a safe allowlisted code was actually observed.
+Neither reporter nor runner forwards raw URL, query, body, cookie or stack.
+Compare the last started phase, its completion if present, and the final CASE;
+a missing completion is not proof of which application layer caused delay.
+The timeout, retries, search actions and access assertions remain unchanged.

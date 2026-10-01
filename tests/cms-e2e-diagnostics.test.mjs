@@ -58,6 +58,30 @@ test('MED upload observations preserve safe phases, HTTP status and codes withou
   assert.equal(parse(lines[1]).record.status, 'failed')
   assert.equal(lines.join('').includes(PRIVATE), false)
 })
+
+test('MED-08/11 scope phases survive reporter/filter only for their exact case', () => {
+  const title = 'MED-08/11 own library excludes foreign asset while admin can find it'
+  const record = { caseId: 'MED-08/11', phase: 'MED_SCOPE_OTHER_GET', status: 'passed', elapsedMs: 48123,
+    durationMs: 132, httpStatus: 404, errorCode: null, intentCount: 1 }
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  reporter.onTestEnd(testCase(title, MEDIA_FILE), { status: 'timedOut', annotations: [
+    { type: 'cms-media-observation', description: JSON.stringify(Object.fromEntries(
+      Object.entries(record).filter(([key]) => key !== 'caseId'))) },
+  ] })
+  filter.end()
+  assert.deepEqual(lines.map(parse).map(row => row.kind), ['MEDIA_OBSERVATION', 'CASE'])
+  assert.deepEqual(parse(lines[0]).record, record)
+  assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', { ...record, caseId: 'MED-02/05/10' }), null)
+  assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', { ...record, query: PRIVATE }), null)
+  assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', { ...record, errorCode: PRIVATE }), null)
+  assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', { ...record, httpStatus: 999 }), null)
+  const timing = { caseId: 'MED-08/11', phaseCode: 'MED_SCOPE_OTHER_GET', scope: 'phase', status: 'started',
+    durationMs: 0, testOffsetMs: 8000, bodyState: 'running', bodyElapsedMs: 8000, testTimeoutMs: 60000,
+    location: location(MEDIA_FILE) }
+  assert.match(formatDiagnosticRecord('TIMING', timing), /MED_SCOPE_OTHER_GET/)
+  assert.equal(formatDiagnosticRecord('TIMING', { ...timing, caseId: 'MED-02/05/10' }), null)
+})
 test('MED scope and teardown timing identifies the active phase without changing the timeout verdict', () => {
   const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
   const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
