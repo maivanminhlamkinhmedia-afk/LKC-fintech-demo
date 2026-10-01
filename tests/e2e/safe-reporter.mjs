@@ -1,4 +1,4 @@
-import { diagnosticCase, diagnosticLocation, formatDiagnosticRecord } from '../../scripts/cms-e2e/diagnostics.mjs'
+import { diagnosticCase, diagnosticLocation, formatDiagnosticRecord, MEDIA_TIMING_BODIES } from '../../scripts/cms-e2e/diagnostics.mjs'
 import { TAX_TIMING_BODIES, TAX_TIMING_HOOKS } from '../../scripts/cms-e2e/taxonomy-diagnostics.mjs'
 
 function enclosingPhase(step, definition) {
@@ -22,7 +22,7 @@ export default class SafeReporter {
   onBegin(_config, suite) { this.emit('DISCOVERY', { count: suite.allTests().length }) }
 
   timing(test, result, step, ended) {
-    const definition = diagnosticCase(test), bodyCode = TAX_TIMING_BODIES[definition.caseId]
+    const definition = diagnosticCase(test), bodyCode = TAX_TIMING_BODIES[definition.caseId] ?? MEDIA_TIMING_BODIES[definition.caseId]
     if (!bodyCode) return
     let scope, phaseCode
     if (step.category === 'hook' && Object.hasOwn(TAX_TIMING_HOOKS, step.title)) {
@@ -94,6 +94,18 @@ export default class SafeReporter {
 
   onTestEnd(test, result) {
     const definition = diagnosticCase(test)
+    if (Object.hasOwn(MEDIA_TIMING_BODIES, definition.caseId)) {
+      for (const annotation of result.annotations ?? []) {
+        if (annotation.type !== 'cms-media-observation' || typeof annotation.description !== 'string'
+          || annotation.description.length > 512) continue
+        try {
+          const observation = JSON.parse(annotation.description)
+          if (!observation || typeof observation !== 'object' || Object.hasOwn(observation, 'caseId')) continue
+          this.emit('MEDIA_OBSERVATION', { ...observation, caseId: definition.caseId })
+        }
+        catch { /* Untrusted diagnostics never alter the test verdict. */ }
+      }
+    }
     this.emit('CASE', { caseId: definition.caseId,
       status: ['passed', 'failed', 'timedOut', 'skipped', 'interrupted'].includes(result.status) ? result.status : 'unknown',
       testLocation: diagnosticLocation(test.location, definition.file) })

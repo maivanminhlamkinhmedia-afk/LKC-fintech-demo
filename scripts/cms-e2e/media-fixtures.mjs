@@ -1,5 +1,5 @@
 import { randomBytes, createHash } from 'node:crypto'
-import { mkdir, open, readFile, readdir, lstat, realpath, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, lstat, realpath, rename, unlink, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { PNG } from 'pngjs'
 import { demand } from './guard.mjs'
@@ -126,14 +126,14 @@ export async function reserveMediaDelete(manifest, assetId, actorId, persist) {
 }
 // Test-only pagination batch. Persist exact ownership before any FS/DB side
 // effect; interrupted writes remain identifiable to guarded graph recovery.
-export async function seedManagedMediaBatch(db, manifest, actorId, count, bytes, persist) {
+export async function seedManagedMediaBatch(db, manifest, actorId, count, bytes, persist, cwd = process.cwd()) {
   validateMediaManifest(manifest)
   demand(manifest.version === 4 && users(manifest).includes(actorId) && Number.isInteger(count) && count > 0 && count <= 30
     && Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= 5 * 1024 * 1024, 'MEDIA_BATCH_INVALID')
-  await inspectMediaGraph(db, manifest, process.cwd(), true)
+  await inspectMediaGraph(db, manifest, cwd, true)
   const { width, height } = PNG.sync.read(bytes)
   demand(width > 0 && height > 0 && width <= 4096 && height <= 4096 && width * height <= 4_194_304, 'MEDIA_BATCH_INVALID')
-  const root = mediaRootPath(manifest)
+  const root = mediaRootPath(manifest, cwd)
   const digest = createHash('sha256').update(bytes).digest('hex')
   const entries = Array.from({ length: count }, () => {
     const operationId = randomBytes(16).toString('hex'), assetId = randomBytes(16).toString('hex')
@@ -142,7 +142,7 @@ export async function seedManagedMediaBatch(db, manifest, actorId, count, bytes,
   })
   const updated = { ...manifest, mediaIntents: [...manifest.mediaIntents, ...entries] }
   validateMediaManifest(updated); await persist(updated); manifest.mediaIntents = updated.mediaIntents
-  const rows = []
+  const rows = [], operations = []
   for (const entry of entries) {
     const operation = { version: 1, kind: 'upload', id: entry.operationId, assetId: entry.assetId, actorId,
       key: entry.key, rootIdentity: manifest.mediaRootIdentity, startedAt: new Date().toISOString(), stage: 'file-ready',
@@ -150,11 +150,21 @@ export async function seedManagedMediaBatch(db, manifest, actorId, count, bytes,
       digest, size: bytes.length, width, height }
     await writeFile(join(root, 'operations', `${entry.operationId}.json`), JSON.stringify(operation), { flag: 'wx' })
     await writeFile(join(root, 'objects', entry.key), bytes, { flag: 'wx' })
+    operations.push(operation)
     rows.push({ id: entry.assetId, uploadedById: actorId, filename: entry.key,
       originalFilename: entry.originalFilename, url: `/api/cms/media/${entry.assetId}/content`,
       mimeType: 'image/png', sizeBytes: bytes.length, width, height, altText: 'Fixture page', caption: null })
   }
   demand((await db.mediaAsset.createMany({ data: rows })).count === count, 'MEDIA_BATCH_CREATE_COUNT_MISMATCH')
+  // Only an acknowledged DB commit releases these test-only receipts from
+  // the same pending quota enforced by beginMediaUpload for this actor.
+  for (const operation of operations) {
+    const temporary = join(root, 'tmp', `${operation.id}.journal`)
+    const handle = await open(temporary, 'wx', 0o600)
+    try { await handle.writeFile(JSON.stringify({ ...operation, stage: 'committed' })); await handle.sync() }
+    finally { await handle.close() }
+    await rename(temporary, join(root, 'operations', `${operation.id}.json`))
+  }
   return rows
 }
 export async function inspectMediaGraph(db, manifest, cwd = process.cwd(), recover = false) {

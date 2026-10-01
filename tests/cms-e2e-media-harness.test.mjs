@@ -1,12 +1,25 @@
 import assert from 'node:assert/strict'
-import { afterEach, test } from 'node:test'
+import { after, afterEach, test } from 'node:test'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { registerHooks } from 'node:module'
+import { PNG } from 'pngjs'
 import { createFixturePlan, validateManifest } from '../scripts/cms-e2e/fixtures.mjs'
 import { mediaRootPath, provisionRunMediaRoot, validateMediaManifest, reserveMediaOperation,
   inspectMediaGraph, mediaFsCounts, cleanupMediaFiles, seedManagedMediaBatch } from '../scripts/cms-e2e/media-fixtures.mjs'
+
+const rootUrl = new URL('../src/features/cms/', import.meta.url)
+const hooks = registerHooks({ resolve(specifier, context, next) {
+  if (specifier === 'server-only') return next('data:text/javascript,export {};', context)
+  if (context.parentURL?.startsWith(rootUrl.href) && specifier.startsWith('./') && !specifier.endsWith('.ts')) {
+    return next(new URL(`${specifier}.ts`, context.parentURL).href, context)
+  }
+  return next(specifier, context)
+} })
+const { countPendingMediaIntents } = await import('../src/features/cms/media-storage.ts')
+after(() => hooks.deregister())
 
 const scratch = []
 afterEach(async () => { while (scratch.length) await rm(scratch.pop(), { recursive: true, force: true }) })
@@ -63,6 +76,37 @@ test('managed pagination batch rejects foreign actor and invalid count before DB
   await assert.rejects(() => seedManagedMediaBatch(db(), manifest, manifest.users[0].id, 31, Buffer.from('image'), async () => {}), /MEDIA_BATCH_INVALID/)
   assert.equal(JSON.stringify(manifest), before)
   assert.deepEqual(await mediaFsCounts(manifest, cwd), { mediaFiles: 0, mediaTempFiles: 0, mediaJournals: 0, mediaLocks: 0 })
+})
+test('committed pagination batch does not consume the creator upload quota', async () => {
+  const { cwd, manifest, root } = await setup()
+  const rows = []
+  const fixtureDb = db(rows)
+  fixtureDb.mediaAsset.createMany = async ({ data }) => { rows.push(...data); return { count: data.length } }
+  const image = new PNG({ width: 1, height: 1 })
+  image.data = Buffer.from([1, 2, 3, 255])
+  const actorId = manifest.users[0].id
+  const created = await seedManagedMediaBatch(fixtureDb, manifest, actorId, 4, PNG.sync.write(image), async () => {}, cwd)
+  assert.equal(created.length, 4)
+  assert.equal(rows.length, 4)
+  assert.equal(await countPendingMediaIntents({ path: root, identity: manifest.mediaRootIdentity }, actorId), 0)
+  for (const intent of manifest.mediaIntents) {
+    const receipt = JSON.parse(await readFile(join(root, 'operations', `${intent.operationId}.json`), 'utf8'))
+    assert.equal(receipt.stage, 'committed')
+  }
+})
+test('pagination batch with unacknowledged DB write retains pending receipt for recovery', async () => {
+  const { cwd, manifest, root } = await setup()
+  const fixtureDb = db()
+  fixtureDb.mediaAsset.createMany = async () => { throw new Error('synthetic DB ACK loss') }
+  const image = new PNG({ width: 1, height: 1 })
+  image.data = Buffer.from([1, 2, 3, 255])
+  const actorId = manifest.users[0].id
+  await assert.rejects(() => seedManagedMediaBatch(fixtureDb, manifest, actorId, 1, PNG.sync.write(image), async () => {}, cwd),
+    /synthetic DB ACK loss/)
+  assert.equal(await countPendingMediaIntents({ path: root, identity: manifest.mediaRootIdentity }, actorId), 1)
+  const intent = manifest.mediaIntents[0]
+  const receipt = JSON.parse(await readFile(join(root, 'operations', `${intent.operationId}.json`), 'utf8'))
+  assert.equal(receipt.stage, 'file-ready')
 })
 test('reserved operation and DB/file exact identity admit one managed asset', async () => {
   const { cwd, manifest, root } = await setup()

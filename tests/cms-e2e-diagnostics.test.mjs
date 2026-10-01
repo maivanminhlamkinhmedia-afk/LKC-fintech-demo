@@ -29,6 +29,58 @@ test('MED registry accepts only exact file/title/step and rejects forged metadat
   assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...base, originalFilename: PRIVATE }), null)
   assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...base, assertionLocation: { file: MEDIA_FILE, line: 3, column: 3 }, assertionSource: 'raw-error' }), null)
 })
+test('MED upload observations preserve safe phases, HTTP status and codes without leaking payloads', () => {
+  const title = 'MED-08/11 own library excludes foreign asset while admin can find it'
+  const base = { caseId: 'MED-08/11', phase: 'POST_RESPONSE', status: 'failed', elapsedMs: 123,
+    durationMs: 0, httpStatus: 409, errorCode: 'MEDIA_BUSY', intentCount: 1 }
+  assert.match(formatDiagnosticRecord('MEDIA_OBSERVATION', base), /MEDIA_BUSY/)
+  for (const invalid of [
+    { ...base, caseId: FORMAT_CASE }, { ...base, phase: PRIVATE }, { ...base, errorCode: PRIVATE },
+    { ...base, httpStatus: 999 }, { ...base, intentCount: 2 }, { ...base, requestBody: PRIVATE },
+    { ...base, status: 'started', durationMs: 1 },
+  ]) assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', invalid), null)
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  const known = testCase(title, MEDIA_FILE)
+  reporter.onTestEnd(known, { status: 'failed', annotations: [
+    { type: 'cms-media-observation', description: JSON.stringify({ phase: base.phase, status: base.status,
+      elapsedMs: base.elapsedMs, durationMs: base.durationMs, httpStatus: base.httpStatus,
+      errorCode: base.errorCode, intentCount: base.intentCount }) },
+    { type: 'cms-media-observation', description: JSON.stringify({ phase: base.phase, status: base.status,
+      elapsedMs: base.elapsedMs, durationMs: base.durationMs, httpStatus: base.httpStatus,
+      errorCode: PRIVATE, intentCount: base.intentCount }) },
+    { type: 'cms-media-observation', description: JSON.stringify(base) },
+    { type: 'other', description: PRIVATE },
+  ] })
+  filter.end()
+  assert.deepEqual(lines.map(parse).map(row => row.kind), ['MEDIA_OBSERVATION', 'CASE'])
+  assert.deepEqual(parse(lines[0]).record, base)
+  assert.equal(parse(lines[1]).record.status, 'failed')
+  assert.equal(lines.join('').includes(PRIVATE), false)
+})
+test('MED scope and teardown timing identifies the active phase without changing the timeout verdict', () => {
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  const known = testCase('MED-08/11 own library excludes foreign asset while admin can find it', MEDIA_FILE)
+  known.timeout = 60_000
+  const result = { status: 'timedOut', startTime: new Date('2026-09-30T00:00:00.000Z'), annotations: [] }
+  const body = { category: 'test.step', title: 'MED_SCOPE_SEARCH', location: location(MEDIA_FILE),
+    startTime: new Date('2026-09-30T00:00:01.000Z'), duration: 4000 }
+  const inner = { category: 'test.step', title: 'MED_SCOPE_CREATOR_UPLOAD', location: location(MEDIA_FILE, 2, 3),
+    startTime: new Date('2026-09-30T00:00:02.000Z'), duration: 2000, parent: body }
+  reporter.onStepBegin(known, result, body)
+  reporter.onStepBegin(known, result, inner)
+  reporter.onStepEnd(known, result, inner)
+  reporter.onStepEnd(known, result, body)
+  reporter.onTestEnd(known, result)
+  filter.end()
+  const rows = lines.map(parse)
+  assert.deepEqual(rows.filter(row => row.kind === 'TIMING').map(row => [row.record.phaseCode, row.record.status]), [
+    ['MED_SCOPE_SEARCH', 'started'], ['MED_SCOPE_CREATOR_UPLOAD', 'started'],
+    ['MED_SCOPE_CREATOR_UPLOAD', 'passed'], ['MED_SCOPE_SEARCH', 'passed'],
+  ])
+  assert.equal(rows.at(-1).record.status, 'timedOut')
+})
 const FORMAT_STEPS = ['FMT_LOGIN', 'FMT_INPUT', 'FMT_BOLD', 'FMT_LIST', 'FMT_CODE_BLOCK',
   'FMT_NO_WRITE', 'FMT_SAVE_NAVIGATE', 'FMT_DB', 'FMT_RELOAD', 'FMT_DOM_TEXT', 'FMT_DOM_BOLD',
   'FMT_DOM_LIST', 'FMT_DOM_CODE', 'FMT_LIST_LINK', 'FMT_DASHBOARD']
@@ -68,7 +120,7 @@ const diagnosticRecord = (overrides = {}) => ({
 const wire = (kind, value) => `CMS_E2E ${kind} ${JSON.stringify(value)}\n`
 const parse = line => {
   assert.ok(line.endsWith('\n'))
-  const match = /^CMS_E2E (DISCOVERY|CASE|RESULT|DIAGNOSTIC) (.+)\n$/.exec(line)
+  const match = /^CMS_E2E (DISCOVERY|CASE|RESULT|DIAGNOSTIC|TIMING|MEDIA_OBSERVATION) (.+)\n$/.exec(line)
   assert.ok(match, 'only canonical structured diagnostic lines may be emitted')
   return { kind: match[1], record: JSON.parse(match[2]) }
 }

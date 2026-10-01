@@ -29,6 +29,8 @@ const draftId = () => manifest.articles.find(row => row.key === 'DRAFT')!.id
 const png = () => { const image = new PNG({ width: 2, height: 1 }); image.data = Buffer.from([255, 0, 0, 255, 0, 255, 0, 128]); return PNG.sync.write(image) }
 const jpg = () => jpeg.encode({ width: 2, height: 1, data: Buffer.from([255, 0, 0, 255, 0, 255, 0, 255]) }, 90).data
 const failed = (page: Page, code: string) => page.locator(`[data-error-code="${code}"]`)
+const uploadErrorCodes = new Set(['VALIDATION_ERROR', 'UNSUPPORTED_MEDIA', 'FILE_TOO_LARGE', 'IMAGE_LIMIT_EXCEEDED',
+  'MEDIA_BUSY', 'MEDIA_STORAGE_UNAVAILABLE', 'MEDIA_NOT_AVAILABLE', 'FORBIDDEN', 'NOT_FOUND', 'UNKNOWN_OUTCOME', 'INTERNAL_ERROR'])
 async function login(browser: Browser, actor: Actor = 'creator') {
   const context = await browser.newContext({ baseURL: STAGING_BASE_URL }); contexts.push(context)
   const page = await context.newPage()
@@ -40,7 +42,8 @@ async function login(browser: Browser, actor: Actor = 'creator') {
   } catch { throw new Error(`Fixture login failed for ${actor}; details suppressed`) }
   return { page, context }
 }
-async function registerUpload(page: Page, actor: Actor, name: string, mimeType: 'image/png' | 'image/jpeg', dropAck = false) {
+async function registerUpload(page: Page, actor: Actor, name: string, mimeType: 'image/png' | 'image/jpeg', dropAck = false,
+  observe?: (phase: 'INTENT_RESERVED' | 'POST_FORWARDED') => void) {
   const captured: Intent[] = []
   const handler = async (route: import('@playwright/test').Route) => {
     if (route.request().method() !== 'POST') { await route.continue(); return }
@@ -53,33 +56,81 @@ async function registerUpload(page: Page, actor: Actor, name: string, mimeType: 
       mimeType: raw.metadata.mimeType, originalFilename: raw.metadata.originalFilename }
     await reserveMediaOperation(manifest, intent, persist)
     captured.push(intent)
+    observe?.('INTENT_RESERVED')
     if (dropAck) {
       const response = await route.fetch()
       demand(response.ok(), 'MEDIA_LOST_ACK_SERVER_WRITE_FAILED')
       await route.abort('failed')
-    } else await route.continue()
+    } else { await route.continue(); observe?.('POST_FORWARDED') }
   }
   await page.route('**/api/cms/media/uploads/*', handler)
   return { captured, dispose: () => page.unroute('**/api/cms/media/uploads/*', handler) }
 }
 async function upload(page: Page, actor: Actor, name: string, mimeType: 'image/png' | 'image/jpeg', bytes: Buffer) {
-  await page.goto('/creator/media')
-  await expect(page.getByRole('heading', { name: 'Thư viện ảnh' })).toBeVisible()
-  const interception = await registerUpload(page, actor, name, mimeType)
+  const annotations = test.info().annotations, origin = performance.now()
+  let intentCount = 0
+  const note = (phase: string, status: 'started' | 'passed' | 'failed', durationMs = 0, httpStatus = 0, errorCode: string | null = null) => {
+    const entry = { type: 'cms-media-observation', description: JSON.stringify({ phase, status,
+      elapsedMs: Math.round(performance.now() - origin), durationMs, httpStatus, errorCode, intentCount }) }
+    annotations.push(entry)
+    return entry
+  }
+  const observed = async <T,>(phase: string, run: () => Promise<T>): Promise<T> => {
+    const start = performance.now(); note(phase, 'started')
+    try { const result = await run(); note(phase, 'passed', Math.round(performance.now() - start)); return result }
+    catch (error) { note(phase, 'failed', Math.round(performance.now() - start)); throw error }
+  }
+  await observed('PAGE', async () => {
+    await page.goto('/creator/media')
+    await expect(page.getByRole('heading', { name: 'Thư viện ảnh' })).toBeVisible()
+  })
+  const interception = await registerUpload(page, actor, name, mimeType, false, phase => { intentCount = 1; note(phase, 'passed') })
+  const responseObserver = (response: import('@playwright/test').Response) => {
+    if (response.request().method() !== 'POST' || !/^\/api\/cms\/media\/uploads\/[a-f0-9]{32}$/u.test(new URL(response.url()).pathname)) return
+    const httpStatus = response.status()
+    const observation = note('POST_RESPONSE', httpStatus >= 200 && httpStatus < 300 ? 'passed' : 'failed', 0, httpStatus)
+    if (httpStatus >= 400) void response.json().then(data => {
+      const code = data?.error?.code
+      if (typeof code === 'string' && uploadErrorCodes.has(code)) {
+        const safe = JSON.parse(observation.description)
+        observation.description = JSON.stringify({ ...safe, errorCode: code })
+      }
+    }).catch(() => {}) // Response observation never changes request handling or the assertion.
+  }
+  const failureObserver = (request: import('@playwright/test').Request) => {
+    if (request.method() === 'POST' && /^\/api\/cms\/media\/uploads\/[a-f0-9]{32}$/u.test(new URL(request.url()).pathname)) {
+      note('POST_FAILURE', 'failed')
+    }
+  }
+  page.on('response', responseObserver)
+  page.on('requestfailed', failureObserver)
   try {
-    await page.getByLabel('Tệp PNG/JPEG').setInputFiles({ name, mimeType, buffer: bytes })
-    await expect(page.getByLabel('Tên tệp')).toHaveValue(name)
-    await page.getByLabel('Văn bản thay thế').fill(`Ảnh ${name}`)
-    await page.getByRole('button', { name: 'Tải ảnh lên', exact: true }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'Ảnh đã được lưu.' })).toBeVisible()
+    await observed('INPUT', async () => {
+      await page.getByLabel('Tệp PNG/JPEG').setInputFiles({ name, mimeType, buffer: bytes })
+      await expect(page.getByLabel('Tên tệp')).toHaveValue(name)
+      await page.getByLabel('Văn bản thay thế').fill(`Ảnh ${name}`)
+    })
+    await observed('SUBMIT', () => page.getByRole('button', { name: 'Tải ảnh lên', exact: true }).click())
+    await observed('SUCCESS_UI', async () => {
+      try { await expect(page.getByRole('status').filter({ hasText: 'Ảnh đã được lưu.' })).toBeVisible() }
+      catch (error) {
+        try {
+          const code = await page.evaluate(() => document.querySelector('[data-error-code]')?.getAttribute('data-error-code') ?? null)
+          if (code && uploadErrorCodes.has(code)) note('UI_ERROR_CODE', 'failed', 0, 0, code)
+        } catch { /* Preserve the original assertion failure if the page is already closed. */ }
+        throw error
+      }
+    })
     demand(interception.captured.length === 1, 'MEDIA_UPLOAD_OPERATION_NOT_CAPTURED')
-  } finally { await interception.dispose() }
-  await recover()
+  } finally { page.off('response', responseObserver); page.off('requestfailed', failureObserver); await interception.dispose() }
+  await observed('RECOVER', recover)
   const intent = interception.captured[0]
-  const asset = await db.mediaAsset.findUnique({ where: { id: intent.assetId } }) as Asset | null
-  demand(asset && asset.uploadedById === actorId(actor) && asset.filename === intent.key && asset.originalFilename === name,
-    'MEDIA_UPLOAD_ROW_IDENTITY_MISMATCH')
-  return asset!
+  return observed('DB_CHECK', async () => {
+    const asset = await db.mediaAsset.findUnique({ where: { id: intent.assetId } }) as Asset | null
+    demand(asset && asset.uploadedById === actorId(actor) && asset.filename === intent.key && asset.originalFilename === name,
+      'MEDIA_UPLOAD_ROW_IDENTITY_MISMATCH')
+    return asset!
+  })
 }
 async function cover(page: Page, articleId: string, asset: Asset) {
   await page.goto(`/creator/articles/${articleId}/media`)
@@ -187,18 +238,25 @@ test('MED-03/24 invalid files and origin leave no media row or canonical residue
 })
 test('MED-08/11 own library excludes foreign asset while admin can find it', async ({ browser }) => {
   await test.step('MED_SCOPE_SEARCH', async () => {
-    const creator = await login(browser)
-    const name = `scope-${randomBytes(3).toString('hex')}.png`
-    const asset = await upload(creator.page, 'creator', name, 'image/png', png())
-    const other = await login(browser, 'other'); await other.page.goto('/creator/media')
-    await other.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name)
-    await other.page.getByRole('button', { name: 'Tìm kiếm' }).click()
-    await expect(other.page.locator(`li[data-media-id="${asset.id}"]`)).toHaveCount(0)
-    expect((await other.context.request.get(asset.url)).status()).toBe(404)
-    const admin = await login(browser, 'admin'); await admin.page.goto('/creator/media')
-    await admin.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name)
-    await admin.page.getByRole('button', { name: 'Tìm kiếm' }).click()
-    await expect(admin.page.locator(`li[data-media-id="${asset.id}"]`)).toBeVisible()
+    const { asset, name } = await test.step('MED_SCOPE_CREATOR_UPLOAD', async () => {
+      const creator = await login(browser)
+      const name = `scope-${randomBytes(3).toString('hex')}.png`
+      const asset = await upload(creator.page, 'creator', name, 'image/png', png())
+      return { asset, name }
+    })
+    await test.step('MED_SCOPE_OTHER', async () => {
+      const other = await login(browser, 'other'); await other.page.goto('/creator/media')
+      await other.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name)
+      await other.page.getByRole('button', { name: 'Tìm kiếm' }).click()
+      await expect(other.page.locator(`li[data-media-id="${asset.id}"]`)).toHaveCount(0)
+      expect((await other.context.request.get(asset.url)).status()).toBe(404)
+    })
+    await test.step('MED_SCOPE_ADMIN', async () => {
+      const admin = await login(browser, 'admin'); await admin.page.goto('/creator/media')
+      await admin.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name)
+      await admin.page.getByRole('button', { name: 'Tìm kiếm' }).click()
+      await expect(admin.page.locator(`li[data-media-id="${asset.id}"]`)).toBeVisible()
+    })
   })
 })
 test('MED-08 paging keeps selected metadata while foreign scope stays hidden', async ({ browser }) => {

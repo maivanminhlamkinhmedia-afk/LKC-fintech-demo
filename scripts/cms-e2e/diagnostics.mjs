@@ -11,6 +11,16 @@ const sourcesFile = 'tests/e2e/cms-sources.spec.ts'
 const taxonomyFile = 'tests/e2e/cms-taxonomy.spec.ts'
 const mediaFile = 'tests/e2e/cms-media.spec.ts'
 const mediaTeardownSteps = ['MED_TEARDOWN_CONTEXT_CLOSE', 'MED_TEARDOWN_RECOVER', 'MED_TEARDOWN_DISCONNECT']
+export const MEDIA_ERROR_CODES = Object.freeze([
+  'VALIDATION_ERROR', 'UNSUPPORTED_MEDIA', 'FILE_TOO_LARGE', 'IMAGE_LIMIT_EXCEEDED', 'MEDIA_BUSY',
+  'MEDIA_STORAGE_UNAVAILABLE', 'MEDIA_NOT_AVAILABLE', 'MEDIA_IN_USE', 'MEDIA_CONFLICT',
+  'EDIT_CONFLICT', 'FORBIDDEN', 'NOT_FOUND', 'NOT_EDITABLE', 'UNSUPPORTED_DOCUMENT',
+  'UNKNOWN_OUTCOME', 'STORAGE_CLEANUP_PENDING', 'INTERNAL_ERROR',
+])
+export const MEDIA_OBSERVATION_PHASES = Object.freeze([
+  'PAGE', 'INPUT', 'SUBMIT', 'INTENT_RESERVED', 'POST_FORWARDED', 'POST_RESPONSE',
+  'POST_FAILURE', 'SUCCESS_UI', 'UI_ERROR_CODE', 'RECOVER', 'DB_CHECK',
+])
 const sourceTeardownSteps = [
   'SRC_TEARDOWN_DISPOSE', 'SRC_TEARDOWN_CONTEXT_CLOSE', 'SRC_TEARDOWN_RECOVER', 'SRC_TEARDOWN_DISCONNECT',
 ]
@@ -94,7 +104,8 @@ const definitions = [
   ['MED-01', 'MED-01 protected media routes and bytes enforce role and article scope', mediaFile, ['MED_ACCESS']],
   ['MED-02/05/10', 'MED-02/05/10 PNG and JPEG upload persist canonical private bytes and protected GET HEAD', mediaFile, ['MED_UPLOAD_CANONICAL']],
   ['MED-03/24', 'MED-03/24 invalid files and origin leave no media row or canonical residue', mediaFile, ['MED_VALIDATION']],
-  ['MED-08/11', 'MED-08/11 own library excludes foreign asset while admin can find it', mediaFile, ['MED_SCOPE_SEARCH']],
+  ['MED-08/11', 'MED-08/11 own library excludes foreign asset while admin can find it', mediaFile,
+    ['MED_SCOPE_SEARCH', 'MED_SCOPE_CREATOR_UPLOAD', 'MED_SCOPE_OTHER', 'MED_SCOPE_ADMIN']],
   ['MED-08-PAGE', 'MED-08 paging keeps selected metadata while foreign scope stays hidden', mediaFile, ['MED_PAGING_SCOPE']],
   ['MED-09/19/34', 'MED-09/19/34 metadata edit uses exact CAS and preserves immutable binary identity', mediaFile, ['MED_METADATA_CAS']],
   ['MED-12/13', 'MED-12/13 cover select and clear preserve article fields and use shared token', mediaFile, ['MED_COVER_ROUNDTRIP']],
@@ -128,6 +139,8 @@ const definitions = [
     : file === mediaFile ? [...steps, ...mediaTeardownSteps] : steps) }))
 const byTitle = new Map(definitions.map(definition => [definition.title, definition]))
 const byId = new Map(definitions.map(definition => [definition.caseId, definition]))
+export const MEDIA_TIMING_BODIES = Object.freeze(Object.fromEntries(definitions
+  .filter(definition => definition.file === mediaFile).map(definition => [definition.caseId, definition.steps[0]])))
 const unknownCase = Object.freeze({ caseId: 'UNKNOWN_CASE', file: null, steps: Object.freeze([]) })
 const caseStatuses = ['passed', 'failed', 'timedOut', 'skipped', 'interrupted', 'unknown']
 const resultStatuses = ['passed', 'failed', 'timedout', 'interrupted', 'unknown', 'infrastructure-error-details-redacted']
@@ -186,7 +199,8 @@ export function formatDiagnosticRecord(kind, record) {
     if (!exactKeys(record, ['caseId', 'phaseCode', 'scope', 'status', 'durationMs', 'testOffsetMs',
       'bodyState', 'bodyElapsedMs', 'testTimeoutMs', 'location'])) return null
     const definition = byId.get(record.caseId)
-    if (!definition || !Object.hasOwn(TAX_TIMING_BODIES, record.caseId)) return null
+    if (!definition || !Object.hasOwn(TAX_TIMING_BODIES, record.caseId)
+      && !Object.hasOwn(MEDIA_TIMING_BODIES, record.caseId)) return null
     const phaseAllowed = record.scope === 'hook' ? Object.values(TAX_TIMING_HOOKS).includes(record.phaseCode)
       : record.scope === 'fixture' ? record.phaseCode === 'PW_FIXTURE'
         : ['phase', 'assertion'].includes(record.scope) && definition.steps.includes(record.phaseCode)
@@ -210,13 +224,26 @@ export function formatDiagnosticRecord(kind, record) {
     canonical = { caseId: definition.caseId, stepCode: record.stepCode, status: record.status,
       testLocation: record.testLocation, stepLocation: record.stepLocation,
       assertionLocation: record.assertionLocation, assertionSource: record.assertionSource }
+  } else if (kind === 'MEDIA_OBSERVATION') {
+    if (!exactKeys(record, ['caseId', 'phase', 'status', 'elapsedMs', 'durationMs', 'httpStatus', 'errorCode', 'intentCount'])
+      || !Object.hasOwn(MEDIA_TIMING_BODIES, record.caseId)
+      || !MEDIA_OBSERVATION_PHASES.includes(record.phase)
+      || !['started', 'passed', 'failed'].includes(record.status)
+      || !milliseconds(record.elapsedMs) || !milliseconds(record.durationMs)
+      || record.status === 'started' && record.durationMs !== 0
+      || !Number.isSafeInteger(record.httpStatus) || record.httpStatus !== 0 && (record.httpStatus < 100 || record.httpStatus > 599)
+      || record.errorCode !== null && !MEDIA_ERROR_CODES.includes(record.errorCode)
+      || !Number.isSafeInteger(record.intentCount) || record.intentCount < 0 || record.intentCount > 1) return null
+    canonical = { caseId: record.caseId, phase: record.phase, status: record.status,
+      elapsedMs: record.elapsedMs, durationMs: record.durationMs, httpStatus: record.httpStatus,
+      errorCode: record.errorCode, intentCount: record.intentCount }
   } else return null
   return `CMS_E2E ${kind} ${JSON.stringify(canonical)}`
 }
 
 function filterLine(line) {
   if (line.length > MAX_DIAGNOSTIC_LINE_LENGTH) return null
-  const match = /^CMS_E2E (DISCOVERY|CASE|DIAGNOSTIC|TIMING|RESULT) (\{[^\r\n]*\})$/.exec(line)
+  const match = /^CMS_E2E (DISCOVERY|CASE|DIAGNOSTIC|TIMING|MEDIA_OBSERVATION|RESULT) (\{[^\r\n]*\})$/.exec(line)
   if (!match) return null
   try { return formatDiagnosticRecord(match[1], JSON.parse(match[2])) } catch { return null }
 }

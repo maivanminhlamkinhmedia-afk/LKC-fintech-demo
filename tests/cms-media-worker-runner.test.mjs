@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PNG } from 'pngjs'
+import jpeg from 'jpeg-js'
 
 const root = new URL('../src/features/cms/', import.meta.url)
 const hooks = registerHooks({ resolve(specifier, context, next) {
@@ -41,4 +42,18 @@ test('worker crash returns safe error and leaves a subsequent valid job runnable
   await writeFile(file, "throw new Error('synthetic worker crash')")
   await assert.rejects(() => runImageWorker(image, 'image/png', file), error => error.code === 'UNSUPPORTED_MEDIA')
   assert.equal((await runImageWorker(image, 'image/png', realWorker)).mimeType, 'image/png')
+})
+test('real worker accepts PNG and JPEG after malformed input across consecutive jobs', async () => {
+  const photo = jpeg.encode({ width: 1, height: 1, data: Buffer.from([1, 2, 3, 255]) }, 90).data
+  for (const [bytes, mimeType] of [[image, 'image/png'], [photo, 'image/jpeg']]) {
+    const result = await runImageWorker(bytes, mimeType, realWorker)
+    assert.equal(result.mimeType, mimeType)
+    assert.deepEqual([result.width, result.height], [1, 1])
+  }
+  await assert.rejects(() => runImageWorker(Buffer.from('not-png'), 'image/png', realWorker),
+    error => error.code === 'UNSUPPORTED_MEDIA')
+  for (let index = 0; index < 6; index++) {
+    const result = await runImageWorker(image, 'image/png', realWorker)
+    assert.equal(result.mimeType, 'image/png')
+  }
 })
