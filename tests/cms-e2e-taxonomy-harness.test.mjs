@@ -2,9 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createFixturePlan, validateManifest, createFixtures, catalogCreateData, reserveCatalogIntent,
   discoverFixtureGraph, discoverCreatedSources, fixturePreflight, fixtureCatalog, fixtureClassification,
-  cleanupFixtures, remainingCounts, alterFixture } from '../scripts/cms-e2e/fixtures.mjs'
+  cleanupFixtures, remainingCounts, alterFixture, attachLegacyCoverFixture } from '../scripts/cms-e2e/fixtures.mjs'
 import { CATALOG_MODELS, MAPPING_MODELS, seedCatalogData } from '../scripts/cms-e2e/taxonomy-fixtures.mjs'
+import { provisionRunMediaRoot } from '../scripts/cms-e2e/media-fixtures.mjs'
 import { cleanupConfirmedFixtures } from '../scripts/cms-e2e/run.mjs'
+import { rm } from 'node:fs/promises'
+import { isAbsolute, relative, resolve } from 'node:path'
 
 // In-memory transaction/query adapters only. No Prisma/socket/DB/browser/fixtures
 // CLI or environment file is used. Real13-counter cleanup remains staging work.
@@ -27,11 +30,12 @@ function matches(row, where = {}) {
   })
 }
 function setup(options = {}) {
-  const manifest = createFixturePlan(runId, options.version ?? 3)
+  const manifest = createFixturePlan(options.runId ?? runId, options.version ?? 3)
   const state = { user: manifest.users.map(row => ({ ...row, status: 'ACTIVE', customerProfile: null, extraCounts: {} })),
     article: manifest.articles.map(row => ({ ...row, title: 'Synthetic body owner', categoryId: null, editorId: null, coverMediaId: null,
       updatedAt: date, editorSchemaVersion: 1, extraCounts: {} })), sourceReference: [], authorProfile: [], auditLog: [],
-    articleCategory: [], articleTopic: [], articleTag: [], financialInstrument: [], articleTopicMapping: [], articleTagMapping: [], articleInstrument: [] }
+    articleCategory: [], articleTopic: [], articleTag: [], financialInstrument: [], articleTopicMapping: [], articleTagMapping: [], articleInstrument: [],
+    ...(manifest.version === 4 ? { mediaAsset: [] } : {}) }
   for (const row of manifest.catalogs ?? []) state[CATALOG_MODELS[row.kind]].push({ ...seedCatalogData(manifest, row), createdAt: date, updatedAt: date })
   if (options.empty) for (const key of Object.keys(state)) state[key] = []
   const calls = []; let committed = false
@@ -42,7 +46,8 @@ function setup(options = {}) {
       instruments: state.articleInstrument.filter(pair => pair.articleId === row.id).length,
       versions: 0, ...row.extraCounts } }
     if (model === 'user') return { ...row, _count: { sourceReferencesCreated: state.sourceReference.filter(source => source.createdById === row.id).length,
-      articlesAuthored: state.article.filter(article => article.authorId === row.id).length, auditLogs: 0, ...row.extraCounts } }
+      articlesAuthored: state.article.filter(article => article.authorId === row.id).length, auditLogs: 0,
+      ...(manifest.version === 4 ? { mediaAssetsUploaded: state.mediaAsset.filter(asset => asset.uploadedById === row.id).length } : {}), ...row.extraCounts } }
     return row
   }
   const db = { async $queryRaw() { calls.push(['identity']); return [{ databaseName: 'edpmjmha_lkcstage', databaseUser: 'edpmjmha_lkcstg@localhost' }] },
@@ -90,6 +95,37 @@ function setup(options = {}) {
 }
 const writes = fixture => fixture.calls.filter(([name]) => /\.(createMany|updateMany|deleteMany)$/.test(name))
 const seed = (fixture, kind, seedKey = 'seed-01') => fixture.manifest.catalogs.find(row => row.kind === kind && row.seedKey === seedKey)
+test('MED-26 real legacy-cover helper rejects reused covered draft and accepts isolated owned draft', async () => {
+  const f = setup({ version: 4, runId: '9f3c8138b2c34e99a624f711' })
+  const root = await provisionRunMediaRoot(f.manifest)
+  const parent = resolve(process.cwd(), '.next', 'cms-e2e-media')
+  const child = resolve(root), within = relative(parent, child)
+  assert.ok(within && !within.startsWith('..') && !isAbsolute(within), 'synthetic root remains inside local scratch')
+  try {
+    const creator = f.manifest.users.find(user => user.key === 'creator')
+    const other = f.manifest.users.find(user => user.key === 'other')
+    const primary = f.manifest.articles.find(article => article.key === 'DRAFT')
+    const isolated = f.manifest.articles.find(article => article.key === 'other-draft')
+    const old = { id: 'a'.repeat(32), uploadedById: creator.id, filename: `legacy-${'a'.repeat(32)}.png`,
+      url: `https://legacy.invalid/${'a'.repeat(32)}.png`, sizeBytes: 1, mimeType: 'image/png' }
+    const fresh = { id: 'b'.repeat(32), uploadedById: other.id, filename: `legacy-${'b'.repeat(32)}.png`,
+      url: `https://legacy.invalid/${'b'.repeat(32)}.png`, sizeBytes: 1, mimeType: 'image/png' }
+    f.manifest.legacyMediaAssets.push(old, fresh)
+    f.state.mediaAsset.push(old, fresh)
+    f.state.article.find(article => article.id === primary.id).coverMediaId = old.id
+    f.manifest.coverLinks.push({ articleId: primary.id, mediaId: old.id })
+    await fixturePreflight(f.db, f.manifest)
+    await assert.rejects(attachLegacyCoverFixture(f.db, env, f.manifest, primary.id, fresh.id, async () => {}),
+      /MEDIA_LEGACY_COVER_INVALID/)
+    assert.equal(f.state.article.find(article => article.id === primary.id).coverMediaId, old.id)
+    assert.equal(f.state.article.find(article => article.id === isolated.id).coverMediaId, null)
+    await attachLegacyCoverFixture(f.db, env, f.manifest, isolated.id, fresh.id, async updated => validateManifest(updated))
+    assert.equal(f.state.article.find(article => article.id === isolated.id).coverMediaId, fresh.id)
+    assert.ok(f.manifest.coverLinks.some(link => link.articleId === isolated.id && link.mediaId === fresh.id))
+    assert.equal(f.state.article.find(article => article.id === primary.id).coverMediaId, old.id)
+    assert.equal(f.calls.filter(([name, args]) => name === 'article.updateMany' && args.data.coverMediaId === fresh.id).length, 1)
+  } finally { await rm(child, { recursive: true, force: true }) }
+})
 async function attach(fixture, { journal = true } = {}) {
   const { manifest, state } = fixture, articleId = manifest.articles[0].id
   const categoryId = seed(fixture, 'category').id

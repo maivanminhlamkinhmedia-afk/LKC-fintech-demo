@@ -24,6 +24,7 @@ export default async function ArticleListPage({ searchParams }: {
             {canCreateArticle(user) && <Link href="/creator/articles/new" className="rounded-xl bg-[#167563] px-5 py-3 font-semibold text-white">Tạo bài nháp</Link>}
           </header>
           <Link href="/creator" className="inline-block text-sm font-medium text-emerald-800 underline">Tổng quan nội dung</Link>
+          <Link href="/creator/media" className="ml-4 inline-block text-sm font-medium text-emerald-800 underline">Thư viện ảnh</Link>
           {articles.length === 0 ? (
             <p className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-500">Chưa có bài viết</p>
           ) : (
@@ -38,6 +39,7 @@ export default async function ArticleListPage({ searchParams }: {
                   <div className="flex shrink-0 flex-wrap gap-2">
                   <Link href={`/creator/articles/${encodeURIComponent(article.id)}/sources`} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Nguồn tham khảo</Link>
                   <Link href={`/creator/articles/${encodeURIComponent(article.id)}/classification`} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Phân loại</Link>
+                  <Link href={`/creator/articles/${encodeURIComponent(article.id)}/media`} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Ảnh bìa</Link>
                   {canEditArticleDraft(user, article) && (
                     <Link href={`/creator/articles/${encodeURIComponent(article.id)}/edit`} className="shrink-0 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Chỉnh sửa</Link>
                   )}

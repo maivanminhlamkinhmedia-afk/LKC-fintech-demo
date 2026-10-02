@@ -83,7 +83,7 @@ export function FloatingContact() {
   }
 
   return (
-    <div ref={ref} className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
+    <div ref={ref} className="pointer-events-none fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
       {FLOATING_CONTACTS.map((c, i) => {
         const itemStyle = {
           opacity: open ? 1 : 0,
@@ -209,7 +209,7 @@ export function FloatingContact() {
         }}
         aria-label={open ? 'Đóng liên hệ' : 'Mở liên hệ'}
         aria-expanded={open}
-        className="relative w-[52px] h-[52px] rounded-full flex items-center justify-center
+        className="pointer-events-auto relative w-[52px] h-[52px] rounded-full flex items-center justify-center
                    bg-gradient-to-br from-[#0891B2] to-[#10B981]
                    shadow-lg shadow-[#0891B2]/30
                    hover:scale-105 active:scale-95 transition-transform cursor-pointer"

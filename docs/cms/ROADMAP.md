@@ -1,15 +1,15 @@
 # LKC Financial Publishing — roadmap và checkpoint
 
-Updated: 2026-09-29 (UTC+7)
+Updated: 2026-09-30 (UTC+7)
 
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
 Nguồn: bàn giao Product Owner, GitHub và các báo cáo triển khai trong phiên. Checkpoint mới thay thế trạng thái cũ; giữ báo cáo lịch sử, không chạy lại gate đã hoàn tất chỉ vì tài liệu cũ còn pending.
 
-**CMS-001..004 COMPLETE theo bằng chứng đã ghi. CMS-005, CMS-006 và CMS-007 đã DEPLOYED.** Review/CI/staging/cleanup và anonymous smoke/monitoring của từng release đã PASS trong phạm vi báo cáo. Manual authenticated production acceptance còn thiếu của cả ba task hiện **DEFERRED — chờ nghiệm thu cuối dự án**, theo PO ngày 28/09/2026; chưa đánh COMPLETE/PASS cho phần này. Xem [sổ nghiệm thu](ACCEPTANCE.md).
+**CMS-001..004 COMPLETE; CMS-005..008 DEPLOYED về kỹ thuật.** Manual authenticated UAT vẫn DEFERRED tới cuối dự án theo PO, không phải PASS và không chặn roadmap; xem [ACCEPTANCE](ACCEPTANCE.md).
 
-**CMS-007 release đã hoàn tất:** PR #22 merged, main `9bd3ec8e7cc55ebcaf8a9782868a3ac93fcc7a34`, deploy run 36401463356 SUCCESS. Head đã kiểm thử `fe61d3dcd826e0b58586b8224c0afbf440096fcd`, CI 612 tests, staging 55/55 PASS với runId `b27c36765fec1e586f51b5ab` / BUILD_ID `Mo8ODgdwdymem1iN-zNAc`, cleanup 5 counters bằng 0 và VERIFIED. Anonymous smoke 7/7, monitoring 12/12; nguồn và giới hạn tại [release checkpoint CMS-007](reports/CMS-007-release-checkpoint.md).
+**CMS-008 đã phát hành:** PR23 merged, main 89269dc806a9800f6582ea1a37a909aa60c944cd. Tested head3a5b135ac94a34bc21708cf232981ca452aa01ea; CI36582559834 SUCCESS với788tests; staging Claude thực chạy/PO cung cấp90/90PASS, runId33b5edd2e7ebaafd3070f220 / BUILD_ID XYB-lSk-r07z_FlL16mnx,13zero/exit0/VERIFIED. Deploy36592082460 SUCCESS đúng actual merge; anonymous9/9 và monitoring12/12 trong304giây PASS trong phạm vi báo cáo. Nguồn/giới hạn và lịch sử tại [release checkpoint](reports/CMS-008-release-checkpoint.md). CMS-008 chưa COMPLETE.
 
-**Bước hiện tại: CMS-008 — Category/Topic/Tags/Instruments, LOCAL IMPLEMENTATION / VALIDATION PASS; chờ Claude independent review.** Branch `feature/cms-008-taxonomy-instruments`, HEAD tài liệu `85f9eb55e5c63217d060e89f71780959cb00058a`, base main `9bd3ec8e7cc55ebcaf8a9782868a3ac93fcc7a34`. Đã triển khai catalog admin bốn loại và phân loại từng bài, shared Article token với autosave/sources, manifest v3 exact identities/intents/relations và cleanup 13 counters. Local Node 22.23.2: **761/761 unit/action tests**, Prisma validate/generate, lint, TypeScript, production build cô lập và diff-check PASS; discovery **90 =55 baseline +35 TAX**. Browser/MariaDB/cleanup thực tế, Claude review và CI **NOT RUN**. Diff implementation UNSTAGED, index rỗng; không commit/push/release và chưa COMPLETE. Mapping [36 AC/32 TAX và bằng chứng](reports/CMS-008-implementation.md); [spec](tasks/CMS-008.md), [handoff](tasks/CMS-008-IMPLEMENTATION.md). Manual UAT vẫn DEFERRED tới cuối dự án, không biến thành PASS.
+**Bước hiện tại: CMS-009 — Media library, LOCAL REVIEW-FIX HANDOFF.** Branch `feature/cms-009-media-library` từ main `89269dc…`, checkpoint tài liệu `b68f83f…`. [Spec40AC/36MED](tasks/CMS-009.md), [handoff Codex](tasks/CMS-009-IMPLEMENTATION.md), [storage runbook](operations/cms009-media-storage.md), [báo cáo implementation](reports/CMS-009-implementation.md), [báo cáo sửa sau review](reports/CMS-009-review-fixes.md). Claude independent review do Product Owner cung cấp đã xác định BUG-001 và các khoảng trống kiểm chứng; bản sửa local cần Claude delta review. CI/browser staging NOT RUN. Production storage chưa provision/verify; manual authenticated production UAT DEFERRED. Không đánh dấu COMPLETE.
 
 ## Quy trình delivery
 
@@ -30,8 +30,8 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 | CMS-005 | Draft editor + TipTap | DEPLOYED; technical release gates PASS; manual authenticated UAT DEFERRED tới cuối dự án; chưa COMPLETE |
 | CMS-006 | Autosave | DEPLOYED; CI 493/staging 36/cleanup/release PASS; manual authenticated UAT/autosave DEFERRED theo PO ngày 28/09; chưa COMPLETE |
 | CMS-007 | Sources/citations | DEPLOYED; CI 612 / staging 55 / cleanup 5 counters bằng 0 / deploy/anonymous smoke/monitoring PASS; manual authenticated UAT DEFERRED; chưa COMPLETE |
-| CMS-008 | Category/Topic/Tags/Instruments | LOCAL IMPLEMENTATION / VALIDATION PASS; 761 tests, discovery 90; diff UNSTAGED cho Claude review; review/CI/browser staging NOT RUN; manual UAT DEFERRED; chưa COMPLETE |
-| CMS-009 | Media library | Planned |
+| CMS-008 | Category/Topic/Tags/Instruments | DEPLOYED; CI788/staging90/cleanup13/deploy/anonymous smoke/monitoring PASS; manual UAT DEFERRED; chưa COMPLETE |
+| CMS-009 | Media library | LOCAL REVIEW-FIX HANDOFF; 40AC/36MED cập nhật trong delta report; Claude delta review/CI/staging NOT RUN; production root gate pending |
 | CMS-010 | Preview | Planned |
 | CMS-011 | Editorial review workflow | Planned |
 | CMS-012 | Fact-check/request changes | Planned |
@@ -44,7 +44,7 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 | CMS-019 | Search/archive/related | Planned |
 | CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; nền tảng CMS-005 đã staging 20/20 PASS; không thay thế full workflow regression CMS-020 |
 
-## CMS-008: checkpoint implementation 2026-09-29
+## CMS-008: checkpoint implementation lịch sử 2026-09-29
 
 - Hai surfaces manual-only: `/creator/taxonomy` và `/creator/articles/[id]/classification`, dùng schema/quyền hiện có. Catalog identity bất biến/CAS/delete-used; Article CAS + category/mapping atomic, inactive retention, no-op và preserved body/source/owner.
 - Controller giữ draft khi offline/conflict/unknown ACK, single-flight và dirty navigation; thêm links qua guard hiện có, không đổi autosave/native paste/AUTO-21/FMT fixes.

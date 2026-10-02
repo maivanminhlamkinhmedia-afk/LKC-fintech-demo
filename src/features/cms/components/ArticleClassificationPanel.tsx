@@ -72,6 +72,7 @@ function ClassificationPanel({ initial }: { initial: ArticleClassificationSnapsh
     <nav aria-label="Điều hướng phân loại" className="flex flex-wrap gap-4 text-sm font-medium text-emerald-800 underline">
       {snapshot.canMutate && <Link href={`/creator/articles/${encodeURIComponent(snapshot.id)}/edit`}>Quay lại bài viết</Link>}
       <Link href={`/creator/articles/${encodeURIComponent(snapshot.id)}/sources`}>Nguồn tham khảo</Link>
+      <Link href={`/creator/articles/${encodeURIComponent(snapshot.id)}/media`}>Ảnh bìa</Link>
       <Link href="/creator/articles">Danh sách bài viết</Link>
     </nav>
     {!snapshot.canMutate && <p role="status" data-read-only-reason={snapshot.readOnlyReason} className="rounded-xl bg-amber-50 p-4 text-amber-900">

@@ -69,11 +69,12 @@ export function validateCatalogExpected(manifest, kind, key, expected) {
 
 export function validateTaxonomyManifest(manifest) {
   const fields = ['catalogs', 'catalogIntents', 'categoryLinks', ...Object.keys(MAPPING_MODELS)]
-  if (manifest.version !== 3) {
+  if (manifest.version !== 3 && manifest.version !== 4) {
     demand(fields.every(field => manifest[field] === undefined), 'LEGACY_TAXONOMY_NOT_AUTHORIZED')
     return
   }
-  demand(keys(manifest, ['version', 'runId', 'namespace', 'createdAt', 'users', 'articles', 'profiles', 'sources', ...fields]), 'MANIFEST_V3_KEYS_INVALID')
+  demand(keys(manifest, ['version', 'runId', 'namespace', 'createdAt', 'users', 'articles', 'profiles', 'sources', ...fields,
+    ...(manifest.version === 4 ? ['mediaRootIdentity', 'mediaIntents', 'mediaDeleteIntents', 'mediaAssets', 'legacyMediaAssets', 'coverLinks'] : [])]), 'MANIFEST_V3_KEYS_INVALID')
   demand(fields.every(field => Array.isArray(manifest[field])), 'MANIFEST_TAXONOMY_INVALID')
   const seeds = seedCatalogPlan(manifest)
   const identities = new Set(), knownIds = new Set()

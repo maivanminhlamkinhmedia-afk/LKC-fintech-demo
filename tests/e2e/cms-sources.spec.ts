@@ -18,7 +18,7 @@ const contexts: BrowserContext[] = []
 const releases: (() => void)[] = []
 const persist = (value: unknown) => saveManifest(process.env.CMS_E2E_MANIFEST, value)
 // V3 recovery validates catalog edges as well as sources; legacy v2 retains its existing authority.
-const recover = () => manifest.version === 3
+const recover = () => manifest.version >= 3
   ? discoverFixtureGraph(db, process.env, manifest, persist)
   : discoverCreatedSources(db, process.env, manifest, persist)
 const userId = (actor: Actor) => manifest.users.find(user => user.key === actor)!.id
@@ -97,7 +97,7 @@ async function verifyField(page: Page, label: string, value: string) { await exp
 test.beforeAll(async () => {
   demand(process.env.CMS_E2E_RUNNING === 'YES', 'USE_GUARDED_STAGING_RUNNER')
   manifest = await loadManifest(process.env.CMS_E2E_MANIFEST) as Manifest
-  demand([2, 3].includes(manifest.version) && manifest.runId === process.env.CMS_E2E_RUN_ID, 'RUN_PROVENANCE_MISMATCH')
+  demand([2, 3, 4].includes(manifest.version) && manifest.runId === process.env.CMS_E2E_RUN_ID, 'RUN_PROVENANCE_MISMATCH')
   credentials = JSON.parse(process.env.CMS_E2E_CREDENTIALS ?? '{}')
   db = await connectStaging(process.env)
 })

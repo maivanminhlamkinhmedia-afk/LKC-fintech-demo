@@ -562,7 +562,9 @@ invalid metadata, free text and unknown record types are dropped even if they
 start with `CMS_E2E`. The streaming buffer is capped at 4,096 characters per line;
 oversized lines are discarded through the next newline, and an unterminated final
 fragment is dropped. Split UTF-8/CRLF chunks are handled without opening raw stdout.
-Raw stderr remains discarded. The reporter ignores stdout/stderr callbacks,
+Raw Playwright and build stderr remain discarded. App stderr has a separate,
+exact journal-marker filter described below; all other app stderr is discarded.
+The reporter ignores stdout/stderr callbacks,
 attachments, error messages/stacks/causes, expected/actual values, HTML/editor
 content and request/response/cookie/credential data.
 
@@ -679,3 +681,99 @@ not use that field as a gate or treat it as proof the override failed.
 `bodyElapsedMs` and `durationMs` are not exact active-slot counters. The other
 88 cases retain the 60-second default, with one worker, zero retries and all
 assertions and cleanup guards unchanged.
+
+## CMS-009 media review-fix checkpoint (local, staging NOT RUN)
+
+Current discovery is **122 cases = 90 EDIT/AUTO/SRC/TAX baseline + 32 MED**. Discovery loads tests and the static safe diagnostics registry; it does not run browser callbacks. The review delta adds invalid upload matrix, managed page-2 search, all-status/owner delete-used matrix, expired-session/role/uploader/owner revocation, cover lost ACK and legacy read-only/current-cover coverage. The v4 legacy fixture journal grants exact DB-row cleanup authority only; it never grants file ownership. A separate local loopback Chromium probe exercises the real MediaLibrary React lifecycle with synthetic actions. Each guarded MED case uses the existing runner only; do not invoke `playwright test` directly against staging. TAX-08 and TAX-10/11 keep their own 120-second overrides, and the other 120 cases use the 60-second default. Expect timeout remains 10 seconds; workers 1/retries 0.
+
+Manifest **v4** extends v3 with `mediaRootIdentity`, exact upload/delete intents, historical asset receipts, and cover links. The runner exclusively provisions `.next/cms-e2e-media/<runId>` with a matching private marker and overrides inherited `CMS_MEDIA_ROOT` for both dummy build and guarded runtime. An intercepted upload POST journals its server-created operation/asset/key before bytes are sent. Lost begin-upload ACK recovery accepts only a journal under this fresh root, an exact fixture actor, valid metadata, and a full batch that passes manifest validation. Status GET never creates or repairs a journal. No binary, alt/caption, full path, cookies, or request body belongs in diagnostics.
+
+Read-only graph preflight validates managed DB identities against operation receipts, digest/size and regular files, both directions of cover references, and the exact objects/tmp/operations/locks inventory. Unknown files, foreign references, symlinks, hardlinks, active locks and drift stop the batch before cleanup. After the runner stops its own app, cleanup verifies 15 DB counters in its transaction and after commit, then removes only the preflighted exact files/journals and verifies four filesystem counters. **All 19 counters** must be zero, with full suite PASS, exit 0 and matching commit/runId/BUILD_ID, before `CMS_E2E VERIFIED`. Zero DB counts alone are insufficient. Legacy v1/v2/v3 manifests cannot acquire media cleanup authority; corresponding unit fixtures pin their historical versions.
+
+Staging browser, MariaDB concurrency, storage recovery and cleanup have **not run** at this local checkpoint. Production root/ACL/proxy/backup and Linux standalone codec require separate release gates. See [storage runbook](../docs/cms/operations/cms009-media-storage.md) for the implemented check-only recovery CLI and its guarded apply contract; never use it merely to clear a failed run.
+
+## CMS-009 MED-08/11 scope diagnostics after the first guarded staging run
+
+The earlier local-only checkpoint above is historical. PO-supplied staging run
+`68d3a3f5573aa535affdbea2` ended 119 passed, two failed and one timed out;
+its 19 zero cleanup counters do not make the suite verified. MED-08/11 uploaded
+successfully, then timed out within `MED_SCOPE_OTHER`. The prior registry had no
+phase records for the navigation, query, search, hidden-row assertion or asset
+GET, so it cannot identify the stalled await.
+
+The next run emits fixed `MED_SCOPE_OTHER_*` and `MED_SCOPE_ADMIN_*` phases for
+login, navigation, query input, search click and visibility assertions; the
+other actor also records the asset GET. `TIMING` marks each controlled step's
+start/end and `MEDIA_OBSERVATION` records elapsed/duration/status. Only the GET
+observation may carry an HTTP status; `0` means no response status was observed.
+The scope observations retain the one already captured creator upload intent;
+they do not represent an additional upload.
+`errorCode` remains null unless a safe allowlisted code was actually observed.
+Neither reporter nor runner forwards raw URL, query, body, cookie or stack.
+Compare the last started phase, its completion if present, and the final CASE;
+a missing completion is not proof of which application layer caused delay.
+The timeout, retries, search actions and access assertions remain unchanged.
+
+## CMS-009 follow-up after the second guarded staging run
+
+The operator-launched, Claude-monitored run `e3a2c2dd12ee43c32e9f6135`
+at commit `a7f1776f65575e1ef173e42ec4526b01c7b1d157` is historical FAIL:
+120 passed, MED-08/11 timed out in `MED_SCOPE_OTHER_SEARCH`, and MED-14-COVER
+failed during its setup upload with POST 500/`INTERNAL_ERROR`. All 19 cleanup
+counters were zero, but the suite did not emit `CMS_E2E VERIFIED`. MED-23-COVER
+and MED-26 passed. Neither remaining root cause has been confirmed locally.
+
+The new `MEDIA_SEARCH_SIGNAL` records only fixed actor/signal codes, elapsed
+milliseconds and a numeric HTTP status. Read them with `MED_SCOPE_*` timing:
+
+- `BUTTON_MISSING`/`BUTTON_HIDDEN`/`BUTTON_DISABLED` describe the pre-click DOM.
+  `BUTTON_OUTSIDE_VIEWPORT` means the button center is off-screen;
+  `BUTTON_NO_HIT` means `elementFromPoint` returned null at an in-viewport
+  center; `BUTTON_COVERED` means another element received that hit-test.
+  `BUTTON_READY` means the button passed this one snapshot, not Playwright's
+  later actionability checks. None of these signals proves the hit-test stayed
+  unchanged throughout a timed-out click.
+- `CLICK_EVENT` and `SUBMIT_EVENT` distinguish dispatch from an actionable
+  locator that never received a browser event. A submit with no
+  `ACTION_REQUEST` points to client dispatch/hydration before the server.
+- `ACTION_REQUEST`, `ACTION_RESPONSE` and `ACTION_FAILED` distinguish a
+  dispatched Server Action from a pending/failed response. The HTTP status
+  is attached only to a response. `BUTTON_DISABLED` then `BUTTON_REENABLED`
+  show the search UI's in-flight and settled states.
+- `NAVIGATION_REQUEST`/`NAVIGATION_RESPONSE`/`NAVIGATION_COMMIT` show whether
+  click started a document navigation. An absent signal is not proof that
+  the browser could not have navigated after timeout/cancellation.
+
+MED-08/11 now requires an observed click/submit, a successful action response,
+and a busy-to-idle UI cycle before the existing foreign-asset absence/GET 404
+and admin-visible assertions. The empty initial list alone is not completion
+evidence. No click force, navigation opt-out, retry, sleep or timeout change
+was made. Only the exact `/creator/media` POST and document navigation are
+classified; URL and query text are never output.
+
+On failed upload UI, `MEDIA_UPLOAD_STATE` reads the exact reserved receipt,
+one scoped DB row count and existence of the exact object/temp-journal paths.
+It emits only an allowlisted journal stage and `present`/`absent`/`unknown`
+states; no ID, path, binary, metadata or SQL is logged. A `file-ready` receipt
+with `rowPresent=present` means DB ACK may have occurred despite HTTP 500;
+`dispatched` with no row means failure before publication. These states
+narrow the route boundary but do not identify an exception source by
+themselves. The original upload failure still propagates and the client keeps
+`UNKNOWN_OUTCOME` until the same operation is explicitly checked.
+
+For an `advanceMediaOperation` failure, the app logs only
+`CMS_MEDIA_JOURNAL_ADVANCE_FAILED phase=<open|write|sync|close|rename> errno=<allowlisted|OTHER>`.
+The app launcher attaches a bounded stderr filter before reading the stream.
+Only an entire line with one of those five phases and errno `EACCES`, `EPERM`,
+`EEXIST`, `ENOENT`, `EBUSY`, `EIO`, `ENOSPC`, `EMFILE` or `OTHER` becomes
+`CMS_E2E APP_JOURNAL phase=<phase> errno=<errno>` in the operator log. This
+record is sourced from the app and has **no case or operation attribution**.
+Prefix/suffix text, control characters, unknown values and oversized lines
+are dropped; raw stderr never passes through. A filter/write failure disables
+only this diagnostic stream, leaving child exit and cleanup semantics intact.
+Read the safe phase/errno beside `MEDIA_UPLOAD_STATE` only as a possible
+boundary clue; do not infer it from `tempJournalPresent=present` alone.
+Several write/rename failures and an
+already-existing temp journal can all leave the primary receipt at `intent`.
+The forwarded record contains no operation ID, path, metadata or raw exception.
+It does not change the public error or recovery contract.
