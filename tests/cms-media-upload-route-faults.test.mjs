@@ -90,7 +90,19 @@ async function post() {
   return { status: response.status, body: await response.json() }
 }
 
-test('actual upload route maps faults to safe codes at distinct durable boundaries', async () => {
+async function withDummyUploadOrigin(work) {
+  const hadUrl = Object.hasOwn(process.env, 'NEXTAUTH_URL')
+  const priorUrl = process.env.NEXTAUTH_URL
+  process.env.NEXTAUTH_URL = 'http://127.0.0.1:3001'
+  try { return await work() }
+  finally {
+    if (hadUrl) process.env.NEXTAUTH_URL = priorUrl
+    else delete process.env.NEXTAUTH_URL
+  }
+}
+
+test('actual upload route maps faults to safe codes at distinct durable boundaries', { concurrency: false }, async () => withDummyUploadOrigin(async () => {
+  let checkedFaults = 0, checkedReceipt = false
   for (const [fault, status, code, stage, rowPresent, objectPresent] of [
     ['read', 500, 'INTERNAL_ERROR', 'intent', false, false],
     ['actorTransaction', 500, 'INTERNAL_ERROR', 'intent', false, false],
@@ -115,6 +127,30 @@ test('actual upload route maps faults to safe codes at distinct durable boundari
       const receipt = await route.GET(new Request(`http://127.0.0.1:3001/api/cms/media/uploads/${id}`), context)
       assert.equal(receipt.status, 200)
       assert.equal((await receipt.json()).state, 'COMMITTED')
+      checkedReceipt = true
     }
+    checkedFaults++
+  }
+  assert.equal(checkedFaults, 9)
+  assert.equal(checkedReceipt, true)
+}))
+
+test('upload route fault harness restores absent and inherited origin after success or failure', { concurrency: false }, async () => {
+  const hadUrl = Object.hasOwn(process.env, 'NEXTAUTH_URL')
+  const priorUrl = process.env.NEXTAUTH_URL
+  try {
+    delete process.env.NEXTAUTH_URL
+    await withDummyUploadOrigin(async () => assert.equal(process.env.NEXTAUTH_URL, 'http://127.0.0.1:3001'))
+    assert.equal(Object.hasOwn(process.env, 'NEXTAUTH_URL'), false)
+
+    process.env.NEXTAUTH_URL = 'http://127.0.0.1:3000'
+    await assert.rejects(withDummyUploadOrigin(async () => {
+      assert.equal(process.env.NEXTAUTH_URL, 'http://127.0.0.1:3001')
+      throw Error('synthetic assertion failure')
+    }), /synthetic assertion failure/)
+    assert.equal(process.env.NEXTAUTH_URL, 'http://127.0.0.1:3000')
+  } finally {
+    if (hadUrl) process.env.NEXTAUTH_URL = priorUrl
+    else delete process.env.NEXTAUTH_URL
   }
 })
