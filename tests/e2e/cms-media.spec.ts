@@ -9,6 +9,8 @@ import { loadManifest, saveManifest, discoverFixtureGraph, fixtureArticle, alter
   createLegacyMediaFixture, attachLegacyCoverFixture, attachFixtureCoverMatrix, clearFixtureCoverMatrix,
   reserveFixtureMediaUploaderTransfer, transferFixtureMediaUploader } from '../../scripts/cms-e2e/fixtures.mjs'
 import { mediaRootPath, reserveMediaOperation, reserveMediaDelete, inspectMediaGraph, seedManagedMediaBatch } from '../../scripts/cms-e2e/media-fixtures.mjs'
+import { observeMediaSearch } from '../../scripts/cms-e2e/media-search-observation'
+import { mediaUploadFailureState } from '../../scripts/cms-e2e/media-upload-failure-state'
 
 type Actor = 'creator' | 'other' | 'admin' | 'super' | 'analyst' | 'client'
 type Intent = { operationId: string; assetId: string; actorId: string; key: string; mimeType: string; originalFilename: string }
@@ -118,6 +120,16 @@ async function upload(page: Page, actor: Actor, name: string, mimeType: 'image/p
           const code = await page.evaluate(() => document.querySelector('[data-error-code]')?.getAttribute('data-error-code') ?? null)
           if (code && uploadErrorCodes.has(code)) note('UI_ERROR_CODE', 'failed', 0, 0, code)
         } catch { /* Preserve the original assertion failure if the page is already closed. */ }
+        if (interception.captured.length === 1) {
+          try {
+            const state = await mediaUploadFailureState(db, mediaRootPath(manifest), interception.captured[0])
+            annotations.push({ type: 'cms-media-upload-state', description: JSON.stringify(state) })
+          } catch {
+            annotations.push({ type: 'cms-media-upload-state', description: JSON.stringify({
+              journalStage: 'unreadable', rowPresent: 'unknown', objectPresent: 'unknown', tempJournalPresent: 'unknown',
+            }) })
+          }
+        }
         throw error
       }
     })
@@ -256,11 +268,27 @@ test('MED-08/11 own library excludes foreign asset while admin can find it', asy
       const asset = await upload(creator.page, 'creator', name, 'image/png', png())
       return { asset, name }
     })
+    const search = async (page: Page, actor: 'other' | 'admin') => {
+      const annotations = test.info().annotations
+      const observer = await observeMediaSearch(page, record => annotations.push({
+        type: 'cms-media-search-signal', description: JSON.stringify({ actor, ...record }),
+      }))
+      try {
+        await observed(actor === 'other' ? 'MED_SCOPE_OTHER_SEARCH' : 'MED_SCOPE_ADMIN_SEARCH',
+          () => page.getByRole('button', { name: 'Tìm kiếm' }).click())
+        await expect.poll(() => observer.saw('CLICK_EVENT') && observer.saw('SUBMIT_EVENT')
+          && observer.saw('ACTION_REQUEST') && observer.actionSucceeded()
+          && observer.saw('BUTTON_DISABLED') && observer.saw('BUTTON_REENABLED')).toBe(true)
+        expect(observer.saw('ACTION_FAILED') || observer.saw('NAVIGATION_REQUEST')
+          || observer.saw('NAVIGATION_COMMIT')).toBe(false)
+        await expect(page.locator('[data-error-code]')).toHaveCount(0)
+      } finally { observer.dispose() }
+    }
     await test.step('MED_SCOPE_OTHER', async () => {
       const other = await observed('MED_SCOPE_OTHER_LOGIN', () => login(browser, 'other'))
       await observed('MED_SCOPE_OTHER_NAVIGATE', () => other.page.goto('/creator/media'))
       await observed('MED_SCOPE_OTHER_INPUT', () => other.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name))
-      await observed('MED_SCOPE_OTHER_SEARCH', () => other.page.getByRole('button', { name: 'Tìm kiếm' }).click())
+      await search(other.page, 'other')
       await observed('MED_SCOPE_OTHER_HIDDEN', () => expect(other.page.locator(`li[data-media-id="${asset.id}"]`)).toHaveCount(0))
       let responseStatus = 0
       await observed('MED_SCOPE_OTHER_GET', async () => {
@@ -272,7 +300,7 @@ test('MED-08/11 own library excludes foreign asset while admin can find it', asy
       const admin = await observed('MED_SCOPE_ADMIN_LOGIN', () => login(browser, 'admin'))
       await observed('MED_SCOPE_ADMIN_NAVIGATE', () => admin.page.goto('/creator/media'))
       await observed('MED_SCOPE_ADMIN_INPUT', () => admin.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name))
-      await observed('MED_SCOPE_ADMIN_SEARCH', () => admin.page.getByRole('button', { name: 'Tìm kiếm' }).click())
+      await search(admin.page, 'admin')
       await observed('MED_SCOPE_ADMIN_VISIBLE', () => expect(admin.page.locator(`li[data-media-id="${asset.id}"]`)).toBeVisible())
     })
   })

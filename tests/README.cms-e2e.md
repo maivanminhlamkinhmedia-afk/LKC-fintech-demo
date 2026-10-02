@@ -711,3 +711,46 @@ Neither reporter nor runner forwards raw URL, query, body, cookie or stack.
 Compare the last started phase, its completion if present, and the final CASE;
 a missing completion is not proof of which application layer caused delay.
 The timeout, retries, search actions and access assertions remain unchanged.
+
+## CMS-009 follow-up after the second guarded staging run
+
+The operator-launched, Claude-monitored run `e3a2c2dd12ee43c32e9f6135`
+at commit `a7f1776f65575e1ef173e42ec4526b01c7b1d157` is historical FAIL:
+120 passed, MED-08/11 timed out in `MED_SCOPE_OTHER_SEARCH`, and MED-14-COVER
+failed during its setup upload with POST 500/`INTERNAL_ERROR`. All 19 cleanup
+counters were zero, but the suite did not emit `CMS_E2E VERIFIED`. MED-23-COVER
+and MED-26 passed. Neither remaining root cause has been confirmed locally.
+
+The new `MEDIA_SEARCH_SIGNAL` records only fixed actor/signal codes, elapsed
+milliseconds and a numeric HTTP status. Read them with `MED_SCOPE_*` timing:
+
+- `BUTTON_MISSING`/`BUTTON_HIDDEN`/`BUTTON_DISABLED`/`BUTTON_COVERED` describe
+  the pre-click DOM; `BUTTON_READY` means the button passed this snapshot, not
+  Playwright's later actionability checks.
+- `CLICK_EVENT` and `SUBMIT_EVENT` distinguish dispatch from an actionable
+  locator that never received a browser event. A submit with no
+  `ACTION_REQUEST` points to client dispatch/hydration before the server.
+- `ACTION_REQUEST`, `ACTION_RESPONSE` and `ACTION_FAILED` distinguish a
+  dispatched Server Action from a pending/failed response. The HTTP status
+  is attached only to a response. `BUTTON_DISABLED` then `BUTTON_REENABLED`
+  show the search UI's in-flight and settled states.
+- `NAVIGATION_REQUEST`/`NAVIGATION_RESPONSE`/`NAVIGATION_COMMIT` show whether
+  click started a document navigation. An absent signal is not proof that
+  the browser could not have navigated after timeout/cancellation.
+
+MED-08/11 now requires an observed click/submit, a successful action response,
+and a busy-to-idle UI cycle before the existing foreign-asset absence/GET 404
+and admin-visible assertions. The empty initial list alone is not completion
+evidence. No click force, navigation opt-out, retry, sleep or timeout change
+was made. Only the exact `/creator/media` POST and document navigation are
+classified; URL and query text are never output.
+
+On failed upload UI, `MEDIA_UPLOAD_STATE` reads the exact reserved receipt,
+one scoped DB row count and existence of the exact object/temp-journal paths.
+It emits only an allowlisted journal stage and `present`/`absent`/`unknown`
+states; no ID, path, binary, metadata or SQL is logged. A `file-ready` receipt
+with `rowPresent=present` means DB ACK may have occurred despite HTTP 500;
+`dispatched` with no row means failure before publication. These states
+narrow the route boundary but do not identify an exception source by
+themselves. The original upload failure still propagates and the client keeps
+`UNKNOWN_OUTCOME` until the same operation is explicitly checked.

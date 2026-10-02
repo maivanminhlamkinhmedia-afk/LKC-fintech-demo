@@ -2,6 +2,8 @@ import { isAbsolute, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { StringDecoder } from 'node:string_decoder'
 import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS, TAX_TIMING_BODIES, TAX_TIMING_HOOKS } from './taxonomy-diagnostics.mjs'
+import { MEDIA_SEARCH_SIGNALS } from './media-search-observation.ts'
+import { UPLOAD_STAGES } from './media-upload-failure-state.ts'
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
 const draftFile = 'tests/e2e/cms-draft.spec.ts'
@@ -243,13 +245,30 @@ export function formatDiagnosticRecord(kind, record) {
     canonical = { caseId: record.caseId, phase: record.phase, status: record.status,
       elapsedMs: record.elapsedMs, durationMs: record.durationMs, httpStatus: record.httpStatus,
       errorCode: record.errorCode, intentCount: record.intentCount }
+  } else if (kind === 'MEDIA_SEARCH_SIGNAL') {
+    if (!exactKeys(record, ['caseId', 'actor', 'signal', 'elapsedMs', 'httpStatus'])
+      || record.caseId !== 'MED-08/11' || !['other', 'admin'].includes(record.actor)
+      || !MEDIA_SEARCH_SIGNALS.includes(record.signal) || !milliseconds(record.elapsedMs)
+      || !Number.isSafeInteger(record.httpStatus)
+      || (record.signal.endsWith('_RESPONSE')
+        ? record.httpStatus < 100 || record.httpStatus > 599 : record.httpStatus !== 0)) return null
+    canonical = { caseId: record.caseId, actor: record.actor, signal: record.signal,
+      elapsedMs: record.elapsedMs, httpStatus: record.httpStatus }
+  } else if (kind === 'MEDIA_UPLOAD_STATE') {
+    if (!exactKeys(record, ['caseId', 'journalStage', 'rowPresent', 'objectPresent', 'tempJournalPresent'])
+      || !Object.hasOwn(MEDIA_TIMING_BODIES, record.caseId)
+      || !UPLOAD_STAGES.includes(record.journalStage)
+      || ![record.rowPresent, record.objectPresent, record.tempJournalPresent]
+        .every(value => ['present', 'absent', 'unknown'].includes(value))) return null
+    canonical = { caseId: record.caseId, journalStage: record.journalStage, rowPresent: record.rowPresent,
+      objectPresent: record.objectPresent, tempJournalPresent: record.tempJournalPresent }
   } else return null
   return `CMS_E2E ${kind} ${JSON.stringify(canonical)}`
 }
 
 function filterLine(line) {
   if (line.length > MAX_DIAGNOSTIC_LINE_LENGTH) return null
-  const match = /^CMS_E2E (DISCOVERY|CASE|DIAGNOSTIC|TIMING|MEDIA_OBSERVATION|RESULT) (\{[^\r\n]*\})$/.exec(line)
+  const match = /^CMS_E2E (DISCOVERY|CASE|DIAGNOSTIC|TIMING|MEDIA_OBSERVATION|MEDIA_SEARCH_SIGNAL|MEDIA_UPLOAD_STATE|RESULT) (\{[^\r\n]*\})$/.exec(line)
   if (!match) return null
   try { return formatDiagnosticRecord(match[1], JSON.parse(match[2])) } catch { return null }
 }

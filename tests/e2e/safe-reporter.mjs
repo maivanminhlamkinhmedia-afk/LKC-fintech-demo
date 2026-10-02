@@ -96,12 +96,14 @@ export default class SafeReporter {
     const definition = diagnosticCase(test)
     if (Object.hasOwn(MEDIA_TIMING_BODIES, definition.caseId)) {
       for (const annotation of result.annotations ?? []) {
-        if (annotation.type !== 'cms-media-observation' || typeof annotation.description !== 'string'
-          || annotation.description.length > 512) continue
+        const kind = annotation.type === 'cms-media-observation' ? 'MEDIA_OBSERVATION'
+          : annotation.type === 'cms-media-search-signal' ? 'MEDIA_SEARCH_SIGNAL'
+            : annotation.type === 'cms-media-upload-state' ? 'MEDIA_UPLOAD_STATE' : null
+        if (!kind || typeof annotation.description !== 'string' || annotation.description.length > 512) continue
         try {
           const observation = JSON.parse(annotation.description)
           if (!observation || typeof observation !== 'object' || Object.hasOwn(observation, 'caseId')) continue
-          this.emit('MEDIA_OBSERVATION', { ...observation, caseId: definition.caseId })
+          this.emit(kind, { ...observation, caseId: definition.caseId })
         }
         catch { /* Untrusted diagnostics never alter the test verdict. */ }
       }
