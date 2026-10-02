@@ -562,7 +562,9 @@ invalid metadata, free text and unknown record types are dropped even if they
 start with `CMS_E2E`. The streaming buffer is capped at 4,096 characters per line;
 oversized lines are discarded through the next newline, and an unterminated final
 fragment is dropped. Split UTF-8/CRLF chunks are handled without opening raw stdout.
-Raw stderr remains discarded. The reporter ignores stdout/stderr callbacks,
+Raw Playwright and build stderr remain discarded. App stderr has a separate,
+exact journal-marker filter described below; all other app stderr is discarded.
+The reporter ignores stdout/stderr callbacks,
 attachments, error messages/stacks/causes, expected/actual values, HTML/editor
 content and request/response/cookie/credential data.
 
@@ -724,9 +726,13 @@ and MED-26 passed. Neither remaining root cause has been confirmed locally.
 The new `MEDIA_SEARCH_SIGNAL` records only fixed actor/signal codes, elapsed
 milliseconds and a numeric HTTP status. Read them with `MED_SCOPE_*` timing:
 
-- `BUTTON_MISSING`/`BUTTON_HIDDEN`/`BUTTON_DISABLED`/`BUTTON_COVERED` describe
-  the pre-click DOM; `BUTTON_READY` means the button passed this snapshot, not
-  Playwright's later actionability checks.
+- `BUTTON_MISSING`/`BUTTON_HIDDEN`/`BUTTON_DISABLED` describe the pre-click DOM.
+  `BUTTON_OUTSIDE_VIEWPORT` means the button center is off-screen;
+  `BUTTON_NO_HIT` means `elementFromPoint` returned null at an in-viewport
+  center; `BUTTON_COVERED` means another element received that hit-test.
+  `BUTTON_READY` means the button passed this one snapshot, not Playwright's
+  later actionability checks. None of these signals proves the hit-test stayed
+  unchanged throughout a timed-out click.
 - `CLICK_EVENT` and `SUBMIT_EVENT` distinguish dispatch from an actionable
   locator that never received a browser event. A submit with no
   `ACTION_REQUEST` points to client dispatch/hydration before the server.
@@ -754,3 +760,20 @@ with `rowPresent=present` means DB ACK may have occurred despite HTTP 500;
 narrow the route boundary but do not identify an exception source by
 themselves. The original upload failure still propagates and the client keeps
 `UNKNOWN_OUTCOME` until the same operation is explicitly checked.
+
+For an `advanceMediaOperation` failure, the app logs only
+`CMS_MEDIA_JOURNAL_ADVANCE_FAILED phase=<open|write|sync|close|rename> errno=<allowlisted|OTHER>`.
+The app launcher attaches a bounded stderr filter before reading the stream.
+Only an entire line with one of those five phases and errno `EACCES`, `EPERM`,
+`EEXIST`, `ENOENT`, `EBUSY`, `EIO`, `ENOSPC`, `EMFILE` or `OTHER` becomes
+`CMS_E2E APP_JOURNAL phase=<phase> errno=<errno>` in the operator log. This
+record is sourced from the app and has **no case or operation attribution**.
+Prefix/suffix text, control characters, unknown values and oversized lines
+are dropped; raw stderr never passes through. A filter/write failure disables
+only this diagnostic stream, leaving child exit and cleanup semantics intact.
+Read the safe phase/errno beside `MEDIA_UPLOAD_STATE` only as a possible
+boundary clue; do not infer it from `tempJournalPresent=present` alone.
+Several write/rename failures and an
+already-existing temp journal can all leave the primary receipt at `intent`.
+The forwarded record contains no operation ID, path, metadata or raw exception.
+It does not change the public error or recovery contract.

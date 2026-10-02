@@ -87,6 +87,9 @@ test('MED search signals and failed upload state use fixed fields through report
   const state = { caseId: 'MED-14-COVER', journalStage: 'file-ready', rowPresent: 'present',
     objectPresent: 'present', tempJournalPresent: 'absent' }
   assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', search), /ACTION_RESPONSE/)
+  for (const signal of ['BUTTON_OUTSIDE_VIEWPORT', 'BUTTON_NO_HIT', 'BUTTON_COVERED', 'BUTTON_READY']) {
+    assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', { ...search, signal, httpStatus: 0 }), new RegExp(signal))
+  }
   assert.match(formatDiagnosticRecord('MEDIA_UPLOAD_STATE', state), /file-ready/)
   assert.notEqual(formatDiagnosticRecord('MEDIA_UPLOAD_STATE', { ...state, journalStage: 'unreadable',
     rowPresent: 'unknown', objectPresent: 'unknown', tempJournalPresent: 'unknown' }), null)

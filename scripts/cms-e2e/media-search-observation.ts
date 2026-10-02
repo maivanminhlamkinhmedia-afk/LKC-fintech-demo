@@ -3,7 +3,8 @@
 import type { Frame, Page, Request, Response } from '@playwright/test'
 
 export const MEDIA_SEARCH_SIGNALS = Object.freeze([
-  'BUTTON_MISSING', 'BUTTON_HIDDEN', 'BUTTON_DISABLED', 'BUTTON_COVERED', 'BUTTON_READY',
+  'BUTTON_MISSING', 'BUTTON_HIDDEN', 'BUTTON_DISABLED', 'BUTTON_OUTSIDE_VIEWPORT', 'BUTTON_NO_HIT',
+  'BUTTON_COVERED', 'BUTTON_READY',
   'CLICK_EVENT', 'SUBMIT_EVENT', 'BUTTON_REENABLED',
   'ACTION_REQUEST', 'ACTION_RESPONSE', 'ACTION_FAILED',
   'NAVIGATION_REQUEST', 'NAVIGATION_RESPONSE', 'NAVIGATION_COMMIT',
@@ -69,7 +70,10 @@ export async function observeMediaSearch(page: Page,
     const rect = button.getBoundingClientRect(), style = getComputedStyle(button)
     if (!rect.width || !rect.height || style.visibility === 'hidden' || style.display === 'none') return 'BUTTON_HIDDEN'
     if (button.disabled) return 'BUTTON_DISABLED'
-    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2
+    if (x < 0 || x >= innerWidth || y < 0 || y >= innerHeight) return 'BUTTON_OUTSIDE_VIEWPORT'
+    const hit = document.elementFromPoint(x, y)
+    if (!hit) return 'BUTTON_NO_HIT'
     return hit === button || button.contains(hit) ? 'BUTTON_READY' : 'BUTTON_COVERED'
   }, binding)
   record(initial)

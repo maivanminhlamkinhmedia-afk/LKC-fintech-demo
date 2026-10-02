@@ -92,9 +92,18 @@ export async function readMediaOperation(root: MediaRoot, id: string): Promise<M
     return data
   } catch { throw new MediaError('NOT_FOUND') }
 }
-async function syncWrite(file: string, bytes: Buffer | string, exclusive = false) {
+type JournalWritePhase = 'open' | 'write' | 'sync' | 'close' | 'rename'
+function journalErrno(error: unknown) {
+  const code = (error as { code?: unknown })?.code
+  return typeof code === 'string' && ['EACCES', 'EPERM', 'EEXIST', 'ENOENT', 'EBUSY', 'EIO', 'ENOSPC', 'EMFILE'].includes(code)
+    ? code : 'OTHER'
+}
+async function syncWrite(file: string, bytes: Buffer | string, exclusive = false,
+  onPhase?: (phase: JournalWritePhase) => void) {
+  onPhase?.('open')
   const handle = await open(file, exclusive ? 'wx' : 'w', 0o600)
-  try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() }
+  try { onPhase?.('write'); await handle.writeFile(bytes); onPhase?.('sync'); await handle.sync() }
+  finally { try { await handle.close() } catch (error) { onPhase?.('close'); throw error } }
 }
 export async function createMediaOperation(root: MediaRoot, operation: MediaOperation) {
   assertOperation(operation, root, operation.id)
@@ -106,8 +115,14 @@ export async function advanceMediaOperation(root: MediaRoot, operation: MediaOpe
   await regular(file)
   // A crash before rename leaves a temp journal attributable to this operation.
   const temporary = path.join(root.path, 'tmp', `${operation.id}.journal`)
-  await syncWrite(temporary, JSON.stringify(operation), true)
-  await rename(temporary, file)
+  let phase: JournalWritePhase = 'open'
+  try {
+    await syncWrite(temporary, JSON.stringify(operation), true, value => { phase = value })
+    phase = 'rename'; await rename(temporary, file)
+  } catch (error) {
+    console.error(`CMS_MEDIA_JOURNAL_ADVANCE_FAILED phase=${phase} errno=${journalErrno(error)}`)
+    throw error
+  }
 }
 export async function withMediaLock<T>(root: MediaRoot, kind: 'operation' | 'asset' | 'actor', id: string, run: () => Promise<T>): Promise<T> {
   if (!safeId(id)) throw new MediaError('NOT_FOUND')

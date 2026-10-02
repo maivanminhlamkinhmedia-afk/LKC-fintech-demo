@@ -6,14 +6,27 @@ import { pathToFileURL } from 'node:url'
 import { assertPortAvailable, connectStaging, demand, DUMMY_DATABASE_URL, HarnessError, safeFailure, validateStagingEnvironment, withCleanup } from './guard.mjs'
 import { createFixturePlan, createFixtures, manifestPath, saveManifest, loadManifest, discoverCreatedArticles, discoverCreatedSources, discoverFixtureGraph, cleanupFixtures } from './fixtures.mjs'
 import { createDiagnosticOutputFilter } from './diagnostics.mjs'
+import { createAppJournalOutputFilter } from './app-journal-output.mjs'
 import { mediaRootPath, provisionRunMediaRoot } from './media-fixtures.mjs'
 
-function launch(args, env, cwd) {
+function launch(args, env, cwd, appJournalOutput) {
   const child = spawn(process.execPath, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
   // Never forward raw app/build diagnostics, auth output, SQL or credentials.
-  child.stdout.resume(); child.stderr.resume()
+  child.stdout.resume()
+  if (appJournalOutput) {
+    // Attach before resuming stderr so an early app failure cannot lose the
+    // one allowlisted journal marker. All other app stderr is discarded.
+    const output = createAppJournalOutputFilter(appJournalOutput)
+    child.stderr.on('data', chunk => output.push(chunk))
+    child.stderr.on('end', () => output.end())
+    child.stderr.on('error', () => output.disable())
+    child.once('close', () => output.end())
+  } else child.stderr.resume()
   child.on('error', () => { child.cmsLaunchFailed = true })
   return child
+}
+export function launchApp(args, env, cwd) {
+  return launch(args, env, cwd, line => process.stdout.write(line))
 }
 async function completed(child) {
   return new Promise((resolveCode, reject) => {
@@ -116,7 +129,7 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
       const { hash } = await import('bcryptjs')
       const credentials = await createFixtures(db, runtimeEnv, manifest, password => hash(password, 12))
       fixturesCommitted = true
-      app = launch([resolve(cwd, 'node_modules/next/dist/bin/next'), 'start', snapshot, '--hostname', '127.0.0.1', '--port', '3001'], runtimeEnv, snapshot)
+      app = launchApp([resolve(cwd, 'node_modules/next/dist/bin/next'), 'start', snapshot, '--hostname', '127.0.0.1', '--port', '3001'], runtimeEnv, snapshot)
       let startupOutput = ''
       app.stdout.on('data', chunk => {
         startupOutput = `${startupOutput}${chunk.toString()}`.slice(-512)
