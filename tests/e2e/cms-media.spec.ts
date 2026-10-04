@@ -10,6 +10,7 @@ import { loadManifest, saveManifest, discoverFixtureGraph, fixtureArticle, alter
   reserveFixtureMediaUploaderTransfer, transferFixtureMediaUploader } from '../../scripts/cms-e2e/fixtures.mjs'
 import { mediaRootPath, reserveMediaOperation, reserveMediaDelete, inspectMediaGraph, seedManagedMediaBatch } from '../../scripts/cms-e2e/media-fixtures.mjs'
 import { observeMediaSearch } from '../../scripts/cms-e2e/media-search-observation'
+import { assertMediaSearchGate, mediaSearchVisibleIds } from '../../scripts/cms-e2e/media-search-gate'
 import { mediaUploadFailureState } from '../../scripts/cms-e2e/media-upload-failure-state'
 
 type Actor = 'creator' | 'other' | 'admin' | 'super' | 'analyst' | 'client'
@@ -268,7 +269,8 @@ test('MED-08/11 own library excludes foreign asset while admin can find it', asy
       const asset = await upload(creator.page, 'creator', name, 'image/png', png())
       return { asset, name }
     })
-    const search = async (page: Page, actor: 'other' | 'admin') => {
+    let decoyId = ''
+    const search = async (page: Page, actor: 'other' | 'admin', beforeIds: string[], expectedIds: string[]) => {
       const annotations = test.info().annotations
       const observer = await observeMediaSearch(page, record => annotations.push({
         type: 'cms-media-search-signal', description: JSON.stringify({ actor, ...record }),
@@ -276,19 +278,20 @@ test('MED-08/11 own library excludes foreign asset while admin can find it', asy
       try {
         await observed(actor === 'other' ? 'MED_SCOPE_OTHER_SEARCH' : 'MED_SCOPE_ADMIN_SEARCH',
           () => page.getByRole('button', { name: 'Tìm kiếm' }).click())
-        await expect.poll(() => observer.saw('CLICK_EVENT') && observer.saw('SUBMIT_EVENT')
-          && observer.saw('ACTION_REQUEST') && observer.actionFinishedOk()
-          && observer.saw('BUTTON_DISABLED') && observer.saw('BUTTON_REENABLED')).toBe(true)
-        expect(observer.saw('ACTION_FAILED') || observer.saw('NAVIGATION_REQUEST')
-          || observer.saw('NAVIGATION_COMMIT')).toBe(false)
-        await expect(page.locator('[data-error-code]')).toHaveCount(0)
+        await assertMediaSearchGate(page, observer, beforeIds, expectedIds, name)
       } finally { observer.dispose() }
     }
     await test.step('MED_SCOPE_OTHER', async () => {
       const other = await observed('MED_SCOPE_OTHER_LOGIN', () => login(browser, 'other'))
+      const decoyName = `scope-decoy-${randomBytes(3).toString('hex')}.png`
+      const decoy = await upload(other.page, 'other', decoyName, 'image/png', png())
+      decoyId = decoy.id
       await observed('MED_SCOPE_OTHER_NAVIGATE', () => other.page.goto('/creator/media'))
+      const beforeIds = await mediaSearchVisibleIds(other.page)
+      expect(beforeIds).toContain(decoyId)
+      expect(beforeIds).not.toContain(asset.id)
       await observed('MED_SCOPE_OTHER_INPUT', () => other.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name))
-      await search(other.page, 'other')
+      await search(other.page, 'other', beforeIds, [])
       await observed('MED_SCOPE_OTHER_HIDDEN', () => expect(other.page.locator(`li[data-media-id="${asset.id}"]`)).toHaveCount(0))
       let responseStatus = 0
       await observed('MED_SCOPE_OTHER_GET', async () => {
@@ -299,8 +302,11 @@ test('MED-08/11 own library excludes foreign asset while admin can find it', asy
     await test.step('MED_SCOPE_ADMIN', async () => {
       const admin = await observed('MED_SCOPE_ADMIN_LOGIN', () => login(browser, 'admin'))
       await observed('MED_SCOPE_ADMIN_NAVIGATE', () => admin.page.goto('/creator/media'))
+      const beforeIds = await mediaSearchVisibleIds(admin.page)
+      expect(beforeIds).toContain(decoyId)
+      expect(beforeIds).not.toEqual([asset.id])
       await observed('MED_SCOPE_ADMIN_INPUT', () => admin.page.getByLabel('Tìm theo tên, alt hoặc chú thích').fill(name))
-      await search(admin.page, 'admin')
+      await search(admin.page, 'admin', beforeIds, [asset.id])
       await observed('MED_SCOPE_ADMIN_VISIBLE', () => expect(admin.page.locator(`li[data-media-id="${asset.id}"]`)).toBeVisible())
     })
   })

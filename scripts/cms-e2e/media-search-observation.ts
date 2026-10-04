@@ -29,7 +29,8 @@ export async function observeMediaSearch(page: Page,
   emit: (record: { signal: string; elapsedMs: number; httpStatus: number;
     requestOrdinal: number; failureCode: string | null }) => void) {
   const start = performance.now(), seen = new Set<string>()
-  let actionRequests = 0, finishedAction = 0, requestOrdinal = 0
+  let actionRequests = 0, requestOrdinal = 0
+  let actionTerminal: 'FINISHED' | 'FAILED' | null = null, actionStatus = 0, actionFailure: string | null = null
   const record = (signal: string, httpStatus = 0, ordinal = 0, failureCode: string | null = null) => {
     if (!allowed.has(signal) || !Number.isInteger(httpStatus) || httpStatus < 0 || httpStatus > 599) return
     seen.add(signal)
@@ -57,6 +58,7 @@ export async function observeMediaSearch(page: Page,
     const tracked = requests.get(response.request())
     if (tracked) {
       tracked.status = response.status()
+      if (tracked.kind === 'ACTION') actionStatus = tracked.status
       record(`${tracked.kind}_RESPONSE`, tracked.status, tracked.ordinal)
     }
   }
@@ -64,12 +66,15 @@ export async function observeMediaSearch(page: Page,
     const tracked = requests.get(request)
     if (tracked?.kind !== 'ACTION') return
     record('ACTION_FINISHED', 0, tracked.ordinal)
-    if (tracked.status >= 200 && tracked.status < 300) finishedAction = tracked.ordinal
+    actionTerminal = 'FINISHED'
   }
   const onFailed = (request: Request) => {
     const tracked = requests.get(request)
-    if (tracked?.kind === 'ACTION') record('ACTION_FAILED', 0, tracked.ordinal,
-      failureCodes.get(request.failure()?.errorText ?? '') ?? 'OTHER')
+    if (tracked?.kind === 'ACTION') {
+      actionFailure = failureCodes.get(request.failure()?.errorText ?? '') ?? 'OTHER'
+      actionTerminal = 'FAILED'
+      record('ACTION_FAILED', 0, tracked.ordinal, actionFailure)
+    }
   }
   const onNavigation = (frame: Frame) => { if (frame === page.mainFrame()) record('NAVIGATION_COMMIT') }
   page.on('request', onRequest); page.on('response', onResponse)
@@ -106,7 +111,13 @@ export async function observeMediaSearch(page: Page,
   record(initial)
   return {
     saw: (signal: string) => seen.has(signal),
-    actionFinishedOk: () => actionRequests === 1 && finishedAction > 0,
+    actionTransport: (): 'PENDING' | 'FINISHED_2XX' | 'ABORTED_AFTER_2XX' | 'FAILED' => {
+      if (actionRequests > 1) return 'FAILED'
+      if (actionRequests === 0 || !actionTerminal) return 'PENDING'
+      if (actionStatus < 200 || actionStatus >= 300) return 'FAILED'
+      if (actionTerminal === 'FINISHED') return 'FINISHED_2XX'
+      return actionFailure === 'ABORTED' ? 'ABORTED_AFTER_2XX' : 'FAILED'
+    },
     dispose: () => {
       page.off('request', onRequest); page.off('response', onResponse)
       page.off('requestfinished', onFinished); page.off('requestfailed', onFailed)

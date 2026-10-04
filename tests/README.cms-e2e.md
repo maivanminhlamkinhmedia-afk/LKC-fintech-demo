@@ -747,14 +747,28 @@ milliseconds and a numeric HTTP status. Read them with `MED_SCOPE_*` timing:
   the browser could not have navigated after timeout/cancellation.
 
 MED-08/11 requires an observed native click/submit, exactly one `/creator/media`
-POST with a 2xx response **and `requestfinished` for that same request**, and a
-busy-to-idle UI cycle before the existing foreign-asset absence/GET 404 and
-admin-visible assertions. HTTP 200 at `response` means headers arrived; it is
-not action completion. An `ACTION_FAILED` or navigation still fails the case.
-Each request has an observer-local ordinal; `ACTION_FINISHED` and
-`ACTION_FAILED` carry that ordinal, and a failed request carries only a fixed
-allowlisted failure code (or `OTHER`). The existing UI/DB checks remain the
-business result. The empty initial list alone is not completion evidence.
+POST with a 2xx response, a terminal `requestfinished` or specifically
+`ERR_ABORTED` after those headers for that same request, and a busy-to-idle UI
+cycle. The test then requires no form error or navigation, the searched result
+count/status, exact result ID set, foreign-asset absence/GET 404 and
+admin-visible asset. MED-08/11 uploads an owned decoy through the same
+guarded journal/manifest path: other sees it before searching for the
+creator's asset, and admin sees it in the initial list. Both pre-search ID
+sets must differ from the expected result set; after search, other must have
+no IDs and admin must have only the target ID. This does not depend on media
+left by another case. HTTP 200
+headers or `ERR_ABORTED` alone never establish action success. A cut response,
+other transport failure, second action POST, stale/incorrect result or form
+error fails. A production-local negative control with the real MediaLibrary
+showed the old count-only gate passing unchanged UI after `200 → ERR_ABORTED`;
+the shared gate now rejects that state while accepting the correct ID change.
+The local adapter deliberately supplied stale data; this does not establish a
+product defect on staging. Production-local Next/Chromium reproduced `200 → ERR_ABORTED`
+with a correctly rendered action result for empty and nonempty searches; the
+initiator of that browser abort is not identified. Each request has an
+observer-local ordinal; terminal signals carry that ordinal and a failed
+request carries only a fixed allowlisted failure code (or `OTHER`). The empty
+initial list alone is not completion evidence.
 No click force, navigation opt-out, sleep, timeout or retry change was made.
 URL, query text, action ID, headers and raw browser error never enter the log.
 
