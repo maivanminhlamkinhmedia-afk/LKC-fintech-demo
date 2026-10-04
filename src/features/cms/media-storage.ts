@@ -118,7 +118,16 @@ export async function advanceMediaOperation(root: MediaRoot, operation: MediaOpe
   let phase: JournalWritePhase = 'open'
   try {
     await syncWrite(temporary, JSON.stringify(operation), true, value => { phase = value })
-    phase = 'rename'; await rename(temporary, file)
+    phase = 'rename'
+    // On Windows a short-lived reader of the old receipt can deny replacement.
+    // Retry only the same atomic rename while the caller still owns its lock.
+    for (const delayMs of [0, 50, 150]) {
+      if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs))
+      try { await rename(temporary, file); break }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EPERM' || delayMs === 150) throw error
+      }
+    }
   } catch (error) {
     console.error(`CMS_MEDIA_JOURNAL_ADVANCE_FAILED phase=${phase} errno=${journalErrno(error)}`)
     throw error

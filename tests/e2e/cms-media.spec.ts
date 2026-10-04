@@ -277,7 +277,7 @@ test('MED-08/11 own library excludes foreign asset while admin can find it', asy
         await observed(actor === 'other' ? 'MED_SCOPE_OTHER_SEARCH' : 'MED_SCOPE_ADMIN_SEARCH',
           () => page.getByRole('button', { name: 'Tìm kiếm' }).click())
         await expect.poll(() => observer.saw('CLICK_EVENT') && observer.saw('SUBMIT_EVENT')
-          && observer.saw('ACTION_REQUEST') && observer.actionSucceeded()
+          && observer.saw('ACTION_REQUEST') && observer.actionFinishedOk()
           && observer.saw('BUTTON_DISABLED') && observer.saw('BUTTON_REENABLED')).toBe(true)
         expect(observer.saw('ACTION_FAILED') || observer.saw('NAVIGATION_REQUEST')
           || observer.saw('NAVIGATION_COMMIT')).toBe(false)

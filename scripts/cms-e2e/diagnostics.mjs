@@ -2,7 +2,7 @@ import { isAbsolute, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { StringDecoder } from 'node:string_decoder'
 import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS, TAX_TIMING_BODIES, TAX_TIMING_HOOKS } from './taxonomy-diagnostics.mjs'
-import { MEDIA_SEARCH_SIGNALS } from './media-search-observation.ts'
+import { MEDIA_SEARCH_SIGNALS, MEDIA_SEARCH_FAILURE_CODES } from './media-search-observation.ts'
 import { UPLOAD_STAGES } from './media-upload-failure-state.ts'
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
@@ -246,14 +246,21 @@ export function formatDiagnosticRecord(kind, record) {
       elapsedMs: record.elapsedMs, durationMs: record.durationMs, httpStatus: record.httpStatus,
       errorCode: record.errorCode, intentCount: record.intentCount }
   } else if (kind === 'MEDIA_SEARCH_SIGNAL') {
-    if (!exactKeys(record, ['caseId', 'actor', 'signal', 'elapsedMs', 'httpStatus'])
+    if (!exactKeys(record, ['caseId', 'actor', 'signal', 'elapsedMs', 'httpStatus', 'requestOrdinal', 'failureCode'])
       || record.caseId !== 'MED-08/11' || !['other', 'admin'].includes(record.actor)
       || !MEDIA_SEARCH_SIGNALS.includes(record.signal) || !milliseconds(record.elapsedMs)
+      || !Number.isSafeInteger(record.requestOrdinal) || record.requestOrdinal < 0 || record.requestOrdinal > 100
+      || ((record.signal.startsWith('ACTION_')
+        || (record.signal.startsWith('NAVIGATION_') && record.signal !== 'NAVIGATION_COMMIT'))
+        ? record.requestOrdinal === 0 : record.requestOrdinal !== 0)
+      || (record.signal === 'ACTION_FAILED'
+        ? !MEDIA_SEARCH_FAILURE_CODES.includes(record.failureCode) : record.failureCode !== null)
       || !Number.isSafeInteger(record.httpStatus)
       || (record.signal.endsWith('_RESPONSE')
         ? record.httpStatus < 100 || record.httpStatus > 599 : record.httpStatus !== 0)) return null
     canonical = { caseId: record.caseId, actor: record.actor, signal: record.signal,
-      elapsedMs: record.elapsedMs, httpStatus: record.httpStatus }
+      elapsedMs: record.elapsedMs, httpStatus: record.httpStatus,
+      requestOrdinal: record.requestOrdinal, failureCode: record.failureCode }
   } else if (kind === 'MEDIA_UPLOAD_STATE') {
     if (!exactKeys(record, ['caseId', 'journalStage', 'rowPresent', 'objectPresent', 'tempJournalPresent'])
       || !Object.hasOwn(MEDIA_TIMING_BODIES, record.caseId)

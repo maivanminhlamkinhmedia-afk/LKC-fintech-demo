@@ -83,13 +83,20 @@ test('MED-08/11 scope phases survive reporter/filter only for their exact case',
   assert.equal(formatDiagnosticRecord('TIMING', { ...timing, caseId: 'MED-02/05/10' }), null)
 })
 test('MED search signals and failed upload state use fixed fields through reporter and filter', () => {
-  const search = { caseId: 'MED-08/11', actor: 'other', signal: 'ACTION_RESPONSE', elapsedMs: 123, httpStatus: 200 }
+  const search = { caseId: 'MED-08/11', actor: 'other', signal: 'ACTION_RESPONSE', elapsedMs: 123,
+    httpStatus: 200, requestOrdinal: 1, failureCode: null }
+  const finished = { ...search, signal: 'ACTION_FINISHED', elapsedMs: 124, httpStatus: 0 }
+  const failed = { ...search, signal: 'ACTION_FAILED', elapsedMs: 125,
+    httpStatus: 0, requestOrdinal: 2, failureCode: 'ABORTED' }
   const state = { caseId: 'MED-14-COVER', journalStage: 'file-ready', rowPresent: 'present',
     objectPresent: 'present', tempJournalPresent: 'absent' }
   assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', search), /ACTION_RESPONSE/)
   for (const signal of ['BUTTON_OUTSIDE_VIEWPORT', 'BUTTON_NO_HIT', 'BUTTON_COVERED', 'BUTTON_READY']) {
-    assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', { ...search, signal, httpStatus: 0 }), new RegExp(signal))
+    assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', { ...search, signal, httpStatus: 0,
+      requestOrdinal: 0 }), new RegExp(signal))
   }
+  assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', finished), /ACTION_FINISHED/)
+  assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', failed), /ABORTED/)
   assert.match(formatDiagnosticRecord('MEDIA_UPLOAD_STATE', state), /file-ready/)
   assert.notEqual(formatDiagnosticRecord('MEDIA_UPLOAD_STATE', { ...state, journalStage: 'unreadable',
     rowPresent: 'unknown', objectPresent: 'unknown', tempJournalPresent: 'unknown' }), null)
@@ -98,6 +105,10 @@ test('MED search signals and failed upload state use fixed fields through report
     { ...search, signal: PRIVATE }, { ...search, query: PRIVATE },
     { ...search, httpStatus: 999 }, { ...search, httpStatus: 0 },
     { ...search, signal: 'CLICK_EVENT', httpStatus: 200 },
+    { ...search, requestOrdinal: 0 }, { ...search, requestOrdinal: 101 },
+    { ...search, signal: 'CLICK_EVENT', httpStatus: 0 },
+    { ...search, signal: 'ACTION_FAILED', httpStatus: 0, failureCode: PRIVATE },
+    { ...search, signal: 'ACTION_FINISHED', httpStatus: 0, failureCode: 'ABORTED' },
   ]) assert.equal(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', bad), null)
   for (const bad of [
     { ...state, caseId: FORMAT_CASE }, { ...state, journalStage: PRIVATE },
@@ -109,6 +120,7 @@ test('MED search signals and failed upload state use fixed fields through report
     Object.entries(record).filter(([key]) => key !== 'caseId'))) })
   reporter.onTestEnd(testCase('MED-08/11 own library excludes foreign asset while admin can find it', MEDIA_FILE), {
     status: 'timedOut', annotations: [annotation('cms-media-search-signal', search),
+      annotation('cms-media-search-signal', finished), annotation('cms-media-search-signal', failed),
       annotation('cms-media-search-signal', { ...search, query: PRIVATE })],
   })
   reporter.onTestEnd(testCase('MED-14 cover wins against the stale Article surface without losing input', MEDIA_FILE), {
@@ -117,9 +129,11 @@ test('MED search signals and failed upload state use fixed fields through report
   })
   filter.end()
   assert.deepEqual(lines.map(parse).map(row => row.kind),
-    ['MEDIA_SEARCH_SIGNAL', 'CASE', 'MEDIA_UPLOAD_STATE', 'CASE'])
+    ['MEDIA_SEARCH_SIGNAL', 'MEDIA_SEARCH_SIGNAL', 'MEDIA_SEARCH_SIGNAL', 'CASE', 'MEDIA_UPLOAD_STATE', 'CASE'])
   assert.deepEqual(parse(lines[0]).record, search)
-  assert.deepEqual(parse(lines[2]).record, state)
+  assert.deepEqual(parse(lines[1]).record, finished)
+  assert.deepEqual(parse(lines[2]).record, failed)
+  assert.deepEqual(parse(lines[4]).record, state)
   assert.equal(lines.join('').includes(PRIVATE), false)
 })
 test('MED scope and teardown timing identifies the active phase without changing the timeout verdict', () => {

@@ -46,6 +46,13 @@ Receipt là quyền kiểm chứng operation, không tự là quyền xóa. Reco
 
 Giới hạn pending intents/quota phải atomic liên process. Intent chưa dispatch expire30phút; không prune intent đã dispatch/unknown vì TTL. Không đưa filesystem rename/delete vào transaction rồi tự gọi đó là rollbackable.
 
+Journal replacement on Windows retries only a transient `EPERM` from the
+same temp-to-receipt atomic rename (after 50 and 150 ms), under the existing
+operation lock. A persistent error still returns an unknown outcome with the
+temp journal retained for check-only recovery. It never repeats the DB write,
+deletes the destination, or treats an error as a commit. An observed `EPERM`
+does not by itself identify the process holding the destination file.
+
 ## 5. Check-only và apply recovery
 
 CLI hiện tại: `node scripts/cms-media/recover.mjs`. Nó không tự tải `.env`; người vận hành phải cung cấp `CMS_MEDIA_ROOT` và `DATABASE_URL` qua cơ chế secret runtime đã được duyệt. Không chạy CLI này trong local validation với DB thật. Mặc định là **CHECK-ONLY**; cần `--apply` và confirmation exact để ghi. Flags check-only: `--operation <32-hex> --root-identity <32-hex> --database-name <name> --database-user <user>`. Khi apply, thêm `--confirm-operation <same-operation-id> --asset <32-hex> --actor <actor-id> --key <32-hex.png|jpg>`. CLI đối chiếu `DATABASE()`/`CURRENT_USER()` và marker root trước khi đọc journal; output chỉ gồm operation ID, state, applied. Không in SQL, credentials, bytes, metadata hay path riêng.

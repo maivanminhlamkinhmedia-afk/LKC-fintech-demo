@@ -736,20 +736,27 @@ milliseconds and a numeric HTTP status. Read them with `MED_SCOPE_*` timing:
 - `CLICK_EVENT` and `SUBMIT_EVENT` distinguish dispatch from an actionable
   locator that never received a browser event. A submit with no
   `ACTION_REQUEST` points to client dispatch/hydration before the server.
-- `ACTION_REQUEST`, `ACTION_RESPONSE` and `ACTION_FAILED` distinguish a
-  dispatched Server Action from a pending/failed response. The HTTP status
-  is attached only to a response. `BUTTON_DISABLED` then `BUTTON_REENABLED`
-  show the search UI's in-flight and settled states.
+- `ACTION_REQUEST`, `ACTION_RESPONSE`, `ACTION_FINISHED` and `ACTION_FAILED`
+  distinguish dispatch, response headers, completed body and transport
+  failure for one observer-local request ordinal. HTTP status is attached
+  only to a response; a failure code is emitted only for `ACTION_FAILED`.
+  `BUTTON_DISABLED` then `BUTTON_REENABLED` show the search UI's in-flight
+  and settled states.
 - `NAVIGATION_REQUEST`/`NAVIGATION_RESPONSE`/`NAVIGATION_COMMIT` show whether
   click started a document navigation. An absent signal is not proof that
   the browser could not have navigated after timeout/cancellation.
 
-MED-08/11 now requires an observed click/submit, a successful action response,
-and a busy-to-idle UI cycle before the existing foreign-asset absence/GET 404
-and admin-visible assertions. The empty initial list alone is not completion
-evidence. No click force, navigation opt-out, retry, sleep or timeout change
-was made. Only the exact `/creator/media` POST and document navigation are
-classified; URL and query text are never output.
+MED-08/11 requires an observed native click/submit, exactly one `/creator/media`
+POST with a 2xx response **and `requestfinished` for that same request**, and a
+busy-to-idle UI cycle before the existing foreign-asset absence/GET 404 and
+admin-visible assertions. HTTP 200 at `response` means headers arrived; it is
+not action completion. An `ACTION_FAILED` or navigation still fails the case.
+Each request has an observer-local ordinal; `ACTION_FINISHED` and
+`ACTION_FAILED` carry that ordinal, and a failed request carries only a fixed
+allowlisted failure code (or `OTHER`). The existing UI/DB checks remain the
+business result. The empty initial list alone is not completion evidence.
+No click force, navigation opt-out, sleep, timeout or retry change was made.
+URL, query text, action ID, headers and raw browser error never enter the log.
 
 On failed upload UI, `MEDIA_UPLOAD_STATE` reads the exact reserved receipt,
 one scoped DB row count and existence of the exact object/temp-journal paths.
@@ -768,6 +775,12 @@ Only an entire line with one of those five phases and errno `EACCES`, `EPERM`,
 `EEXIST`, `ENOENT`, `EBUSY`, `EIO`, `ENOSPC`, `EMFILE` or `OTHER` becomes
 `CMS_E2E APP_JOURNAL phase=<phase> errno=<errno>` in the operator log. This
 record is sourced from the app and has **no case or operation attribution**.
+On Windows, a reader holding the old receipt can briefly cause `rename` to
+return `EPERM`. The writer now retries only that same atomic rename after 50
+and 150 ms while still under the operation lock; it does not repeat file or DB
+mutations. Persistent `EPERM` still propagates once, keeps the temp journal
+for recovery, and produces the same safe marker. The staging marker alone
+does not identify which process held the file or prove this was its cause.
 Prefix/suffix text, control characters, unknown values and oversized lines
 are dropped; raw stderr never passes through. A filter/write failure disables
 only this diagnostic stream, leaving child exit and cleanup semantics intact.

@@ -6,24 +6,39 @@ export const MEDIA_SEARCH_SIGNALS = Object.freeze([
   'BUTTON_MISSING', 'BUTTON_HIDDEN', 'BUTTON_DISABLED', 'BUTTON_OUTSIDE_VIEWPORT', 'BUTTON_NO_HIT',
   'BUTTON_COVERED', 'BUTTON_READY',
   'CLICK_EVENT', 'SUBMIT_EVENT', 'BUTTON_REENABLED',
-  'ACTION_REQUEST', 'ACTION_RESPONSE', 'ACTION_FAILED',
+  'ACTION_REQUEST', 'ACTION_RESPONSE', 'ACTION_FINISHED', 'ACTION_FAILED',
   'NAVIGATION_REQUEST', 'NAVIGATION_RESPONSE', 'NAVIGATION_COMMIT',
 ])
 const allowed = new Set(MEDIA_SEARCH_SIGNALS)
+export const MEDIA_SEARCH_FAILURE_CODES = Object.freeze([
+  'ABORTED', 'CONNECTION_RESET', 'CONNECTION_CLOSED', 'EMPTY_RESPONSE',
+  'HTTP2_PROTOCOL_ERROR', 'NETWORK_CHANGED', 'TIMED_OUT', 'FAILED', 'OTHER',
+])
+const failureCodes = new Map([
+  ['net::ERR_ABORTED', 'ABORTED'],
+  ['net::ERR_CONNECTION_RESET', 'CONNECTION_RESET'],
+  ['net::ERR_CONNECTION_CLOSED', 'CONNECTION_CLOSED'],
+  ['net::ERR_EMPTY_RESPONSE', 'EMPTY_RESPONSE'],
+  ['net::ERR_HTTP2_PROTOCOL_ERROR', 'HTTP2_PROTOCOL_ERROR'],
+  ['net::ERR_NETWORK_CHANGED', 'NETWORK_CHANGED'],
+  ['net::ERR_TIMED_OUT', 'TIMED_OUT'],
+  ['net::ERR_FAILED', 'FAILED'],
+])
 
 export async function observeMediaSearch(page: Page,
-  emit: (record: { signal: string; elapsedMs: number; httpStatus: number }) => void) {
+  emit: (record: { signal: string; elapsedMs: number; httpStatus: number;
+    requestOrdinal: number; failureCode: string | null }) => void) {
   const start = performance.now(), seen = new Set<string>()
-  let actionSucceeded = false
-  const record = (signal: string, httpStatus = 0) => {
+  let actionRequests = 0, finishedAction = 0, requestOrdinal = 0
+  const record = (signal: string, httpStatus = 0, ordinal = 0, failureCode: string | null = null) => {
     if (!allowed.has(signal) || !Number.isInteger(httpStatus) || httpStatus < 0 || httpStatus > 599) return
     seen.add(signal)
-    if (signal === 'ACTION_RESPONSE' && httpStatus >= 200 && httpStatus < 300) actionSucceeded = true
-    emit({ signal, elapsedMs: Math.round(performance.now() - start), httpStatus })
+    emit({ signal, elapsedMs: Math.round(performance.now() - start), httpStatus,
+      requestOrdinal: ordinal, failureCode })
   }
   const binding = '__cmsMediaSearchSignal'
   await page.exposeBinding(binding, (_source, signal: string) => record(signal))
-  const requests = new WeakMap<Request, 'ACTION' | 'NAVIGATION'>()
+  const requests = new WeakMap<Request, { kind: 'ACTION' | 'NAVIGATION'; ordinal: number; status: number }>()
   const classify = (request: Request): 'ACTION' | 'NAVIGATION' | null => {
     const path = new URL(request.url()).pathname
     if (path !== '/creator/media') return null
@@ -33,20 +48,32 @@ export async function observeMediaSearch(page: Page,
   const onRequest = (request: Request) => {
     const kind = classify(request)
     if (!kind) return
-    requests.set(request, kind)
-    record(`${kind}_REQUEST`)
+    const ordinal = ++requestOrdinal
+    if (kind === 'ACTION') actionRequests++
+    requests.set(request, { kind, ordinal, status: 0 })
+    record(`${kind}_REQUEST`, 0, ordinal)
   }
   const onResponse = (response: Response) => {
-    const kind = requests.get(response.request())
-    if (kind) record(`${kind}_RESPONSE`, response.status())
+    const tracked = requests.get(response.request())
+    if (tracked) {
+      tracked.status = response.status()
+      record(`${tracked.kind}_RESPONSE`, tracked.status, tracked.ordinal)
+    }
+  }
+  const onFinished = (request: Request) => {
+    const tracked = requests.get(request)
+    if (tracked?.kind !== 'ACTION') return
+    record('ACTION_FINISHED', 0, tracked.ordinal)
+    if (tracked.status >= 200 && tracked.status < 300) finishedAction = tracked.ordinal
   }
   const onFailed = (request: Request) => {
-    const kind = requests.get(request)
-    if (kind === 'ACTION') record('ACTION_FAILED')
+    const tracked = requests.get(request)
+    if (tracked?.kind === 'ACTION') record('ACTION_FAILED', 0, tracked.ordinal,
+      failureCodes.get(request.failure()?.errorText ?? '') ?? 'OTHER')
   }
   const onNavigation = (frame: Frame) => { if (frame === page.mainFrame()) record('NAVIGATION_COMMIT') }
   page.on('request', onRequest); page.on('response', onResponse)
-  page.on('requestfailed', onFailed); page.on('framenavigated', onNavigation)
+  page.on('requestfinished', onFinished); page.on('requestfailed', onFailed); page.on('framenavigated', onNavigation)
   const initial = await page.evaluate(bindingName => {
     const form = document.querySelector<HTMLFormElement>('form[aria-label="Tìm ảnh"]')
     const button = form?.querySelector<HTMLButtonElement>('button')
@@ -79,10 +106,11 @@ export async function observeMediaSearch(page: Page,
   record(initial)
   return {
     saw: (signal: string) => seen.has(signal),
-    actionSucceeded: () => actionSucceeded,
+    actionFinishedOk: () => actionRequests === 1 && finishedAction > 0,
     dispose: () => {
       page.off('request', onRequest); page.off('response', onResponse)
-      page.off('requestfailed', onFailed); page.off('framenavigated', onNavigation)
+      page.off('requestfinished', onFinished); page.off('requestfailed', onFailed)
+      page.off('framenavigated', onNavigation)
     },
   }
 }

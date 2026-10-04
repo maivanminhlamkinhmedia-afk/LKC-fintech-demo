@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, writeFile, lstat } from 'node:fs/promises'
+import { mkdir, open, readFile, writeFile, lstat } from 'node:fs/promises'
 import path from 'node:path'
 import { registerHooks } from 'node:module'
 
@@ -26,7 +26,18 @@ export async function open(file,...args){
     const value=target[key];return typeof value==='function'?value.bind(target):value;
   }});
 }
-export async function rename(source,target){if(source.endsWith('.journal')&&state()?.phase==='rename')throw error('EPERM');return fs.rename(source,target)};
+export async function rename(source,target){
+  const s=state();
+  if(source.endsWith('.journal')&&s?.phase==='rename')throw error('EPERM');
+  try{return await fs.rename(source,target)}
+  catch(failure){
+    if(failure?.code==='EPERM'&&s?.phase?.startsWith('held-')){
+      s.renameFailures++;
+      if(s.phase==='held-transient')await s.release();
+    }
+    throw failure;
+  }
+};
 `)
 const sourceRoot = new URL('../../src/features/cms/', import.meta.url)
 const proxyUrl = new URL('../../.next/cms009-local/journal-fs-proxy.mjs', import.meta.url)
@@ -42,7 +53,8 @@ const storage = await import('../../src/features/cms/media-storage.ts')
 const priorRoot = process.env.CMS_MEDIA_ROOT, priorMode = process.env.CMS_MEDIA_ROOT_MODE
 const rows = []
 try {
-  for (const phase of ['normal', 'open', 'write', 'sync', 'close', 'rename', 'existing-temp', 'concurrent-lock']) {
+  for (const phase of ['normal', 'open', 'write', 'sync', 'close', 'rename',
+    'held-transient', 'held-persistent', 'existing-temp', 'concurrent-lock']) {
     const rootPath = path.join(scratch, randomBytes(12).toString('hex'))
     process.env.CMS_MEDIA_ROOT = rootPath; process.env.CMS_MEDIA_ROOT_MODE = 'local'
     const root = await storage.provisionMediaRoot(rootPath)
@@ -55,7 +67,13 @@ try {
     const temp = path.join(rootPath, 'tmp', `${id}.journal`)
     if (phase === 'existing-temp') await writeFile(temp, 'synthetic previous attempt')
     operation.stage = 'dispatched'
-    globalThis[Symbol.for('cms-media-journal-fault')] = { phase }
+    const held = phase.startsWith('held-')
+      ? await open(path.join(rootPath, 'operations', `${id}.json`), 'r') : null
+    let released = false
+    const state = { phase, renameFailures: 0, release: async () => {
+      if (!released) { released = true; await held?.close() }
+    } }
+    globalThis[Symbol.for('cms-media-journal-fault')] = state
     const diagnostics = [], originalError = console.error
     console.error = (...args) => { diagnostics.push(args.join(' ')) }
     let code = 'NONE'
@@ -74,18 +92,27 @@ try {
       } else await storage.advanceMediaOperation(root, operation)
     }
     catch (error) { code = ['EACCES', 'EEXIST', 'EIO', 'EPERM'].includes(error?.code) ? error.code : 'OTHER' }
-    finally { console.error = originalError; delete globalThis[Symbol.for('cms-media-journal-fault')] }
+    finally {
+      await state.release(); console.error = originalError
+      delete globalThis[Symbol.for('cms-media-journal-fault')]
+    }
     const receipt = JSON.parse(await readFile(path.join(rootPath, 'operations', `${id}.json`), 'utf8'))
     let tempPresent = false
     try { tempPresent = (await lstat(temp)).isFile() } catch (error) { if (error?.code !== 'ENOENT') throw error }
-    const loggedPhase = phase === 'existing-temp' ? 'open' : phase
-    assert.deepEqual(diagnostics, ['normal', 'concurrent-lock'].includes(phase) ? []
+    const loggedPhase = phase === 'existing-temp' ? 'open'
+      : phase.startsWith('held-') ? 'rename' : phase
+    assert.deepEqual(diagnostics, ['normal', 'held-transient', 'concurrent-lock'].includes(phase) ? []
       : [`CMS_MEDIA_JOURNAL_ADVANCE_FAILED phase=${loggedPhase} errno=${code}`])
-    rows.push({ phase, code, journalStage: receipt.stage, tempPresent })
+    if (phase.startsWith('held-') && process.platform === 'win32') {
+      assert.equal(state.renameFailures, phase === 'held-transient' ? 1 : 3)
+    }
+    rows.push({ phase, code, journalStage: receipt.stage, tempPresent,
+      renameFailures: state.renameFailures })
   }
   assert.deepEqual(rows.map(row => [row.phase, row.journalStage, row.tempPresent]), [
     ['normal', 'dispatched', false], ['open', 'intent', false], ['write', 'intent', true],
     ['sync', 'intent', true], ['close', 'intent', true], ['rename', 'intent', true],
+    ['held-transient', 'dispatched', false], ['held-persistent', 'intent', true],
     ['existing-temp', 'intent', true], ['concurrent-lock', 'dispatched', false],
   ])
   console.log(JSON.stringify({ result: 'PASS', node: process.version, cases: rows }))
