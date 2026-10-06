@@ -6,13 +6,27 @@ import { pathToFileURL } from 'node:url'
 import { assertPortAvailable, connectStaging, demand, DUMMY_DATABASE_URL, HarnessError, safeFailure, validateStagingEnvironment, withCleanup } from './guard.mjs'
 import { createFixturePlan, createFixtures, manifestPath, saveManifest, loadManifest, discoverCreatedArticles, discoverCreatedSources, discoverFixtureGraph, cleanupFixtures } from './fixtures.mjs'
 import { createDiagnosticOutputFilter } from './diagnostics.mjs'
+import { createAppJournalOutputFilter } from './app-journal-output.mjs'
+import { mediaRootPath, provisionRunMediaRoot } from './media-fixtures.mjs'
 
-function launch(args, env, cwd) {
+function launch(args, env, cwd, appJournalOutput) {
   const child = spawn(process.execPath, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
   // Never forward raw app/build diagnostics, auth output, SQL or credentials.
-  child.stdout.resume(); child.stderr.resume()
+  child.stdout.resume()
+  if (appJournalOutput) {
+    // Attach before resuming stderr so an early app failure cannot lose the
+    // one allowlisted journal marker. All other app stderr is discarded.
+    const output = createAppJournalOutputFilter(appJournalOutput)
+    child.stderr.on('data', chunk => output.push(chunk))
+    child.stderr.on('end', () => output.end())
+    child.stderr.on('error', () => output.disable())
+    child.once('close', () => output.end())
+  } else child.stderr.resume()
   child.on('error', () => { child.cmsLaunchFailed = true })
   return child
+}
+export function launchApp(args, env, cwd) {
+  return launch(args, env, cwd, line => process.stdout.write(line))
 }
 async function completed(child) {
   return new Promise((resolveCode, reject) => {
@@ -95,7 +109,8 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
       NEXT_TELEMETRY_DISABLED: '1', GOOGLE_SHEET_ID: '', NODE_ENV: 'production', DOTENV_CONFIG_PATH: 'NUL' }
     // Build never receives staging credentials. A fresh build plus HEAD/BUILD_ID
     // provenance prevents accidentally running an earlier checkout's artifact.
-    const buildEnv = { ...runtimeEnv, DATABASE_URL: DUMMY_DATABASE_URL, NEXTAUTH_SECRET: 'cms005-local-build-dummy-secret' }
+    const buildEnv = { ...runtimeEnv, DATABASE_URL: DUMMY_DATABASE_URL, NEXTAUTH_SECRET: 'cms005-local-build-dummy-secret',
+      CMS_MEDIA_ROOT: resolve(cwd, '.next', 'cms009-local', 'build-not-provisioned'), CMS_MEDIA_ROOT_MODE: 'local' }
     delete buildEnv.CMS_E2E_CREDENTIALS
     const snapshot = await buildSnapshot(cwd, manifest.runId)
     demand(await completed(launch([resolve(cwd, 'node_modules/next/dist/bin/next'), 'build', snapshot], buildEnv, snapshot)) === 0, 'DUMMY_BUILD_FAILED')
@@ -103,6 +118,10 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
     const buildId = (await readFile(resolve(snapshot, '.next', 'BUILD_ID'), 'utf8')).trim()
     demand(buildId.length > 0, 'BUILD_ID_MISSING')
     await writeFile(resolve(snapshot, '.next', 'cms-e2e-build.json'), JSON.stringify({ commit, buildId }), { mode: 0o600 })
+    const mediaRoot = await provisionRunMediaRoot(manifest, cwd)
+    demand(mediaRoot === mediaRootPath(manifest, cwd), 'MEDIA_ROOT_IDENTITY_INVALID')
+    Object.assign(runtimeEnv, { CMS_MEDIA_ROOT: mediaRoot, CMS_MEDIA_ROOT_MODE: 'staging', CMS_E2E_RUN_ID: manifest.runId,
+      CMS_E2E_WORKSPACE: cwd })
     await assertPortAvailable()
     db = await connectStaging(runtimeEnv)
     await saveManifest(path, manifest)
@@ -110,7 +129,7 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
       const { hash } = await import('bcryptjs')
       const credentials = await createFixtures(db, runtimeEnv, manifest, password => hash(password, 12))
       fixturesCommitted = true
-      app = launch([resolve(cwd, 'node_modules/next/dist/bin/next'), 'start', snapshot, '--hostname', '127.0.0.1', '--port', '3001'], runtimeEnv, snapshot)
+      app = launchApp([resolve(cwd, 'node_modules/next/dist/bin/next'), 'start', snapshot, '--hostname', '127.0.0.1', '--port', '3001'], runtimeEnv, snapshot)
       let startupOutput = ''
       app.stdout.on('data', chunk => {
         startupOutput = `${startupOutput}${chunk.toString()}`.slice(-512)
@@ -139,7 +158,7 @@ export async function runStaging(argv, sourceEnv, cwd = process.cwd()) {
       // ownership of existing rows. Preserve the manifest for operator review.
       await cleanupConfirmedFixtures(fixturesCommitted, async () => {
         const latest = await loadManifest(path)
-        const recover = latest.version === 3 ? discoverFixtureGraph : latest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
+        const recover = latest.version >= 3 ? discoverFixtureGraph : latest.version === 2 ? discoverCreatedSources : discoverCreatedArticles
         await recover(db, runtimeEnv, latest, updated => saveManifest(path, updated))
         const counts = await cleanupFixtures(db, runtimeEnv, latest, { apply: true })
         process.stdout.write(`CMS_E2E CLEANUP ${JSON.stringify(counts)}\n`)

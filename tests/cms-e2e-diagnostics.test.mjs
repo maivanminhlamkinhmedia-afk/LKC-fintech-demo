@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFile } from 'node:fs/promises'
-import { formatDiagnosticRecord, createDiagnosticOutputFilter } from '../scripts/cms-e2e/diagnostics.mjs'
+import { formatDiagnosticRecord, createDiagnosticOutputFilter, diagnosticCase } from '../scripts/cms-e2e/diagnostics.mjs'
 import SafeReporter from './e2e/safe-reporter.mjs'
 import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS } from '../scripts/cms-e2e/taxonomy-diagnostics.mjs'
 
@@ -10,11 +10,155 @@ import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEP
 const FORMAT_FILE = 'tests/e2e/cms-draft.spec.ts'
 const CLIP_FILE = 'tests/e2e/cms-editor-safety.spec.ts'
 const AUTO_FILE = 'tests/e2e/cms-autosave.spec.ts'
+const MEDIA_FILE = 'tests/e2e/cms-media.spec.ts'
 const FORMAT_CASE = 'EDIT-04/05/06/21'
 const CLIP_CASE = 'EDIT-18'
 const FORMAT_TITLE = 'EDIT-04/05/06/21 create and refresh Vietnamese formatting with no writes from GET or typing'
 const CLIP_TITLE = 'EDIT-18 real HTML clipboard paste removes unsafe content and persists canonical safe links'
 const PRIVATE = 'SYNTHETIC_PRIVATE_PASSWORD_COOKIE_BODY_EXPECTED_ACTUAL'
+
+test('MED registry accepts only exact file/title/step and rejects forged metadata payload', () => {
+  const title = 'MED-02/05/10 PNG and JPEG upload persist canonical private bytes and protected GET HEAD'
+  assert.equal(diagnosticCase({ title, location: { file: MEDIA_FILE, line: 1, column: 1 } }).caseId, 'MED-02/05/10')
+  assert.equal(diagnosticCase({ title: `${title} ${PRIVATE}`, location: { file: MEDIA_FILE, line: 1, column: 1 } }).caseId, 'UNKNOWN_CASE')
+  const base = { caseId: 'MED-02/05/10', stepCode: 'MED_UPLOAD_CANONICAL', status: 'failed',
+    testLocation: { file: MEDIA_FILE, line: 1, column: 1 }, stepLocation: { file: MEDIA_FILE, line: 2, column: 2 },
+    assertionLocation: null, assertionSource: null }
+  assert.match(formatDiagnosticRecord('DIAGNOSTIC', base), /MED_UPLOAD_CANONICAL/)
+  assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...base, stepCode: 'FMT_DB' }), null)
+  assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...base, originalFilename: PRIVATE }), null)
+  assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...base, assertionLocation: { file: MEDIA_FILE, line: 3, column: 3 }, assertionSource: 'raw-error' }), null)
+})
+test('MED upload observations preserve safe phases, HTTP status and codes without leaking payloads', () => {
+  const title = 'MED-08/11 own library excludes foreign asset while admin can find it'
+  const base = { caseId: 'MED-08/11', phase: 'POST_RESPONSE', status: 'failed', elapsedMs: 123,
+    durationMs: 0, httpStatus: 409, errorCode: 'MEDIA_BUSY', intentCount: 1 }
+  assert.match(formatDiagnosticRecord('MEDIA_OBSERVATION', base), /MEDIA_BUSY/)
+  for (const invalid of [
+    { ...base, caseId: FORMAT_CASE }, { ...base, phase: PRIVATE }, { ...base, errorCode: PRIVATE },
+    { ...base, httpStatus: 999 }, { ...base, intentCount: 2 }, { ...base, requestBody: PRIVATE },
+    { ...base, status: 'started', durationMs: 1 },
+  ]) assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', invalid), null)
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  const known = testCase(title, MEDIA_FILE)
+  reporter.onTestEnd(known, { status: 'failed', annotations: [
+    { type: 'cms-media-observation', description: JSON.stringify({ phase: base.phase, status: base.status,
+      elapsedMs: base.elapsedMs, durationMs: base.durationMs, httpStatus: base.httpStatus,
+      errorCode: base.errorCode, intentCount: base.intentCount }) },
+    { type: 'cms-media-observation', description: JSON.stringify({ phase: base.phase, status: base.status,
+      elapsedMs: base.elapsedMs, durationMs: base.durationMs, httpStatus: base.httpStatus,
+      errorCode: PRIVATE, intentCount: base.intentCount }) },
+    { type: 'cms-media-observation', description: JSON.stringify(base) },
+    { type: 'other', description: PRIVATE },
+  ] })
+  filter.end()
+  assert.deepEqual(lines.map(parse).map(row => row.kind), ['MEDIA_OBSERVATION', 'CASE'])
+  assert.deepEqual(parse(lines[0]).record, base)
+  assert.equal(parse(lines[1]).record.status, 'failed')
+  assert.equal(lines.join('').includes(PRIVATE), false)
+})
+
+test('MED-08/11 scope phases survive reporter/filter only for their exact case', () => {
+  const title = 'MED-08/11 own library excludes foreign asset while admin can find it'
+  const record = { caseId: 'MED-08/11', phase: 'MED_SCOPE_OTHER_GET', status: 'passed', elapsedMs: 48123,
+    durationMs: 132, httpStatus: 404, errorCode: null, intentCount: 1 }
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  reporter.onTestEnd(testCase(title, MEDIA_FILE), { status: 'timedOut', annotations: [
+    { type: 'cms-media-observation', description: JSON.stringify(Object.fromEntries(
+      Object.entries(record).filter(([key]) => key !== 'caseId'))) },
+  ] })
+  filter.end()
+  assert.deepEqual(lines.map(parse).map(row => row.kind), ['MEDIA_OBSERVATION', 'CASE'])
+  assert.deepEqual(parse(lines[0]).record, record)
+  assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', { ...record, caseId: 'MED-02/05/10' }), null)
+  assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', { ...record, query: PRIVATE }), null)
+  assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', { ...record, errorCode: PRIVATE }), null)
+  assert.equal(formatDiagnosticRecord('MEDIA_OBSERVATION', { ...record, httpStatus: 999 }), null)
+  const timing = { caseId: 'MED-08/11', phaseCode: 'MED_SCOPE_OTHER_GET', scope: 'phase', status: 'started',
+    durationMs: 0, testOffsetMs: 8000, bodyState: 'running', bodyElapsedMs: 8000, testTimeoutMs: 60000,
+    location: location(MEDIA_FILE) }
+  assert.match(formatDiagnosticRecord('TIMING', timing), /MED_SCOPE_OTHER_GET/)
+  assert.equal(formatDiagnosticRecord('TIMING', { ...timing, caseId: 'MED-02/05/10' }), null)
+})
+test('MED search signals and failed upload state use fixed fields through reporter and filter', () => {
+  const search = { caseId: 'MED-08/11', actor: 'other', signal: 'ACTION_RESPONSE', elapsedMs: 123,
+    httpStatus: 200, requestOrdinal: 1, failureCode: null }
+  const finished = { ...search, signal: 'ACTION_FINISHED', elapsedMs: 124, httpStatus: 0 }
+  const failed = { ...search, signal: 'ACTION_FAILED', elapsedMs: 125,
+    httpStatus: 0, requestOrdinal: 2, failureCode: 'ABORTED' }
+  const state = { caseId: 'MED-14-COVER', journalStage: 'file-ready', rowPresent: 'present',
+    objectPresent: 'present', tempJournalPresent: 'absent' }
+  assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', search), /ACTION_RESPONSE/)
+  for (const signal of ['BUTTON_OUTSIDE_VIEWPORT', 'BUTTON_NO_HIT', 'BUTTON_COVERED', 'BUTTON_READY']) {
+    assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', { ...search, signal, httpStatus: 0,
+      requestOrdinal: 0 }), new RegExp(signal))
+  }
+  assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', finished), /ACTION_FINISHED/)
+  assert.match(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', failed), /ABORTED/)
+  assert.match(formatDiagnosticRecord('MEDIA_UPLOAD_STATE', state), /file-ready/)
+  assert.notEqual(formatDiagnosticRecord('MEDIA_UPLOAD_STATE', { ...state, journalStage: 'unreadable',
+    rowPresent: 'unknown', objectPresent: 'unknown', tempJournalPresent: 'unknown' }), null)
+  for (const bad of [
+    { ...search, caseId: 'MED-14-COVER' }, { ...search, actor: PRIVATE },
+    { ...search, signal: PRIVATE }, { ...search, query: PRIVATE },
+    { ...search, httpStatus: 999 }, { ...search, httpStatus: 0 },
+    { ...search, signal: 'CLICK_EVENT', httpStatus: 200 },
+    { ...search, requestOrdinal: 0 }, { ...search, requestOrdinal: 101 },
+    { ...search, signal: 'CLICK_EVENT', httpStatus: 0 },
+    { ...search, signal: 'ACTION_FAILED', httpStatus: 0, failureCode: PRIVATE },
+    { ...search, signal: 'ACTION_FINISHED', httpStatus: 0, failureCode: 'ABORTED' },
+  ]) assert.equal(formatDiagnosticRecord('MEDIA_SEARCH_SIGNAL', bad), null)
+  for (const bad of [
+    { ...state, caseId: FORMAT_CASE }, { ...state, journalStage: PRIVATE },
+    { ...state, rowPresent: PRIVATE }, { ...state, receiptId: PRIVATE },
+  ]) assert.equal(formatDiagnosticRecord('MEDIA_UPLOAD_STATE', bad), null)
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  const annotation = (type, record) => ({ type, description: JSON.stringify(Object.fromEntries(
+    Object.entries(record).filter(([key]) => key !== 'caseId'))) })
+  reporter.onTestEnd(testCase('MED-08/11 own library excludes foreign asset while admin can find it', MEDIA_FILE), {
+    status: 'timedOut', annotations: [annotation('cms-media-search-signal', search),
+      annotation('cms-media-search-signal', finished), annotation('cms-media-search-signal', failed),
+      annotation('cms-media-search-signal', { ...search, query: PRIVATE })],
+  })
+  reporter.onTestEnd(testCase('MED-14 cover wins against the stale Article surface without losing input', MEDIA_FILE), {
+    status: 'failed', annotations: [annotation('cms-media-upload-state', state),
+      annotation('cms-media-upload-state', { ...state, receiptId: PRIVATE })],
+  })
+  filter.end()
+  assert.deepEqual(lines.map(parse).map(row => row.kind),
+    ['MEDIA_SEARCH_SIGNAL', 'MEDIA_SEARCH_SIGNAL', 'MEDIA_SEARCH_SIGNAL', 'CASE', 'MEDIA_UPLOAD_STATE', 'CASE'])
+  assert.deepEqual(parse(lines[0]).record, search)
+  assert.deepEqual(parse(lines[1]).record, finished)
+  assert.deepEqual(parse(lines[2]).record, failed)
+  assert.deepEqual(parse(lines[4]).record, state)
+  assert.equal(lines.join('').includes(PRIVATE), false)
+})
+test('MED scope and teardown timing identifies the active phase without changing the timeout verdict', () => {
+  const lines = [], filter = createDiagnosticOutputFilter(line => lines.push(line))
+  const reporter = new SafeReporter({ write: line => filter.push(Buffer.from(line)) })
+  const known = testCase('MED-08/11 own library excludes foreign asset while admin can find it', MEDIA_FILE)
+  known.timeout = 60_000
+  const result = { status: 'timedOut', startTime: new Date('2026-09-30T00:00:00.000Z'), annotations: [] }
+  const body = { category: 'test.step', title: 'MED_SCOPE_SEARCH', location: location(MEDIA_FILE),
+    startTime: new Date('2026-09-30T00:00:01.000Z'), duration: 4000 }
+  const inner = { category: 'test.step', title: 'MED_SCOPE_CREATOR_UPLOAD', location: location(MEDIA_FILE, 2, 3),
+    startTime: new Date('2026-09-30T00:00:02.000Z'), duration: 2000, parent: body }
+  reporter.onStepBegin(known, result, body)
+  reporter.onStepBegin(known, result, inner)
+  reporter.onStepEnd(known, result, inner)
+  reporter.onStepEnd(known, result, body)
+  reporter.onTestEnd(known, result)
+  filter.end()
+  const rows = lines.map(parse)
+  assert.deepEqual(rows.filter(row => row.kind === 'TIMING').map(row => [row.record.phaseCode, row.record.status]), [
+    ['MED_SCOPE_SEARCH', 'started'], ['MED_SCOPE_CREATOR_UPLOAD', 'started'],
+    ['MED_SCOPE_CREATOR_UPLOAD', 'passed'], ['MED_SCOPE_SEARCH', 'passed'],
+  ])
+  assert.equal(rows.at(-1).record.status, 'timedOut')
+})
 const FORMAT_STEPS = ['FMT_LOGIN', 'FMT_INPUT', 'FMT_BOLD', 'FMT_LIST', 'FMT_CODE_BLOCK',
   'FMT_NO_WRITE', 'FMT_SAVE_NAVIGATE', 'FMT_DB', 'FMT_RELOAD', 'FMT_DOM_TEXT', 'FMT_DOM_BOLD',
   'FMT_DOM_LIST', 'FMT_DOM_CODE', 'FMT_LIST_LINK', 'FMT_DASHBOARD']
@@ -54,7 +198,7 @@ const diagnosticRecord = (overrides = {}) => ({
 const wire = (kind, value) => `CMS_E2E ${kind} ${JSON.stringify(value)}\n`
 const parse = line => {
   assert.ok(line.endsWith('\n'))
-  const match = /^CMS_E2E (DISCOVERY|CASE|RESULT|DIAGNOSTIC) (.+)\n$/.exec(line)
+  const match = /^CMS_E2E (DISCOVERY|CASE|RESULT|DIAGNOSTIC|TIMING|MEDIA_OBSERVATION|MEDIA_SEARCH_SIGNAL|MEDIA_UPLOAD_STATE) (.+)\n$/.exec(line)
   assert.ok(match, 'only canonical structured diagnostic lines may be emitted')
   return { kind: match[1], record: JSON.parse(match[2]) }
 }

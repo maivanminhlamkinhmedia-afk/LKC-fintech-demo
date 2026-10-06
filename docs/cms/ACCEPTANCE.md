@@ -1,6 +1,6 @@
 # Nghiệm thu thủ công — quyết định và sổ theo dõi
 
-Updated: 2026-09-28 (UTC+7).
+Updated: 2026-09-30 (UTC+7).
 Decision owner: Product Owner (Minh LKC), chỉ thị trong phiên triển khai ngày 28/09/2026.
 
 ## 1. Quyết định có hiệu lực
@@ -25,7 +25,8 @@ Từ checkpoint này:
 | CMS006-PROD-AUTH-03 | Tài khoản ngoài CMS bị chặn direct route | DEFERRED — cuối dự án | Giữ scenario, chưa đánh PASS |
 | CMS007-PROD-AUTH-01 | Sources route/list/read, owner/foreign và quyền quản lý nguồn của bài | DEFERRED — cuối dự án | CMS-007 đã deploy, staging 55 PASS, anonymous route guard PASS |
 | CMS007-PROD-AUTH-02 | Source create/update/delete/reload và tương tác token với autosave | DEFERRED — cuối dự án | Chưa thao tác production bằng tài khoản đăng nhập |
-| CMS008-MANUAL-UAT | Quản trị danh mục; chọn category/topic/tag/instrument/primary cho bài; quyền và xung đột | DEFERRED — cuối dự án, chức năng chưa implement tại checkpoint này | Không tuyên bố local/CI/browser/release PASS trước implementation |
+| CMS008-MANUAL-UAT | Quản trị danh mục; chọn category/topic/tag/instrument/primary; quyền và xung đột | DEFERRED — cuối dự án | DEPLOYED; review/CI788/staging90/cleanup13/deploy/anonymous smoke/monitoring PASS; chưa authenticated production UAT |
+| CMS009-MANUAL-UAT | Upload/thư viện PNG-JPEG, alt/caption, delete-unused, Article cover và quyền | DEFERRED — cuối dự án; SPEC READY | Chưa implementation/local/CI/staging/release; không ghi UAT PASS |
 | FUTURE-MANUAL-UAT | Các task/module tiếp theo thực sự được triển khai | DEFERRED — áp dụng khi có chức năng | Thêm case IDs theo scope thật; không tự bịa trạng thái module chưa đọc |
 
 Các ID CMS005/CMS006 được giữ để nối với release checkpoint cũ. Bảng này thay trạng thái pending/deferred hiện hành, không sửa kết quả lịch sử hay xóa các lỗi/giới hạn đã ghi.
@@ -49,4 +50,6 @@ Mục tiêu: người kiểm thử không cần đọc code vẫn làm theo đư
 - [CMS-005 release](reports/CMS-005-release-checkpoint.md)
 - [CMS-006 release](reports/CMS-006-release-checkpoint.md)
 - [CMS-007 release](reports/CMS-007-release-checkpoint.md)
+- [CMS-008 release](reports/CMS-008-release-checkpoint.md)
 - [CMS-008 spec](tasks/CMS-008.md)
+- [CMS-009 spec](tasks/CMS-009.md)

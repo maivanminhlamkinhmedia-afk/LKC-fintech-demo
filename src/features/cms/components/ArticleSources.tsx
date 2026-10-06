@@ -99,6 +99,7 @@ function SourcePanel({ initial }: { initial: ArticleSourcesSnapshot }) {
         {snapshot.canMutate && <Link href={`/creator/articles/${encodeURIComponent(snapshot.id)}/edit`}>Quay lại bài viết</Link>}
         <Link href="/creator/articles">Danh sách bài viết</Link>
         <Link href={`/creator/articles/${encodeURIComponent(snapshot.id)}/classification`}>Phân loại</Link>
+        <Link href={`/creator/articles/${encodeURIComponent(snapshot.id)}/media`}>Ảnh bìa</Link>
       </nav>
       {!snapshot.canMutate && <p role="status" data-read-only-reason={snapshot.readOnlyReason} className="rounded-xl bg-amber-50 p-4 text-amber-900">
         {snapshot.readOnlyReason === 'UNSUPPORTED_DOCUMENT'

@@ -22,7 +22,7 @@ const matches = (row, where = {}) => Object.entries(where).every(([key, value]) 
   return row[key] === value
 })
 function adapter({ delayMs = 0, serialize = false } = {}) {
-  const manifest = createFixturePlan('1123456789abcdef01234567')
+  const manifest = createFixturePlan('1123456789abcdef01234567', 3)
   const state = { user: manifest.users.map(row => ({ ...row, status: 'ACTIVE', customerProfile: null })),
     article: manifest.articles.map(row => ({ ...row, categoryId: null, editorId: null, coverMediaId: null })),
     authorProfile: [], auditLog: [], sourceReference: [],
