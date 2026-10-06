@@ -76,6 +76,13 @@ jobs:
       GOOGLE_SHEET_NEWS_TAB: "News"
       GOOGLE_SHEET_VIDEOS_TAB: "Videos"
     steps:
+      - name: Checkout workflow packaging helper
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: workflow
+          persist-credentials: false
+
       - name: Checkout pinned application source
         uses: actions/checkout@v4
         with:
@@ -87,6 +94,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git -C workflow rev-parse HEAD)" = "$GITHUB_SHA"
+          test -f workflow/scripts/cms-media/package-candidate.mjs
           test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
           test "$GITHUB_SHA" != "$SOURCE_SHA" # workflow revision is distinct from application source
           if find source -maxdepth 1 -type f -name '.env*' -print -quit | grep -q .; then echo 'source contains env files' >&2; exit 1; fi
@@ -117,50 +126,14 @@ jobs:
           node --input-type=module -e 'import{readFileSync}from"node:fs";const result=JSON.parse(readFileSync(process.argv[1],"utf8"));if(result.assembledMediaSmoke!=="PASS"||result.worker!=="PNG"||result.lifetimes!==2)process.exit(1)' "$RUNNER_TEMP/cms009-smoke.json"
           cat "$RUNNER_TEMP/cms009-smoke.json"
 
-      - name: Package candidate and provenance
+      - name: Materialize, smoke and package candidate
         shell: bash
         run: |
           set -euo pipefail
-          test -f source/.next/standalone/server.js
-          test -d source/.next/static
-          test -d source/public
-          test -f source/scripts/cms-media/smoke-standalone.mjs
-          test -f source/tests/browser-local/cms-media-lifetime-child.mjs
-          if find source/.next/standalone -type l -print -quit | grep -q .; then echo 'standalone contains symlinks' >&2; exit 1; fi
-          if find source/.next/standalone -type f -name '.env*' -print -quit | grep -q .; then echo 'standalone contains env files' >&2; exit 1; fi
-          mkdir -p candidate-package/cms009-candidate/standalone/.next candidate-package/cms009-candidate/scripts/cms-media candidate-package/cms009-candidate/tests/browser-local candidate-output
-          cp -a source/.next/standalone/. candidate-package/cms009-candidate/standalone/
-          mkdir -p candidate-package/cms009-candidate/standalone/.next/static candidate-package/cms009-candidate/standalone/public
-          cp -a source/.next/static/. candidate-package/cms009-candidate/standalone/.next/static/
-          cp -a source/public/. candidate-package/cms009-candidate/standalone/public/
-          cp source/scripts/cms-media/smoke-standalone.mjs candidate-package/cms009-candidate/scripts/cms-media/
-          cp source/tests/browser-local/cms-media-lifetime-child.mjs candidate-package/cms009-candidate/tests/browser-local/
-          if find candidate-package -type l -print -quit | grep -q .; then echo 'candidate contains symlinks' >&2; exit 1; fi
-          if find candidate-package -type f -name '.env*' -print -quit | grep -q .; then echo 'candidate contains env files' >&2; exit 1; fi
-          archive=cms009-candidate-54238cd.tar.gz
-          tar -czf "candidate-output/$archive" -C candidate-package cms009-candidate
-          (cd candidate-output && sha256sum "$archive" > "$archive.sha256" && sha256sum --check "$archive.sha256")
-          export CANDIDATE_ARCHIVE="$archive"
           export CANDIDATE_NPM_VERSION="$(npm --version)"
-          node --input-type=module <<'NODE'
-          import { readFileSync, writeFileSync } from 'node:fs'
-          const smoke = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/cms009-smoke.json`, 'utf8'))
-          if (smoke.assembledMediaSmoke !== 'PASS' || smoke.worker !== 'PNG' || smoke.lifetimes !== 2) throw new Error('CMS009_SMOKE_NOT_PASS')
-          const archive = process.env.CANDIDATE_ARCHIVE
-          const sha256 = readFileSync(`candidate-output/${archive}.sha256`, 'utf8').split(' ')[0]
-          const manifest = { schemaVersion: 1, kind: 'cms009-candidate', sourceSha: process.env.SOURCE_SHA,
-            workflowSha: process.env.GITHUB_SHA, workflowRef: process.env.GITHUB_REF,
-            runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT,
-            node: process.version, npm: process.env.CANDIDATE_NPM_VERSION,
-            archive, sha256, smoke, packagedAt: new Date().toISOString(),
-            layout: ['standalone', 'scripts/cms-media/smoke-standalone.mjs', 'tests/browser-local/cms-media-lifetime-child.mjs'] }
-          writeFileSync('candidate-output/manifest.json', JSON.stringify(manifest, null, 2) + '\n')
-          NODE
+          node workflow/scripts/cms-media/package-candidate.mjs \
+            source candidate-package candidate-output "$RUNNER_TEMP/cms009-smoke.json"
           test "$(find candidate-output -maxdepth 1 -type f | wc -l)" -eq 3
-          tar -tzf "candidate-output/$archive" > "$RUNNER_TEMP/cms009-tar-list"
-          grep -Fxq 'cms009-candidate/standalone/server.js' "$RUNNER_TEMP/cms009-tar-list"
-          grep -Fxq 'cms009-candidate/scripts/cms-media/smoke-standalone.mjs' "$RUNNER_TEMP/cms009-tar-list"
-          grep -Fxq 'cms009-candidate/tests/browser-local/cms-media-lifetime-child.mjs' "$RUNNER_TEMP/cms009-tar-list"
 
       - name: Upload verified candidate
         uses: actions/upload-artifact@v4
