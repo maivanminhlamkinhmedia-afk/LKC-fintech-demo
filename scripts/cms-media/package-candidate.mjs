@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
-  chmodSync, closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync,
+  chmodSync, closeSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync,
   readdirSync, realpathSync, statSync, writeFileSync,
 } from 'node:fs'
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const SOURCE_SHA = '54238cd55e43b60b4d8cea02a32fc98e82f7762e'
 const ARCHIVE = 'cms009-candidate-54238cd.tar.gz'
@@ -88,7 +88,19 @@ function inspect(rootPath, label) {
   return { root, links, counts }
 }
 
-function materialize(source, destination, inventory, ancestors = new Set()) {
+function destinationEntry(destination, candidateRoot) {
+  if (!inside(candidateRoot, destination)) fail('CMS009_DESTINATION_OUTSIDE_CANDIDATE')
+  const parent = dirname(destination), canonicalParent = realpathSync(parent)
+  if (!inside(candidateRoot, canonicalParent)) fail('CMS009_DESTINATION_OUTSIDE_CANDIDATE')
+  if (pathKey(canonicalParent) !== pathKey(resolve(parent))) fail('CMS009_DESTINATION_SYMLINK')
+  const entry = lstatSync(destination, { throwIfNoEntry: false })
+  if (entry?.isSymbolicLink()) fail('CMS009_DESTINATION_SYMLINK')
+  return entry
+}
+function assetConflict(code, candidateRoot, destination) {
+  fail(`${code}:${relative(candidateRoot, destination).replaceAll('\\', '/')}`)
+}
+function materialize(source, destination, inventory, candidateRoot, ancestors = new Set()) {
   const meta = lstatSync(source)
   let actual = source
   if (meta.isSymbolicLink()) {
@@ -98,18 +110,30 @@ function materialize(source, destination, inventory, ancestors = new Set()) {
     if (!inside(inventory.root, actual) || pathKey(actual) !== pathKey(recorded.target)) fail('CMS009_LINK_CHANGED')
   }
   const targetMeta = statSync(actual)
+  const existing = destinationEntry(destination, candidateRoot)
   if (targetMeta.isDirectory()) {
     const canonical = pathKey(realpathSync(actual))
     if (ancestors.has(canonical)) fail('CMS009_DIRECTORY_CYCLE')
-    mkdirSync(destination)
+    if (existing) {
+      if (!existing.isDirectory()) assetConflict('CMS009_ASSET_TYPE_CONFLICT', candidateRoot, destination)
+      if ((existing.mode & 0o777) !== (targetMeta.mode & 0o777))
+        assetConflict('CMS009_ASSET_MODE_CONFLICT', candidateRoot, destination)
+    } else mkdirSync(destination)
     const next = new Set(ancestors).add(canonical)
     for (const name of readdirSync(actual)) {
       if (envPath(name)) fail('CMS009_ENV_FILE_FOUND')
-      materialize(join(actual, name), join(destination, name), inventory, next)
+      materialize(join(actual, name), join(destination, name), inventory, candidateRoot, next)
     }
-    chmodSync(destination, targetMeta.mode & 0o777)
+    if (!existing) chmodSync(destination, targetMeta.mode & 0o777)
   } else if (targetMeta.isFile()) {
-    copyFileSync(actual, destination)
+    if (existing) {
+      if (!existing.isFile()) assetConflict('CMS009_ASSET_TYPE_CONFLICT', candidateRoot, destination)
+      if (digest(actual) !== digest(destination)) assetConflict('CMS009_ASSET_BYTES_CONFLICT', candidateRoot, destination)
+      if ((existing.mode & 0o777) !== (targetMeta.mode & 0o777))
+        assetConflict('CMS009_ASSET_MODE_CONFLICT', candidateRoot, destination)
+      return
+    }
+    copyFileSync(actual, destination, constants.COPYFILE_EXCL)
     chmodSync(destination, targetMeta.mode & 0o777)
     if (digest(actual) !== digest(destination)) fail('CMS009_COPY_BYTES_CHANGED')
     if (process.platform !== 'win32' && (statSync(destination).mode & 0o111) !== (targetMeta.mode & 0o111))
@@ -147,15 +171,17 @@ const staticAssets = inspect(join(source, '.next', 'static'), 'static')
 const publicAssets = inspect(join(source, 'public'), 'public')
 
 mkdirSync(work)
-const candidate = join(work, 'cms009-candidate')
-mkdirSync(candidate)
+const candidatePath = join(work, 'cms009-candidate')
+mkdirSync(candidatePath)
+const candidate = realpathSync(candidatePath)
 const standalone = join(candidate, 'standalone')
-materialize(bundle.root, standalone, bundle)
+materialize(bundle.root, standalone, bundle, candidate)
 mkdirSync(join(candidate, 'scripts', 'cms-media'), { recursive: true })
 mkdirSync(join(candidate, 'tests', 'browser-local'), { recursive: true })
-mkdirSync(join(standalone, '.next'), { recursive: true })
-materialize(staticAssets.root, join(standalone, '.next', 'static'), staticAssets)
-materialize(publicAssets.root, join(standalone, 'public'), publicAssets)
+if (!lstatSync(join(standalone, '.next'), { throwIfNoEntry: false })?.isDirectory())
+  fail('CMS009_CANDIDATE_LAYOUT_INVALID')
+materialize(staticAssets.root, join(standalone, '.next', 'static'), staticAssets, candidate)
+materialize(publicAssets.root, join(standalone, 'public'), publicAssets, candidate)
 copyHelper(join(source, 'scripts', 'cms-media', 'smoke-standalone.mjs'), join(candidate, 'scripts', 'cms-media', 'smoke-standalone.mjs'))
 copyHelper(join(source, 'tests', 'browser-local', 'cms-media-lifetime-child.mjs'),
   join(candidate, 'tests', 'browser-local', 'cms-media-lifetime-child.mjs'))

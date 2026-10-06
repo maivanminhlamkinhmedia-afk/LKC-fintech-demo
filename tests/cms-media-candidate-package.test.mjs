@@ -82,6 +82,130 @@ test('packages the real helper output and smokes the materialized candidate befo
   assert.match(result.stdout, /CMS009_CANDIDATE_SMOKE/)
 })
 
+test('merges public assets when standalone already contains public', t => {
+  const f = fixture(t)
+  const bundled = join(f.standalone, 'public', 'nested')
+  mkdirSync(bundled, { recursive: true })
+  writeFileSync(join(bundled, 'bundled.txt'), 'bundled-public')
+  const result = f.run()
+  assert.equal(result.status, 0, result.stderr)
+  const manifest = JSON.parse(readFileSync(join(f.output, 'manifest.json'), 'utf8'))
+  assert.equal(archiveMember(f.output, manifest.archive,
+    'cms009-candidate/standalone/public/nested/bundled.txt'), 'bundled-public')
+  assert.equal(archiveMember(f.output, manifest.archive,
+    'cms009-candidate/standalone/public/asset.txt'), 'synthetic-public\n')
+  assert.equal(readFileSync(join(bundled, 'bundled.txt'), 'utf8'), 'bundled-public')
+})
+
+test('merges static assets when standalone already contains .next/static', t => {
+  const f = fixture(t)
+  const bundled = join(f.standalone, '.next', 'static', 'nested')
+  mkdirSync(bundled, { recursive: true })
+  writeFileSync(join(bundled, 'bundled.txt'), 'bundled-static')
+  const result = f.run()
+  assert.equal(result.status, 0, result.stderr)
+  const manifest = JSON.parse(readFileSync(join(f.output, 'manifest.json'), 'utf8'))
+  assert.equal(archiveMember(f.output, manifest.archive,
+    'cms009-candidate/standalone/.next/static/nested/bundled.txt'), 'bundled-static')
+  assert.equal(archiveMember(f.output, manifest.archive,
+    'cms009-candidate/standalone/.next/static/asset.txt'), 'synthetic-static\n')
+  assert.equal(readFileSync(join(bundled, 'bundled.txt'), 'utf8'), 'bundled-static')
+})
+
+test('merges both asset trees with nested directories and identical duplicate files', t => {
+  const f = fixture(t)
+  for (const [name, sourceRoot, bundledRoot] of [
+    ['public', join(f.source, 'public'), join(f.standalone, 'public')],
+    ['static', join(f.source, '.next', 'static'), join(f.standalone, '.next', 'static')],
+  ]) {
+    mkdirSync(join(sourceRoot, 'nested'), { recursive: true })
+    mkdirSync(join(bundledRoot, 'nested'), { recursive: true })
+    writeFileSync(join(sourceRoot, 'nested', 'same.txt'), `${name}-same`)
+    writeFileSync(join(bundledRoot, 'nested', 'same.txt'), `${name}-same`)
+    writeFileSync(join(sourceRoot, 'nested', 'source-only.txt'), `${name}-source`)
+    writeFileSync(join(bundledRoot, 'nested', 'bundle-only.txt'), `${name}-bundle`)
+  }
+  const result = f.run()
+  assert.equal(result.status, 0, result.stderr)
+  const manifest = JSON.parse(readFileSync(join(f.output, 'manifest.json'), 'utf8'))
+  for (const [name, path] of [['public', 'public'], ['static', '.next/static']]) {
+    const prefix = `cms009-candidate/standalone/${path}/nested/`
+    assert.equal(archiveMember(f.output, manifest.archive, `${prefix}same.txt`), `${name}-same`)
+    assert.equal(archiveMember(f.output, manifest.archive, `${prefix}source-only.txt`), `${name}-source`)
+    assert.equal(archiveMember(f.output, manifest.archive, `${prefix}bundle-only.txt`), `${name}-bundle`)
+  }
+  assert.equal(readFileSync(join(f.source, 'public', 'nested', 'same.txt'), 'utf8'), 'public-same')
+  assert.equal(readFileSync(join(f.standalone, '.next', 'static', 'nested', 'same.txt'), 'utf8'), 'static-same')
+  assert.match(result.stdout, /CMS009_CANDIDATE_SMOKE/)
+})
+
+test('rejects different bytes at an overlapping asset path without overwriting either source', t => {
+  const f = fixture(t), bundled = join(f.standalone, 'public', 'asset.txt')
+  mkdirSync(join(f.standalone, 'public'))
+  writeFileSync(bundled, 'different-bundled-bytes')
+  const result = f.run()
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /CMS009_ASSET_BYTES_CONFLICT:standalone\/public\/asset\.txt/)
+  assert.equal(readFileSync(bundled, 'utf8'), 'different-bundled-bytes')
+  assert.equal(readFileSync(join(f.source, 'public', 'asset.txt'), 'utf8'), 'synthetic-public\n')
+  assert.equal(readFileSync(join(f.work, 'cms009-candidate', 'standalone', 'public', 'asset.txt'), 'utf8'),
+    'different-bundled-bytes')
+  assert.equal(existsSync(f.output), false)
+})
+
+test('rejects file-versus-directory overlap without publishing an archive', t => {
+  const f = fixture(t), bundled = join(f.standalone, 'public', 'asset.txt')
+  mkdirSync(bundled, { recursive: true })
+  writeFileSync(join(bundled, 'keep.txt'), 'keep-bundled')
+  const result = f.run()
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /CMS009_ASSET_TYPE_CONFLICT:standalone\/public\/asset\.txt/)
+  assert.equal(readFileSync(join(bundled, 'keep.txt'), 'utf8'), 'keep-bundled')
+  assert.ok(lstatSync(join(f.work, 'cms009-candidate', 'standalone', 'public', 'asset.txt')).isDirectory())
+  assert.equal(existsSync(f.output), false)
+})
+
+test('rejects directory-versus-file overlap without publishing an archive', t => {
+  const f = fixture(t), bundled = join(f.standalone, '.next', 'static', 'nested')
+  mkdirSync(join(f.standalone, '.next', 'static'), { recursive: true })
+  writeFileSync(bundled, 'bundled-file')
+  mkdirSync(join(f.source, '.next', 'static', 'nested'))
+  writeFileSync(join(f.source, '.next', 'static', 'nested', 'asset.txt'), 'source-file')
+  const result = f.run()
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /CMS009_ASSET_TYPE_CONFLICT:standalone\/\.next\/static\/nested/)
+  assert.equal(readFileSync(bundled, 'utf8'), 'bundled-file')
+  assert.equal(readFileSync(join(f.source, '.next', 'static', 'nested', 'asset.txt'), 'utf8'), 'source-file')
+  assert.equal(existsSync(f.output), false)
+})
+
+test('rejects duplicate asset permissions that differ instead of changing either file', t => {
+  const f = fixture(t), bundled = join(f.standalone, 'public', 'asset.txt')
+  mkdirSync(join(f.standalone, 'public'))
+  writeFileSync(bundled, 'synthetic-public\n')
+  chmodSync(bundled, 0o444)
+  const originalMode = statSync(bundled).mode & 0o777
+  const result = f.run()
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /CMS009_ASSET_MODE_CONFLICT:standalone\/public\/asset\.txt/)
+  assert.equal(statSync(bundled).mode & 0o777, originalMode)
+  assert.equal(readFileSync(bundled, 'utf8'), 'synthetic-public\n')
+  assert.equal(existsSync(f.output), false)
+})
+
+test('rejects pre-existing work and output trees before writing a candidate', t => {
+  for (const blocked of ['work', 'output']) {
+    const f = fixture(t), path = f[blocked]
+    mkdirSync(path)
+    writeFileSync(join(path, 'keep.txt'), `${blocked}-untouched`)
+    const result = f.run()
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /CMS009_PACKAGE_PATH_INVALID/)
+    assert.equal(readFileSync(join(path, 'keep.txt'), 'utf8'), `${blocked}-untouched`)
+    assert.equal(existsSync(blocked === 'work' ? f.output : f.work), false)
+  }
+})
+
 test('internal file link becomes identical bytes and retains executable mode', t => {
   const f = fixture(t), target = join(f.standalone, 'target.txt')
   writeFileSync(target, 'linked-bytes')
