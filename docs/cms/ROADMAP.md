@@ -1,15 +1,17 @@
 # LKC Financial Publishing — roadmap và checkpoint
 
-Updated: 2026-09-30 (UTC+7)
+Updated: 2026-10-06 (UTC+7)
 
 Repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo.
 Nguồn: bàn giao Product Owner, GitHub và các báo cáo triển khai trong phiên. Checkpoint mới thay thế trạng thái cũ; giữ báo cáo lịch sử, không chạy lại gate đã hoàn tất chỉ vì tài liệu cũ còn pending.
 
-**CMS-001..004 COMPLETE; CMS-005..008 DEPLOYED về kỹ thuật.** Manual authenticated UAT vẫn DEFERRED tới cuối dự án theo PO, không phải PASS và không chặn roadmap; xem [ACCEPTANCE](ACCEPTANCE.md).
+**CMS-001..004 COMPLETE; CMS-005..009 DEPLOYED về kỹ thuật.** Manual authenticated UAT vẫn DEFERRED tới cuối dự án theo PO, không phải PASS và không chặn roadmap; xem [ACCEPTANCE](ACCEPTANCE.md).
 
 **CMS-008 đã phát hành:** PR23 merged, main 89269dc806a9800f6582ea1a37a909aa60c944cd. Tested head3a5b135ac94a34bc21708cf232981ca452aa01ea; CI36582559834 SUCCESS với788tests; staging Claude thực chạy/PO cung cấp90/90PASS, runId33b5edd2e7ebaafd3070f220 / BUILD_ID XYB-lSk-r07z_FlL16mnx,13zero/exit0/VERIFIED. Deploy36592082460 SUCCESS đúng actual merge; anonymous9/9 và monitoring12/12 trong304giây PASS trong phạm vi báo cáo. Nguồn/giới hạn và lịch sử tại [release checkpoint](reports/CMS-008-release-checkpoint.md). CMS-008 chưa COMPLETE.
 
-**Bước hiện tại: CMS-009 — Media library, LOCAL REVIEW-FIX HANDOFF.** Branch `feature/cms-009-media-library` từ main `89269dc…`, checkpoint tài liệu `b68f83f…`. [Spec40AC/36MED](tasks/CMS-009.md), [handoff Codex](tasks/CMS-009-IMPLEMENTATION.md), [storage runbook](operations/cms009-media-storage.md), [báo cáo implementation](reports/CMS-009-implementation.md), [báo cáo sửa sau review](reports/CMS-009-review-fixes.md). Claude independent review do Product Owner cung cấp đã xác định BUG-001 và các khoảng trống kiểm chứng; bản sửa local cần Claude delta review. CI/browser staging NOT RUN. Production storage chưa provision/verify; manual authenticated production UAT DEFERRED. Không đánh dấu COMPLETE.
+**CMS-009 đã merge/deploy kỹ thuật:** PR #24, main `5cbe3b8e0b456e701f7d9be820b94803546e98b4`, deploy `37412037374` SUCCESS. Staging 122/122 PASS thuộc application commit `12cc768…`; các commit tiếp theo là tooling/operations, không được gọi là lượt staging mới. Chi tiết provenance và manual smoke còn DEFERRED ở checkpoint 06/10 phía dưới.
+
+**Bước hiện tại: CMS-010 — Preview, SPEC READY.** Branch `feature/cms-010-preview` từ main `5cbe3b8e…`. [Spec 28 AC/24 scenario groups](tasks/CMS-010.md), [handoff Codex](tasks/CMS-010-IMPLEMENTATION.md). Trang preview riêng tư của bản đã lưu, dùng read scope hiện có; link editor mở tab mới, không force save hoặc làm mất input. Implementation/local validation/Claude review/CI/staging CMS-010 **NOT RUN** tại checkpoint tài liệu. Bước tiếp theo là Codex implementation + local validation, diff UNSTAGED cho Claude.
 
 ## Quy trình delivery
 
@@ -31,8 +33,8 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 | CMS-006 | Autosave | DEPLOYED; CI 493/staging 36/cleanup/release PASS; manual authenticated UAT/autosave DEFERRED theo PO ngày 28/09; chưa COMPLETE |
 | CMS-007 | Sources/citations | DEPLOYED; CI 612 / staging 55 / cleanup 5 counters bằng 0 / deploy/anonymous smoke/monitoring PASS; manual authenticated UAT DEFERRED; chưa COMPLETE |
 | CMS-008 | Category/Topic/Tags/Instruments | DEPLOYED; CI788/staging90/cleanup13/deploy/anonymous smoke/monitoring PASS; manual UAT DEFERRED; chưa COMPLETE |
-| CMS-009 | Media library | LOCAL REVIEW-FIX HANDOFF; 40AC/36MED cập nhật trong delta report; Claude delta review/CI/staging NOT RUN; production root gate pending |
-| CMS-010 | Preview | Planned |
+| CMS-009 | Media library | DEPLOYED kỹ thuật; CI884 pass/1 OS skip, staging122 PASS với provenance riêng, storage/cPanel/deploy/anonymous smoke đạt trong phạm vi ghi nhận; manual authenticated smoke/UAT và cleanup dữ liệu thử còn DEFERRED; chưa COMPLETE |
+| CMS-010 | Preview | SPEC READY; 28 AC/24 scenario groups; Codex implementation + local validation tiếp theo; manual authenticated smoke/UAT DEFERRED cuối dự án |
 | CMS-011 | Editorial review workflow | Planned |
 | CMS-012 | Fact-check/request changes | Planned |
 | CMS-013 | Revision history | Planned |
@@ -43,6 +45,20 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 | CMS-018 | Audit integration | Planned |
 | CMS-019 | Search/archive/related | Planned |
 | CMS-020 | Playwright RBAC + editorial workflow full regression | Planned; nền tảng CMS-005 đã staging 20/20 PASS; không thay thế full workflow regression CMS-020 |
+
+## CMS-009 → CMS-010: checkpoint hiện hành 2026-10-06
+
+PO yêu cầu triển khai CMS-010 và nhắc lại: **xây xong CMS rồi thuê người kiểm thử thủ công**. Không yêu cầu PO tiếp tục nhận diện asset ID, reload/upload/delete hoặc đăng nhập production để mở khóa module tiếp theo. Manual smoke/UAT chưa hoàn tất được ghi DEFERRED trong [ACCEPTANCE](ACCEPTANCE.md); không ghi cleanup hoặc UAT PASS.
+
+- [PR #24](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/pull/24) CMS-009 đã merge. Merge SHA `5cbe3b8e0b456e701f7d9be820b94803546e98b4`, parents base `89269dc806a9800f6582ea1a37a909aa60c944cd` và reviewed head `71ffe1b8a1f18e01c93c39611f159203c7990aed`. Đọc GitHub xác nhận main tại merge SHA khi chuẩn bị CMS-010.
+- [CI 37406339060](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/actions/runs/37406339060) của head71ffe SUCCESS: 884 PASS, 0 FAIL, 1 SKIP dành cho non-Linux guard; lint/TypeScript/production build PASS. Không phải lượt CI của CMS-010.
+- Automated staging run `0eef9d35cac6974f60d87472`, BUILD_ID `b7rCcIw1R9peW_MGUugbL`, **122/122** (EDIT20/AUTO16/SRC19/TAX35/MED32), exit0, VERIFIED và 19 cleanup counters zero. Commit thực chạy `12cc768b1316d0af992a69a6e77f6a556e724d26`. Bằng chứng operator khởi chạy, Claude theo dõi, Codex đọc log do PO cung cấp; không nhận là người viết spec tự chạy lại. Giữ mọi staging FAIL lịch sử.
+- Các thay đổi sau staging tới head71ffe chỉ thuộc production-storage tooling/tests, candidate packaging/workflow và docs. Không suy BUILD_ID candidate hoặc commit docs thành staging provenance mới. Nguồn browser abort cũ vẫn chưa được xác định; không mở lại điều tra như blocker khi gate đúng kết quả đã PASS.
+- Private root đã provision/probe và sentinel verify; VinaHost xác nhận account/private path/body-limit/backup policy. Selector đã lưu CMS_MEDIA_ROOT. Candidate Actions/cPanel media smoke PASS trong phạm vi PNG worker và hai process lifetime; không nhận thành authenticated full media UAT.
+- [Deploy 37412037374](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/actions/runs/37412037374) push-main đúng merge SUCCESS, gồm SSH deploy. Theo báo cáo phát hành do PO cung cấp: live BUILD_ID `Z2yONLXFhWv1xLCBu6UM1`; anonymous Chromium homepage/login PASS; sentinel identity/hash sống qua deploy; synthetic smoke trên live bundle bằng Passenger Node22.18.0 PASS, không DB/private-root writes.
+- Production PNG/JPEG smoke đã có một phần bằng chứng UI và committed receipt/object trong approved root. Đối chiếu chính xác hai thẻ UI với asset ID, các bước read/reload và cleanup còn chưa hoàn tất. Chuyển phần manual đó sang **DEFERRED**; dữ liệu thử và sentinel giữ nguyên, không dọn như bước mở đầu CMS-010. Hồ sơ chi tiết ở vùng vận hành riêng của PO, không đưa credential/session vào Git.
+- CMS-010 không migration/dependency hoặc storage release change. Không tạo thêm candidate bundle/provision/checklist hạ tầng CMS-009 cho một preview chỉ đọc nếu không có delta liên quan. Local → Claude → PR/CI → automated full122+N staging → final triage → merge/deploy → anonymous smoke/monitoring vẫn đầy đủ.
+- Checkpoint này thêm spec/handoff và cập nhật trạng thái, **không có product implementation CMS-010**. Tài liệu lịch sử và giới hạn bằng chứng vẫn được giữ.
 
 ## CMS-008: checkpoint implementation lịch sử 2026-09-29
 
