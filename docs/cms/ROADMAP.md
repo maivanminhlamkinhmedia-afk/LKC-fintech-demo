@@ -11,7 +11,7 @@ Nguồn: bàn giao Product Owner, GitHub và các báo cáo triển khai trong p
 
 **CMS-009 đã merge/deploy kỹ thuật:** PR #24, main `5cbe3b8e0b456e701f7d9be820b94803546e98b4`, deploy `37412037374` SUCCESS. Staging 122/122 PASS thuộc application commit `12cc768…`; các commit tiếp theo là tooling/operations, không được gọi là lượt staging mới. Chi tiết provenance và manual smoke còn DEFERRED ở checkpoint 06/10 phía dưới.
 
-**Bước hiện tại: CMS-010 — Preview, SPEC READY.** Branch `feature/cms-010-preview` từ main `5cbe3b8e…`. [Spec 28 AC/24 scenario groups](tasks/CMS-010.md), [handoff Codex](tasks/CMS-010-IMPLEMENTATION.md). Trang preview riêng tư của bản đã lưu, dùng read scope hiện có; link editor mở tab mới, không force save hoặc làm mất input. Implementation/local validation/Claude review/CI/staging CMS-010 **NOT RUN** tại checkpoint tài liệu. Bước tiếp theo là Codex implementation + local validation, diff UNSTAGED cho Claude.
+**Bước hiện tại: CMS-010 — Preview, LOCAL IMPLEMENTATION.** Branch `feature/cms-010-preview` từ main `5cbe3b8e…`. [Spec 28 AC/24 scenario groups](tasks/CMS-010.md), [handoff Codex](tasks/CMS-010-IMPLEMENTATION.md), [báo cáo local](reports/CMS-010-implementation.md). Route preview riêng tư và read-only, renderer schema v1, links từ editor/list và 19 PREV registrations đã được triển khai; discovery 141 case. Local tests/validation ghi trong báo cáo; PREV-11 browser coverage mới chờ Claude regression review, CI/browser staging **NOT RUN**. Diff còn UNSTAGED để review, chưa ghi CMS-010 COMPLETE.
 
 ## Quy trình delivery
 
@@ -34,7 +34,7 @@ Codex implementation và Claude Code review chạy trong VS Code theo cách làm
 | CMS-007 | Sources/citations | DEPLOYED; CI 612 / staging 55 / cleanup 5 counters bằng 0 / deploy/anonymous smoke/monitoring PASS; manual authenticated UAT DEFERRED; chưa COMPLETE |
 | CMS-008 | Category/Topic/Tags/Instruments | DEPLOYED; CI788/staging90/cleanup13/deploy/anonymous smoke/monitoring PASS; manual UAT DEFERRED; chưa COMPLETE |
 | CMS-009 | Media library | DEPLOYED kỹ thuật; CI884 pass/1 OS skip, staging122 PASS với provenance riêng, storage/cPanel/deploy/anonymous smoke đạt trong phạm vi ghi nhận; manual authenticated smoke/UAT và cleanup dữ liệu thử còn DEFERRED; chưa COMPLETE |
-| CMS-010 | Preview | SPEC READY; 28 AC/24 scenario groups; Codex implementation + local validation tiếp theo; manual authenticated smoke/UAT DEFERRED cuối dự án |
+| CMS-010 | Preview | LOCAL IMPLEMENTATION; 28 AC/24 scenario groups mapped, discovery 122+19; independent review PASS do PO cung cấp cho bản trước PREV-11 delta; delta chờ Claude regression review; CI/staging NOT RUN; manual authenticated smoke/UAT DEFERRED cuối dự án |
 | CMS-011 | Editorial review workflow | Planned |
 | CMS-012 | Fact-check/request changes | Planned |
 | CMS-013 | Revision history | Planned |

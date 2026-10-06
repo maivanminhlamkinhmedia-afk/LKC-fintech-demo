@@ -12,6 +12,7 @@ const autosaveFile = 'tests/e2e/cms-autosave.spec.ts'
 const sourcesFile = 'tests/e2e/cms-sources.spec.ts'
 const taxonomyFile = 'tests/e2e/cms-taxonomy.spec.ts'
 const mediaFile = 'tests/e2e/cms-media.spec.ts'
+const previewFile = 'tests/e2e/cms-preview.spec.ts'
 const mediaTeardownSteps = ['MED_TEARDOWN_CONTEXT_CLOSE', 'MED_TEARDOWN_RECOVER', 'MED_TEARDOWN_DISCONNECT']
 export const MEDIA_ERROR_CODES = Object.freeze([
   'VALIDATION_ERROR', 'UNSUPPORTED_MEDIA', 'FILE_TOO_LARGE', 'IMAGE_LIMIT_EXCEEDED', 'MEDIA_BUSY',
@@ -141,6 +142,25 @@ const definitions = [
   ['MED-23-DELETE', 'MED-23 committed delete with lost ACK does not recreate the row or resend', mediaFile, ['MED_DELETE_LOST_ACK']],
   ['MED-23-COVER', 'MED-23 committed cover with lost ACK keeps the chosen asset until explicit reload', mediaFile, ['MED_COVER_LOST_ACK']],
   ['MED-26', 'MED-26 legacy media is read-only and a current cover can be retained or cleared without external fetch', mediaFile, ['MED_LEGACY_MEDIA']],
+  ['PREV-01', 'PREV-01 anonymous direct preview has no saved article marker', previewFile, ['PREV_ANON']],
+  ['PREV-02', 'PREV-02 non-CMS roles cannot open preview', previewFile, ['PREV_NON_CMS']],
+  ['PREV-03', 'PREV-03 creator sees own and foreign missing invalid paths reveal no article', previewFile, ['PREV_SCOPE']],
+  ['PREV-04', 'PREV-04 admin and super read foreign draft without reassigning author', previewFile, ['PREV_ANY_SCOPE']],
+  ['PREV-05', 'PREV-05 all ten saved statuses remain readable but editing policy stays separate', previewFile, ['PREV_STATUSES']],
+  ['PREV-06', 'PREV-06 fresh actor and owner changes revoke a later preview request', previewFile, ['PREV_REVOKE']],
+  ['PREV-07/08/12', 'PREV-07/08/12 header uses saved time and missing profile and empty data have fallbacks', previewFile, ['PREV_HEADER_EMPTY']],
+  ['PREV-10', 'PREV-10 unsupported editor schema is safe and does not mutate Article', previewFile, ['PREV_UNSUPPORTED']],
+  ['PREV-09/16/17/20', 'PREV-09/16/17/20 saved Vietnamese rich text and source render after reload without private note', previewFile, ['PREV_SAVED_CONTENT']],
+  ['PREV-11', 'PREV-11 hostile saved metadata and links neither execute nor auto-request external resources', previewFile, ['PREV_XSS_NETWORK']],
+  ['PREV-13/14/15', 'PREV-13/14/15 attached foreign-uploader private PNG renders while unrelated bytes deny and load failure falls back', previewFile, ['PREV_PRIVATE_COVER']],
+  ['PREV-13-JPEG', 'PREV-13 real JPEG upload and Article cover remain readable in saved preview', previewFile, ['PREV_JPEG_COVER']],
+  ['PREV-15-LEGACY', 'PREV-15 legacy cover never requests its external URL', previewFile, ['PREV_LEGACY_COVER']],
+  ['PREV-16', 'PREV-16 saved category topic tag instrument and primary survive preview read without mutation', previewFile, ['PREV_CLASSIFICATION']],
+  ['PREV-17/18', 'PREV-17/18 list and persisted editor link open saved preview without replacing editor', previewFile, ['PREV_LINKS']],
+  ['PREV-19', 'PREV-19 dirty editor stays intact while preview reads the persisted title', previewFile, ['PREV_DIRTY_TAB']],
+  ['PREV-21', 'PREV-21 GET and reload leave persisted Article unchanged', previewFile, ['PREV_NO_WRITE']],
+  ['PREV-22', 'PREV-22 private HTML has noindex and does not advertise draft metadata', previewFile, ['PREV_PRIVACY']],
+  ['PREV-23', 'PREV-23 long saved content remains within responsive app viewport', previewFile, ['PREV_LAYOUT']],
 ].map(([caseId, title, file = draftFile, steps = []]) => Object.freeze({ caseId, title, file,
   steps: Object.freeze(file === sourcesFile ? [...steps, ...sourceTeardownSteps]
     : file === mediaFile ? [...steps, ...mediaTeardownSteps] : steps) }))
@@ -157,7 +177,7 @@ export const MAX_TIMING_MS = 3_600_000
 function sourceFile(file) {
   if (typeof file !== 'string' || file.length > 4096) return null
   const candidate = (isAbsolute(file) ? relative(repositoryRoot, file) : file).replaceAll('\\', '/')
-  return [draftFile, safetyFile, autosaveFile, sourcesFile, taxonomyFile, mediaFile].includes(candidate) ? candidate : null
+  return [draftFile, safetyFile, autosaveFile, sourcesFile, taxonomyFile, mediaFile, previewFile].includes(candidate) ? candidate : null
 }
 
 export function diagnosticCase(test) {

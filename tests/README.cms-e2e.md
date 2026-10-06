@@ -1,11 +1,21 @@
-# CMS staging E2E — CMS-005 through CMS-008
+# CMS staging E2E — CMS-005 through CMS-010
+
+CMS-010 local implementation checkpoint (2026-10-06): manifest v4 remains in force,
+with the same 19 exact DB/filesystem cleanup counters and guarded runner. Preview
+adds 19 registered `PREV` browser cases in `cms-preview.spec.ts`: discovery is
+**141 = 122 EDIT/AUTO/SRC/TAX/MED baseline + 19 PREV**. Discovery executes no
+browser or database work; the 19 preview cases and full 141-case staging suite
+are **NOT RUN** until independent review and CI. The preview tests use existing
+fixture articles, catalog/media helpers and source journals. They do not create
+AuthorProfile fixtures or widen manifest v4 cleanup authority. Manual authenticated
+production UAT remains **DEFERRED** by the Product Owner.
 
 This is a **staging-only** harness. Local implementation/review runs unit mocks,
 lint/type checks and discovery only. No database, browser installation, tunnel or
 staging run is part of local validation. CMS-004 fixtures were already cleaned;
 do not run its cleanup script or recreate its accounts.
 
-Current implementation checkpoint: **CMS-008 local**, new manifest **v3** and
+Historical CMS-008 implementation checkpoint: **CMS-008 local**, new manifest **v3** and
 **90 discovered cases = 55 baseline + 35 TAX**. This is discovery only;
 CMS-008 browser/MariaDB/real cleanup are **NOT RUN**. Prior CMS-007 release
 evidence remains historical. Manual production UAT for the project is

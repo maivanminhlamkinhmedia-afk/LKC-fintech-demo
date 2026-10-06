@@ -268,6 +268,9 @@ function DraftFormInstance({ initial }: { initial?: DraftEditorData }) {
       <div className="flex flex-wrap items-center gap-3">
         <button type="submit" disabled={locked || !ready || cannotUpdate} className="rounded-xl bg-[#167563] px-5 py-3 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 disabled:cursor-not-allowed disabled:opacity-50">Lưu nháp</button>
         <Link href="/creator/articles" className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium">Danh sách bài viết</Link>
+        {initial ? <Link href={`/creator/articles/${encodeURIComponent(initial.id)}/preview`} target="_blank" rel="noopener noreferrer"
+          prefetch={false} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-emerald-600">Xem bản đã lưu</Link>
+          : <p className="text-sm text-slate-600">Lưu nháp lần đầu trước khi xem bản đã lưu.</p>}
         {initial ? <Link href={`/creator/articles/${encodeURIComponent(initial.id)}/sources`} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium">Nguồn tham khảo</Link>
           : <p className="text-sm text-slate-600">Lưu nháp trước khi thêm nguồn</p>}
         {initial ? <Link href={`/creator/articles/${encodeURIComponent(initial.id)}/classification`} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium">Phân loại</Link>
@@ -282,6 +285,7 @@ function DraftFormInstance({ initial }: { initial?: DraftEditorData }) {
           }
         }}>Tải lại bản mới nhất</button>}
       </div>
+      {initial && <p className="text-sm text-slate-600">Bản xem trước chỉ hiển thị nội dung đã lưu. Thay đổi chưa lưu trong tab này không xuất hiện; trình soạn thảo vẫn tự lưu như thường lệ.</p>}
     </form>
   )
 }

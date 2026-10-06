@@ -37,6 +37,7 @@ export default async function ArticleListPage({ searchParams }: {
                     <p className="text-xs text-slate-500"><time dateTime={article.updatedAt.toISOString()}>{article.updatedAt.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}</time> · {article.status}</p>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
+                  <Link href={`/creator/articles/${encodeURIComponent(article.id)}/preview`} prefetch={false} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Xem trước</Link>
                   <Link href={`/creator/articles/${encodeURIComponent(article.id)}/sources`} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Nguồn tham khảo</Link>
                   <Link href={`/creator/articles/${encodeURIComponent(article.id)}/classification`} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Phân loại</Link>
                   <Link href={`/creator/articles/${encodeURIComponent(article.id)}/media`} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium">Ảnh bìa</Link>
