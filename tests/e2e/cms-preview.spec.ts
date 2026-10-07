@@ -82,7 +82,14 @@ async function findListPreview(page: Page, id: string, traceSubmitted = false) {
     }
     const next = page.getByRole('link', { name: 'Trang sau' })
     demand(await observe('PREV_SUBMITTED_LIST_NEXT_COUNT', () => next.count()) === 1, 'PREVIEW_LIST_LINK_NOT_FOUND')
+    const nextPage = index + 2
+    await observe('PREV_SUBMITTED_LIST_NEXT_TARGET', () => expect(next).toHaveAttribute('href', `/creator/articles?page=${nextPage}`))
     await observe('PREV_SUBMITTED_LIST_NEXT_CLICK', () => next.click())
+    await observe('PREV_SUBMITTED_LIST_PAGE_ADVANCED', async () => {
+      await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe(String(nextPage))
+      await expect(page.getByRole('navigation', { name: 'Phân trang bài viết' }).locator('span'))
+        .toHaveText(new RegExp(`^Trang ${nextPage} / \\d+$`))
+    })
   }
   throw new Error('PREVIEW_LIST_PAGE_LIMIT')
 }

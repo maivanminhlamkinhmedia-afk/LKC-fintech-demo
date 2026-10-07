@@ -1,7 +1,7 @@
 import { isAbsolute, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { StringDecoder } from 'node:string_decoder'
-import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS, TAX_TIMING_BODIES, TAX_TIMING_HOOKS } from './taxonomy-diagnostics.mjs'
+import { TAXONOMY_CASES, TAX_TOKEN_STEPS, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS, TAX_TIMING_BODIES, TAX_TIMING_HOOKS } from './taxonomy-diagnostics.mjs'
 import { MEDIA_SEARCH_SIGNALS, MEDIA_SEARCH_FAILURE_CODES } from './media-search-observation.ts'
 import { UPLOAD_STAGES } from './media-upload-failure-state.ts'
 
@@ -107,7 +107,7 @@ const definitions = [
   ['SRC-21', 'SRC-21 editor source links retain the autosave navigation guard', sourcesFile, ['SRC_EDITOR_LINKS']],
   ['SRC-23', 'SRC-23 source form labels keyboard errors and long URLs fit all viewports', sourcesFile, ['SRC_ACCESSIBLE_LAYOUT']],
   ...TAXONOMY_CASES.map(([id, title, step]) => [id, title, taxonomyFile,
-    [step, ...(id === 'TAX-10/11' ? TAX_ROUNDTRIP_STEPS : []),
+    [step, ...(id === 'TAX-06' ? TAX_TOKEN_STEPS : []), ...(id === 'TAX-10/11' ? TAX_ROUNDTRIP_STEPS : []),
       ...(Object.hasOwn(TAX_TIMING_BODIES, id) ? [...TAX_TEARDOWN_STEPS, ...TAX_GRAPH_STEPS] : [])]]),
   ['MED-01', 'MED-01 protected media routes and bytes enforce role and article scope', mediaFile, ['MED_ACCESS']],
   ['MED-02/05/10', 'MED-02/05/10 PNG and JPEG upload persist canonical private bytes and protected GET HEAD', mediaFile, ['MED_UPLOAD_CANONICAL']],
@@ -159,7 +159,8 @@ const definitions = [
   ['PREV-17/18', 'PREV-17/18 list and persisted editor link open saved preview without replacing editor', previewFile,
     ['PREV_LINKS', 'PREV_LINK_OWN_LIST', 'PREV_LINK_SUBMITTED_LIST', 'PREV_SUBMITTED_LIST_GOTO',
       'PREV_SUBMITTED_LIST_LINK_COUNT', 'PREV_SUBMITTED_LIST_LINK_VISIBLE', 'PREV_SUBMITTED_LIST_NEXT_COUNT',
-      'PREV_SUBMITTED_LIST_NEXT_CLICK', 'PREV_SUBMITTED_LIST_NO_EDIT', 'PREV_LINK_NEW', 'PREV_LINK_EDITOR', 'PREV_LINK_POPUP']],
+      'PREV_SUBMITTED_LIST_NEXT_TARGET', 'PREV_SUBMITTED_LIST_NEXT_CLICK', 'PREV_SUBMITTED_LIST_PAGE_ADVANCED',
+      'PREV_SUBMITTED_LIST_NO_EDIT', 'PREV_LINK_NEW', 'PREV_LINK_EDITOR', 'PREV_LINK_POPUP']],
   ['PREV-19', 'PREV-19 dirty editor stays intact while preview reads the persisted title', previewFile, ['PREV_DIRTY_TAB']],
   ['PREV-21', 'PREV-21 GET and reload leave persisted Article unchanged', previewFile, ['PREV_NO_WRITE']],
   ['PREV-22', 'PREV-22 private HTML has noindex and does not advertise draft metadata', previewFile, ['PREV_PRIVACY']],

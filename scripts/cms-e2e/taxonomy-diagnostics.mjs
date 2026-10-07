@@ -31,6 +31,13 @@ export const TAXONOMY_CASES = [
 ].map(row => Object.freeze(row))
 Object.freeze(TAXONOMY_CASES)
 
+// TAX-06 only: fixed request/response/UI phases identify where the losing
+// action stopped without reporting the catalog identity, URL or response body.
+export const TAX_TOKEN_STEPS = Object.freeze([
+  'TAX_TOKEN_LOSER_CLICK', 'TAX_TOKEN_LOSER_POST', 'TAX_TOKEN_LOSER_RESPONSE',
+  'TAX_TOKEN_LOSER_HTTP_OK', 'TAX_TOKEN_LOSER_ANY_ERROR', 'TAX_TOKEN_LOSER_CONFLICT',
+])
+
 // TAX-10/11 only: static phase names disambiguate helper polls without exposing
 // their raw errors, action data, fixture IDs or database snapshots.
 export const TAX_ROUNDTRIP_STEPS = Object.freeze([
