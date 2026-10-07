@@ -3,7 +3,7 @@ import test from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { formatDiagnosticRecord, createDiagnosticOutputFilter, diagnosticCase } from '../scripts/cms-e2e/diagnostics.mjs'
 import SafeReporter from './e2e/safe-reporter.mjs'
-import { TAXONOMY_CASES, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS } from '../scripts/cms-e2e/taxonomy-diagnostics.mjs'
+import { TAXONOMY_CASES, TAX_TOKEN_STEPS, TAX_ROUNDTRIP_STEPS, TAX_TEARDOWN_STEPS, TAX_GRAPH_STEPS } from '../scripts/cms-e2e/taxonomy-diagnostics.mjs'
 
 // Pure synthetic reporter/stream callbacks only. No Playwright runner, browser,
 // app, credential lookup, environment file or database is initialized here.
@@ -713,7 +713,7 @@ test('TAX registry covers every static and expanded actual case with exact contr
   assert.equal(titles.length, 35)
   assert.equal(new Set(TAXONOMY_CASES.map(row => row[0])).size, 35)
   const steps = [...new Set([...source.matchAll(/test\.step\('([^']+)'/g)].map(match => match[1]))].sort()
-  assert.deepEqual(steps, [...new Set([...TAXONOMY_CASES.map(row => row[2]), ...TAX_ROUNDTRIP_STEPS,
+  assert.deepEqual(steps, [...new Set([...TAXONOMY_CASES.map(row => row[2]), ...TAX_TOKEN_STEPS, ...TAX_ROUNDTRIP_STEPS,
     ...TAX_TEARDOWN_STEPS, ...TAX_GRAPH_STEPS])].sort())
 })
 
@@ -738,6 +738,17 @@ test('TAX reporter retains failed assertions and filters unsafe titles files ste
     assert.equal(parse(lines.at(-1)).record.caseId, 'UNKNOWN_CASE')
   }
   filter.end(); assert.equal(lines.join('').includes(PRIVATE), false)
+})
+
+test('TAX-06 loser phases are allowlisted only for its exact case without raw action data', () => {
+  const [caseId] = TAXONOMY_CASES.find(row => row[0] === 'TAX-06')
+  const record = { caseId, status: 'failed', testLocation: location(TAXONOMY_FILE),
+    stepLocation: null, assertionLocation: null, assertionSource: null }
+  for (const stepCode of TAX_TOKEN_STEPS) {
+    assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...record, stepCode })?.includes(stepCode), true)
+    assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...record, caseId: 'TAX-07', stepCode }), null)
+    assert.equal(formatDiagnosticRecord('DIAGNOSTIC', { ...record, stepCode, requestBody: PRIVATE }), null)
+  }
 })
 
 test('TAX roundtrip phases identify helper failures without leaking locations or changing the final verdict', () => {

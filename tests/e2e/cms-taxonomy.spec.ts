@@ -1,9 +1,9 @@
-import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test'
+import { test, expect, type Browser, type BrowserContext, type Page, type Response } from '@playwright/test'
 import type { Article } from '@prisma/client'
 import { connectStaging, demand, STAGING_BASE_URL } from '../../scripts/cms-e2e/guard.mjs'
 import { loadManifest, saveManifest, discoverFixtureGraph, fixtureArticle, fixtureClassification, fixtureCatalog,
   catalogCreateData, reserveCatalogIntent, alterFixture } from '../../scripts/cms-e2e/fixtures.mjs'
-import { observeTaxonomyActions, holdTaxonomyResponses, type TaxonomyAction } from './cms-taxonomy-support'
+import { isTaxonomyAction, observeTaxonomyActions, holdTaxonomyResponses, type TaxonomyAction } from './cms-taxonomy-support'
 import { countArticleActions, holdActionResponses, pauseEditorClock } from './cms-autosave-support'
 import { holdSourceResponses } from './cms-sources-support'
 
@@ -235,7 +235,20 @@ test('TAX-06 catalog stale token conflicts future timestamps advance and no-op d
     await page.getByLabel('Tên', { exact: true }).fill('Catalog thắng'); await other.getByLabel('Tên', { exact: true }).fill('Catalog thua')
     const winner = await hold(page, 'updateTaxonomy'); await saveCatalog(page).click(); await winner.ready()
     expect((await fixtureCatalog(db, manifest, 'topic', term.id)).updatedAt.getTime()).toBe(future.getTime() + 1)
-    await saveCatalog(other).click(); await expect(error(other, 'EDIT_CONFLICT')).toBeVisible()
+    const beforeLoser = observer(other).count('updateTaxonomy')
+    let loserStatus: number | null = null
+    const onLoserResponse = (response: Response) => {
+      if (isTaxonomyAction(response.request(), observer(other).ids, ['updateTaxonomy'])) loserStatus = response.status()
+    }
+    other.on('response', onLoserResponse)
+    try {
+      await test.step('TAX_TOKEN_LOSER_CLICK', () => saveCatalog(other).click())
+      await test.step('TAX_TOKEN_LOSER_POST', () => expect.poll(() => observer(other).count('updateTaxonomy')).toBe(beforeLoser + 1))
+      await test.step('TAX_TOKEN_LOSER_RESPONSE', () => expect.poll(() => loserStatus).not.toBeNull())
+      await test.step('TAX_TOKEN_LOSER_HTTP_OK', () => expect(loserStatus).toBe(200))
+      await test.step('TAX_TOKEN_LOSER_ANY_ERROR', () => expect(other.locator('[data-error-code]')).toHaveCount(1))
+      await test.step('TAX_TOKEN_LOSER_CONFLICT', () => expect(error(other, 'EDIT_CONFLICT')).toBeVisible())
+    } finally { other.off('response', onLoserResponse) }
     await expect(other.getByLabel('Tên', { exact: true })).toHaveValue('Catalog thua'); await expect(saveCatalog(other)).toBeDisabled()
     winner.release(); await expect(saveCatalog(page)).toBeEnabled()
     await page.getByLabel('Tên', { exact: true }).fill('Catalog tiếp theo')
