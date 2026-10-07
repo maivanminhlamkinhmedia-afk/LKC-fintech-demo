@@ -70,14 +70,19 @@ async function createPreviewDraft(page: Page, suffix: string, bodyText = '') {
   'PREV_ISOLATED_ARTICLE_PRECONDITION')
   return article
 }
-async function findListPreview(page: Page, id: string) {
-  await page.goto('/creator/articles')
+async function findListPreview(page: Page, id: string, traceSubmitted = false) {
+  const observe = <T,>(stepCode: string, action: () => Promise<T>) =>
+    traceSubmitted ? test.step(stepCode, action) : action()
+  await observe('PREV_SUBMITTED_LIST_GOTO', () => page.goto('/creator/articles'))
   for (let index = 0; index < 50; index++) {
     const link = page.locator(`a[href="${path(id)}"]`)
-    if (await link.count()) { await expect(link.getByText('Xem trước')).toBeVisible(); return }
+    if (await observe('PREV_SUBMITTED_LIST_LINK_COUNT', () => link.count())) {
+      await observe('PREV_SUBMITTED_LIST_LINK_VISIBLE', () => expect(link.getByText('Xem trước')).toBeVisible())
+      return
+    }
     const next = page.getByRole('link', { name: 'Trang sau' })
-    demand(await next.count() === 1, 'PREVIEW_LIST_LINK_NOT_FOUND')
-    await next.click()
+    demand(await observe('PREV_SUBMITTED_LIST_NEXT_COUNT', () => next.count()) === 1, 'PREVIEW_LIST_LINK_NOT_FOUND')
+    await observe('PREV_SUBMITTED_LIST_NEXT_CLICK', () => next.click())
   }
   throw new Error('PREVIEW_LIST_PAGE_LIMIT')
 }
@@ -327,10 +332,25 @@ test('PREV-13/14/15 attached foreign-uploader private PNG renders while unrelate
       expect(allowed.headers()['content-type']).toMatch(/^image\/png/)
       expect((await allowed.body()).length).toBeGreaterThan(0)
       expect((await page.request.get(`/api/cms/media/${unrelated.id}/content`)).status()).toBe(404)
-      await page.route(`**${src}`, route => route.fulfill({ status: 404, body: '' }))
+      const beforeUnavailable = snapshot(await read(id))
+      let intercepted = 0
+      await page.addInitScript(() => {
+        document.addEventListener('error', event => {
+          if (event.target instanceof HTMLImageElement && event.target.getAttribute('src')?.startsWith('/api/cms/media/'))
+            document.documentElement.dataset.cmsPreviewCoverImageFailed = 'yes'
+        }, true)
+      })
+      await page.route(`**${src}`, route => {
+        intercepted++
+        return route.fulfill({ status: 404, body: '' })
+      })
       await page.reload()
+      await expect.poll(() => intercepted).toBeGreaterThan(0)
+      await expect.poll(() => page.evaluate(() => document.documentElement.dataset.cmsPreviewCoverImageFailed)).toBe('yes')
       await expect(page.getByText('Ảnh bìa hiện không khả dụng.')).toBeVisible()
+      await expect(page.locator(`img[src="${src}"]`)).toHaveCount(0)
       await expect(page.getByRole('heading', { name: (await read(id)).title })).toBeVisible()
+      expect(snapshot(await read(id))).toEqual(beforeUnavailable)
     } finally { await clearFixtureCoverMatrix(db, process.env, manifest, [id], attached.id, persist) }
   })
 })
@@ -480,8 +500,10 @@ test('PREV-17/18 list and persisted editor link open saved preview without repla
     await test.step('PREV_LINK_OWN_LIST', async () => { await findListPreview(page, id) })
     const submitted = fixture('SUBMITTED').id
     await test.step('PREV_LINK_SUBMITTED_LIST', async () => {
-      await findListPreview(page, submitted)
-      await expect(page.locator(`a[href="/creator/articles/${submitted}/edit"]`)).toHaveCount(0)
+      await findListPreview(page, submitted, true)
+      await test.step('PREV_SUBMITTED_LIST_NO_EDIT', async () => {
+        await expect(page.locator(`a[href="/creator/articles/${submitted}/edit"]`)).toHaveCount(0)
+      })
     })
     await test.step('PREV_LINK_NEW', async () => {
       await page.goto('/creator/articles/new')
