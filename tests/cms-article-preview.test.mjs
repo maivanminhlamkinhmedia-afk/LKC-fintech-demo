@@ -6,6 +6,7 @@ import { registerHooks } from 'node:module'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
+import { createFixturePlan } from '../scripts/cms-e2e/fixtures.mjs'
 
 const root = new URL('../src/', import.meta.url)
 const queryUrl = new URL('features/cms/article-preview-query.ts', root).href
@@ -220,4 +221,37 @@ test('article shell escapes metadata and renders only the saved DTO', async () =
   assert.match(html, /Bản lưu cập nhật/)
   assert.equal(html.includes('<script>'), false)
   assert.equal(html.includes('PRIVATE_'), false)
+})
+
+test('a journal DRAFT key does not preserve seed title, empty cover or empty sources after earlier cases', async () => {
+  const manifest = createFixturePlan('abcdef0123456789abcdef01', 4)
+  const seedTitle = `${manifest.namespace} DRAFT`
+  const coverId = 'a'.repeat(32)
+  const changed = reset().article
+  reset({ article: { ...changed, title: `${manifest.namespace} precision 2`, coverMediaId: coverId },
+    sources: [{ title: 'Nguồn cạnh tranh ảnh bìa', sourceType: 'REPORT', publisher: null,
+      url: null, publishedAt: null, accessedAt: null, dataTimestamp: null, note: null }],
+    asset: { id: coverId, filename: `${coverId}.png`, url: `/api/cms/media/${coverId}/content`,
+      mimeType: 'image/png', width: 16, height: 16, sizeBytes: 50, uploadedById: 'other', altText: 'Bìa', caption: null },
+  })
+  const changedResult = await getArticlePreview(actor(), 'article-a')
+  assert.equal(changedResult.ok, true)
+  const changedHtml = renderToStaticMarkup(createElement(ArticlePreview, { article: changedResult.data }))
+  // The old E2E assertions would fail against the real query/renderer on this synthetic post-EDIT/MED state.
+  assert.throws(() => assert.match(changedHtml, new RegExp(seedTitle)))
+  assert.throws(() => assert.match(changedHtml, /Bài viết chưa có ảnh bìa khả dụng/))
+  assert.throws(() => assert.match(changedHtml, /Chưa có nguồn tham khảo/))
+  assert.match(changedHtml, /precision 2/)
+  assert.match(changedHtml, /Nguồn cạnh tranh ảnh bìa/)
+
+  const isolated = reset().article
+  reset({ article: { ...isolated, title: `${manifest.namespace} preview empty-header`, excerpt: '',
+    contentJson: { type: 'doc', content: [{ type: 'paragraph' }] }, coverMediaId: null },
+    sources: [], asset: null })
+  const isolatedResult = await getArticlePreview(actor(), 'article-a')
+  assert.equal(isolatedResult.ok, true)
+  const isolatedHtml = renderToStaticMarkup(createElement(ArticlePreview, { article: isolatedResult.data }))
+  assert.match(isolatedHtml, /preview empty-header/)
+  assert.match(isolatedHtml, /Bài viết chưa có ảnh bìa khả dụng/)
+  assert.match(isolatedHtml, /Chưa có nguồn tham khảo/)
 })

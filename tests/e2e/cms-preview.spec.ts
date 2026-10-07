@@ -14,7 +14,7 @@ import { observeTaxonomyActions } from './cms-taxonomy-support'
 type Actor = 'creator' | 'other' | 'admin' | 'super' | 'analyst' | 'client'
 type Manifest = { version: number; runId: string; namespace: string;
   users: { key: Actor; id: string; email: string; role: string }[];
-  articles: { key: string; id: string; authorId: string; allowedOwnerIds: string[] }[];
+  articles: { key: string; id: string; slug: string; authorId: string; allowedOwnerIds: string[]; status: string }[];
   catalogs: { kind: string; id: string; seedKey: string | null; identity: { slug?: string; canonicalKey?: string } }[] }
 let manifest: Manifest, db: Awaited<ReturnType<typeof connectStaging>>
 let credentials: Record<Actor, { email: string; password: string }>
@@ -48,6 +48,28 @@ async function open(page: Page, id: string) {
   await page.goto(path(id))
   await expect(page.getByText('Bản xem trước nội bộ — nội dung đã lưu', { exact: true })).toBeVisible()
 }
+async function createPreviewDraft(page: Page, suffix: string, bodyText = '') {
+  const title = `${manifest.namespace} preview ${suffix}`
+  const slug = `${manifest.namespace}-preview-${suffix}`
+  await page.clock.resume()
+  await page.goto('/creator/articles/new')
+  await page.getByLabel('Tiêu đề', { exact: true }).fill(title)
+  await page.getByLabel('Slug', { exact: true }).fill(slug)
+  if (bodyText) await page.getByRole('textbox', { name: 'Nội dung bài viết', exact: true }).fill(bodyText)
+  await page.getByRole('button', { name: 'Lưu nháp', exact: true }).click()
+  await expect(page).toHaveURL(/\/creator\/articles\/[^/]+\/edit$/)
+  const id = new URL(page.url()).pathname.split('/').at(-2)!
+  await discoverCreatedArticles(db, process.env, manifest, persist)
+  const entry = manifest.articles.find(row => row.id === id)
+  demand(entry && entry.slug === slug && entry.authorId === actorId('creator') && entry.status === 'DRAFT',
+    'PREV_ISOLATED_ARTICLE_NOT_JOURNALED')
+  const article = await read(id)
+  demand(article.title === title && article.slug === slug && article.authorId === actorId('creator')
+    && article.status === 'DRAFT' && article.coverMediaId === null && article.editorSchemaVersion === 1
+    && (bodyText ? article.contentText.includes(bodyText.trim()) : article.contentText === ''),
+  'PREV_ISOLATED_ARTICLE_PRECONDITION')
+  return article
+}
 async function findListPreview(page: Page, id: string) {
   await page.goto('/creator/articles')
   for (let index = 0; index < 50; index++) {
@@ -74,22 +96,24 @@ test.afterEach(async () => {
 test.afterAll(async () => { if (db) await db.$disconnect() })
 
 test('PREV-01 anonymous direct preview has no saved article marker', async ({ browser }) => {
+  const title = (await read(fixture('DRAFT').id)).title
   const context = await browser.newContext({ baseURL: STAGING_BASE_URL }); contexts.push(context)
   const page = await context.newPage()
   await test.step('PREV_ANON', async () => {
     await page.goto(path(fixture('DRAFT').id))
     await expect(page).toHaveURL(/\/dang-nhap(?:\?|$)/)
-    await expect(page.getByText(`${manifest.namespace} DRAFT`, { exact: true })).toHaveCount(0)
+    await expect(page.getByText(title, { exact: true })).toHaveCount(0)
   })
 })
 
 test('PREV-02 non-CMS roles cannot open preview', async ({ browser }) => {
+  const title = (await read(fixture('DRAFT').id)).title
   await test.step('PREV_NON_CMS', async () => {
     for (const role of ['client', 'analyst'] as const) {
       const { page } = await login(browser, role)
       await page.goto(path(fixture('DRAFT').id))
       await expect(page).toHaveURL(/\/dashboard$/)
-      await expect(page.getByRole('heading', { name: `${manifest.namespace} DRAFT` })).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: title })).toHaveCount(0)
     }
   })
 })
@@ -97,13 +121,18 @@ test('PREV-02 non-CMS roles cannot open preview', async ({ browser }) => {
 test('PREV-03 creator sees own and foreign missing invalid paths reveal no article', async ({ browser }) => {
   const { page } = await login(browser, 'creator')
   await test.step('PREV_SCOPE', async () => {
-    await open(page, fixture('DRAFT').id)
-    await expect(page.getByRole('heading', { name: `${manifest.namespace} DRAFT` })).toBeVisible()
+    const own = await read(fixture('DRAFT').id)
+    const foreign = await read(fixture('other-draft').id)
+    demand(own.authorId === actorId('creator') && foreign.authorId === actorId('other'), 'PREV_SCOPE_PRECONDITION')
+    const before = snapshot(own)
+    await open(page, own.id)
+    await expect(page.getByRole('heading', { name: before.title })).toBeVisible()
     for (const id of [fixture('other-draft').id, 'missing-preview-id', '%2E%2Ebad']) {
       await page.goto(path(id))
       await expect(page.getByText('Bản xem trước nội bộ — nội dung đã lưu', { exact: true })).toHaveCount(0)
-      await expect(page.getByText(`${manifest.namespace} other-draft`, { exact: true })).toHaveCount(0)
+      await expect(page.getByText(foreign.title, { exact: true })).toHaveCount(0)
     }
+    expect(snapshot(await read(own.id))).toEqual(before)
   })
 })
 
@@ -135,17 +164,18 @@ test('PREV-05 all ten saved statuses remain readable but editing policy stays se
 test('PREV-06 fresh actor and owner changes revoke a later preview request', async ({ browser }) => {
   const id = fixture('DRAFT').id
   const { page } = await login(browser, 'creator')
+  const title = (await read(id)).title
   await open(page, id)
   await test.step('PREV_REVOKE', async () => {
     try {
       await alterFixture(db, process.env, manifest, 'user', actorId('creator'), { status: 'SUSPENDED' }, persist)
       await page.reload()
-      await expect(page.getByRole('heading', { name: `${manifest.namespace} DRAFT` })).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: title })).toHaveCount(0)
     } finally { await alterFixture(db, process.env, manifest, 'user', actorId('creator'), { status: 'ACTIVE' }, persist) }
     try {
       await alterFixture(db, process.env, manifest, 'article', id, { authorId: actorId('other') }, persist)
       await page.goto(path(id))
-      await expect(page.getByRole('heading', { name: `${manifest.namespace} DRAFT` })).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: title })).toHaveCount(0)
     } finally { await alterFixture(db, process.env, manifest, 'article', id, { authorId: actorId('creator') }, persist) }
   })
 })
@@ -153,13 +183,20 @@ test('PREV-06 fresh actor and owner changes revoke a later preview request', asy
 test('PREV-07/08/12 header uses saved time and missing profile and empty data have fallbacks', async ({ browser }) => {
   const { page } = await login(browser, 'creator')
   await test.step('PREV_HEADER_EMPTY', async () => {
-    const before = await read(fixture('DRAFT').id)
+    const before = await createPreviewDraft(page, 'empty-header')
+    expect(before.excerpt).toBe('')
+    expect(before.contentJson).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
+    expect(before.categoryId).toBeNull()
+    expect(await db.sourceReference.count({ where: { articleId: before.id } })).toBe(0)
+    expect(await db.authorProfile.count({ where: { userId: actorId('creator') } })).toBe(0)
     await open(page, before.id)
     await expect(page.getByRole('heading', { name: before.title })).toBeVisible()
     await expect(page.locator('time').first()).toHaveAttribute('datetime', before.updatedAt.toISOString())
     await expect(page.getByText('Tác giả chưa có hồ sơ công khai')).toBeVisible()
     await expect(page.getByText('Bài viết chưa có ảnh bìa khả dụng.')).toBeVisible()
     await expect(page.getByText('Chưa có nguồn tham khảo.')).toBeVisible()
+    expect(snapshot(await read(before.id))).toEqual(snapshot(before))
+    expect(await db.sourceReference.count({ where: { articleId: before.id } })).toBe(0)
   })
 })
 
@@ -274,9 +311,9 @@ test('PREV-11 hostile saved metadata and links neither execute nor auto-request 
 })
 
 test('PREV-13/14/15 attached foreign-uploader private PNG renders while unrelated bytes deny and load failure falls back', async ({ browser }) => {
-  const id = fixture('DRAFT').id
   const { page } = await login(browser, 'creator')
   await test.step('PREV_PRIVATE_COVER', async () => {
+    const id = (await createPreviewDraft(page, 'foreign-cover')).id
     const rows = await seedManagedMediaBatch(db, manifest, actorId('other'), 2, png(), persist)
     await discoverFixtureGraph(db, process.env, manifest, persist)
     const [attached, unrelated] = rows
@@ -440,22 +477,30 @@ test('PREV-17/18 list and persisted editor link open saved preview without repla
   const { context, page } = await login(browser, 'creator')
   const id = fixture('DRAFT').id
   await test.step('PREV_LINKS', async () => {
-    await findListPreview(page, id)
+    await test.step('PREV_LINK_OWN_LIST', async () => { await findListPreview(page, id) })
     const submitted = fixture('SUBMITTED').id
-    await findListPreview(page, submitted)
-    await expect(page.locator(`a[href="/creator/articles/${submitted}/edit"]`)).toHaveCount(0)
-    await page.goto('/creator/articles/new')
-    await expect(page.getByRole('link', { name: 'Xem bản đã lưu' })).toHaveCount(0)
-    await expect(page.getByText('Lưu nháp lần đầu trước khi xem bản đã lưu.')).toBeVisible()
-    await page.goto(`/creator/articles/${id}/edit`)
-    const link = page.getByRole('link', { name: 'Xem bản đã lưu' })
-    await expect(link).toHaveAttribute('target', '_blank')
-    await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-    const popupPromise = context.waitForEvent('page')
-    await link.click()
-    const popup = await popupPromise
-    await expect(popup.getByText('Bản xem trước nội bộ — nội dung đã lưu', { exact: true })).toBeVisible()
-    await expect(page).toHaveURL(new RegExp(`${id}/edit$`))
+    await test.step('PREV_LINK_SUBMITTED_LIST', async () => {
+      await findListPreview(page, submitted)
+      await expect(page.locator(`a[href="/creator/articles/${submitted}/edit"]`)).toHaveCount(0)
+    })
+    await test.step('PREV_LINK_NEW', async () => {
+      await page.goto('/creator/articles/new')
+      await expect(page.getByRole('link', { name: 'Xem bản đã lưu' })).toHaveCount(0)
+      await expect(page.getByText('Lưu nháp lần đầu trước khi xem bản đã lưu.')).toBeVisible()
+    })
+    await test.step('PREV_LINK_EDITOR', async () => {
+      await page.goto(`/creator/articles/${id}/edit`)
+      const link = page.getByRole('link', { name: 'Xem bản đã lưu' })
+      await expect(link).toHaveAttribute('target', '_blank')
+      await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    })
+    await test.step('PREV_LINK_POPUP', async () => {
+      const popupPromise = context.waitForEvent('page')
+      await page.getByRole('link', { name: 'Xem bản đã lưu' }).click()
+      const popup = await popupPromise
+      await expect(popup.getByText('Bản xem trước nội bộ — nội dung đã lưu', { exact: true })).toBeVisible()
+      await expect(page).toHaveURL(new RegExp(`${id}/edit$`))
+    })
   })
 })
 
@@ -504,12 +549,16 @@ test('PREV-22 private HTML has noindex and does not advertise draft metadata', a
 test('PREV-23 long saved content remains within responsive app viewport', async ({ browser }) => {
   const { page } = await login(browser, 'creator')
   await test.step('PREV_LAYOUT', async () => {
+    const longText = 'Nội dung tiếng Việt dài để kiểm tra bố cục. '.repeat(40)
+    const before = await createPreviewDraft(page, 'long-layout', longText)
     for (const width of [390, 768, 1280]) {
       await page.setViewportSize({ width, height: 800 })
-      await open(page, fixture('DRAFT').id)
+      await open(page, before.id)
       const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }))
       expect(dimensions.page).toBeLessThanOrEqual(dimensions.viewport)
-      await expect(page.getByRole('heading', { name: `${manifest.namespace} DRAFT` })).toBeVisible()
+      await expect(page.getByRole('heading', { name: before.title })).toBeVisible()
+      await expect(page.locator('article')).toContainText(longText.trim().slice(0, 80))
     }
+    expect(snapshot(await read(before.id))).toEqual(snapshot(before))
   })
 })
