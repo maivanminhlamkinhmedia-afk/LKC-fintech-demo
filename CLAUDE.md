@@ -1,3 +1,13 @@
+<!-- BEGIN:lkc-platform-entrypoint -->
+## LKC coordination update — 2026-10-08
+
+For CMS / paid portal / product / referral / recommendation work, start with [docs/lkc-platform/README.md](docs/lkc-platform/README.md) and [CMS-INTEGRATION.md](docs/lkc-platform/CMS-INTEGRATION.md). UI v3 is approved at the UI/functionality level; implementation contracts remain subject to owner ACK. Keep CMS numbering and current work intact. Claim shared files before changing them; do not merge, deploy, migrate or run production tests just because the UI is approved.
+
+The historical inventory below is retained, not silently rewritten. In particular, the sentence about no test runner and the legacy model/role list are not a current implementation inventory: verify `package.json`, `prisma/schema.prisma`, current source and task reports. No broad framework upgrade or legacy refactor is implied. For independent review-only work, report findings without editing source/tests.
+
+Prototype screen 00 and review/simulation controls are not production features. See the approved 19-screen mapping, delivery boundaries and producer/consumer contracts in the new documentation.
+<!-- END:lkc-platform-entrypoint -->
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
