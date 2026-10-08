@@ -105,45 +105,4 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
-          ssh-keyscan -p 22 -H "$SSH_HOST" >> ~/.ssh/known_hosts
-
-          scp \
-            -P 22 \
-            -i ~/.ssh/id_ed25519 \
-            -o IdentitiesOnly=yes \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=4 \
-            lkc-deploy.tar.gz \
-            "$SSH_USER@$SSH_HOST:/home/$SSH_USER/lkc-deploy.tar.gz"
-
-          ssh \
-            -p 22 \
-            -i ~/.ssh/id_ed25519 \
-            -o IdentitiesOnly=yes \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=4 \
-            "$SSH_USER@$SSH_HOST" '
-              set -e
-
-              APP="/home/edpmjmha/lkcfintech.com.vn/deploy"
-              ARCHIVE="/home/edpmjmha/lkc-deploy.tar.gz"
-
-              tar -tzf "$ARCHIVE" >/dev/null
-
-              rm -rf \
-                "$APP/.next" \
-                "$APP/public" \
-                "$APP/node_modules" \
-                "$APP/prisma"
-
-              rm -f \
-                "$APP/server.js" \
-                "$APP/package.json" \
-                "$APP/prisma.config.ts"
-
-              tar -xzf "$ARCHIVE" -C "$APP"
-              rm -f "$ARCHIVE"
-
-              mkdir -p "$APP/tmp"
-              printf "deployed at %s\n" "$(date -u +%FT%TZ)" > "$APP/tmp/restart.txt"
-            '
+          bash scripts/cms-deploy/upload-and-activate.sh
