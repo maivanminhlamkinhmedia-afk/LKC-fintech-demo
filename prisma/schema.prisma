@@ -771,3 +771,21 @@ model PublicationEvent {
   @@index([eventType])
   @@index([scheduledFor])
 }
+
+enum ProductContentState {
+  SELECTABLE
+  UNSELECTABLE
+  RETIRED
+}
+
+/// Foundation only: no producer, CMS binding or application writer is activated.
+/// Future writers must retain the opaque ID across rename/retirement; this
+/// schema alone does not prevent re-keying or deletion through direct SQL.
+model Product {
+  id           String              @id @default(cuid()) @db.VarChar(191)
+  name         String              @db.VarChar(191)
+  contentState ProductContentState @default(UNSELECTABLE)
+  saleStopped  Boolean             @default(true)
+  createdAt    DateTime            @default(now()) @db.DateTime(3)
+  updatedAt    DateTime            @updatedAt @db.DateTime(3)
+}
