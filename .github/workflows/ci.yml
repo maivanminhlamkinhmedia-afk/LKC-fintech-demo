@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       mode:
@@ -36,6 +36,47 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Record checkout provenance
+        shell: bash
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          CI_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          CI_GITHUB_SHA: ${{ github.sha }}
+          CI_GITHUB_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          checkout_sha="$(git rev-parse HEAD)"
+          printf 'event=%s\npr_number=%s\nsource_head_sha=%s\nbase_sha=%s\ngithub_sha=%s\nref=%s\ncheckout_sha=%s\n' \
+            "$CI_EVENT_NAME" "${CI_PR_NUMBER:-N/A}" "$CI_SOURCE_HEAD_SHA" "${CI_BASE_SHA:-N/A}" \
+            "$CI_GITHUB_SHA" "$CI_GITHUB_REF" "$checkout_sha"
+          test "$checkout_sha" = "$CI_GITHUB_SHA"
+          case "$CI_EVENT_NAME" in
+            pull_request)
+              test -n "$CI_PR_NUMBER"
+              test "$CI_GITHUB_REF" = "refs/pull/$CI_PR_NUMBER/merge"
+              checkout_parent_line="$(git show -s --format=%P HEAD)"
+              read -r -a checkout_parents <<< "$checkout_parent_line"
+              test "${#checkout_parents[@]}" -eq 2
+              printf 'checkout_kind=pr_synthetic_merge\nmerge_base_parent=%s\nmerge_head_parent=%s\n' \
+                "${checkout_parents[0]}" "${checkout_parents[1]}"
+              test "${checkout_parents[0]}" = "$CI_BASE_SHA"
+              test "${checkout_parents[1]}" = "$CI_SOURCE_HEAD_SHA"
+              ;;
+            workflow_dispatch)
+              printf 'checkout_kind=branch_dispatch\n'
+              test "$checkout_sha" = "$CI_SOURCE_HEAD_SHA"
+              ;;
+            *)
+              echo 'Unsupported validation event' >&2
+              exit 1
+              ;;
+          esac
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
