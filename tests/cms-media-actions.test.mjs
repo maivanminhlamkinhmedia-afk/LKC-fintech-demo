@@ -13,7 +13,7 @@ const baseArticle = () => ({ id: articleId, title: 'Bài mẫu', authorId: actor
   updatedAt: new Date(date), editorSchemaVersion: 1, contentJson: { type: 'doc', content: [{ type: 'paragraph' }] }, coverMediaId: null })
 let state, tail = Promise.resolve()
 const clone = value => structuredClone(value)
-function scenario(changes = {}) { tail = Promise.resolve(); state = { session: { user: clone(actor) }, fresh: clone(actor), media: baseMedia(), article: baseArticle(), calls: [], writes: [], inTransaction: false, used: 0, ...changes } }
+function scenario(changes = {}) { tail = Promise.resolve(); state = { session: { user: clone(actor) }, fresh: clone(actor), media: baseMedia(), article: baseArticle(), calls: [], writes: [], inTransaction: false, used: 0, versionUsed: 0, ...changes } }
 const log = (name, args) => state.calls.push({ name, args: clone(args) })
 function rowMatches(row, where) {
   if (!where) return true
@@ -35,6 +35,13 @@ const tx = {
     async findFirst(args) { log('articleRead', args); return rowMatches(state.article, args.where) ? clone(state.article) : null },
     async updateMany(args) { log('articleUpdate', args); if (!rowMatches(state.article, args.where)) return { count: 0 }; Object.assign(state.article, clone(args.data)); state.writes.push('article'); return { count: 1 } },
     async count(args) { log('coverCount', args); return state.used },
+  },
+  articleVersionMedia: {
+    async count(args) {
+      log('versionCount', args)
+      if (state.versionCountError) throw new Error('synthetic version-reference query failure')
+      return state.versionUsed
+    },
   },
   async $queryRaw() { log('rowLock', {}); return state.media ? [{ id: state.media.id }] : [] },
 }
@@ -132,12 +139,66 @@ test('cover uses shared Article CAS, locks asset first, preserves fields and rej
   assert.ok(state.calls.findIndex(call => call.name === 'rowLock') < state.calls.findIndex(call => call.name === 'articleUpdate'))
   failure(await actions.saveArticleCover(articleId, { mediaId: null, expectedUpdatedAt: date.toISOString(), expectedMediaUpdatedAt: null }), 'EDIT_CONFLICT')
 })
-test('delete-used checks every cover reference before DB delete or unlink', async () => {
+test('delete-used rejects a current cover reference after the asset row lock', async () => {
   scenario({ used: 1 })
   failure(await actions.deleteUnusedMedia(mediaId, { expectedUpdatedAt: date.toISOString() }), 'MEDIA_IN_USE')
   assert.equal(state.media.id, mediaId)
   assert.equal(state.calls.some(call => call.name === 'mediaDelete' || call.name === 'unlink'), false)
   assert.ok(state.calls.findIndex(call => call.name === 'rowLock') < state.calls.findIndex(call => call.name === 'coverCount'))
+  assert.deepEqual(state.calls.find(call => call.name === 'coverCount').args, { where: { coverMediaId: mediaId } })
+  assert.equal(state.calls.some(call => call.name === 'versionCount'), false)
+  assert.equal(state.calls.some(call => call.name === 'journalStage' && call.args.stage === 'rejected'), true)
+  assert.deepEqual(state.writes, [])
+})
+
+test('delete-used rejects a historical version reference after the current cover is cleared', async () => {
+  scenario({ used: 0, versionUsed: 1 })
+  failure(await actions.deleteUnusedMedia(mediaId, { expectedUpdatedAt: date.toISOString() }), 'MEDIA_IN_USE')
+  assert.equal(state.media.id, mediaId)
+  assert.deepEqual(state.writes, [])
+  assert.equal(state.calls.some(call => call.name === 'mediaDelete' || call.name === 'unlink'), false)
+  assert.ok(state.calls.findIndex(call => call.name === 'rowLock') < state.calls.findIndex(call => call.name === 'versionCount'))
+  assert.deepEqual(state.calls.find(call => call.name === 'versionCount').args, { where: { assetId: mediaId } })
+})
+
+test('delete-used rejects an asset referenced by both current Article and historical version', async () => {
+  scenario({ used: 1, versionUsed: 1 })
+  failure(await actions.deleteUnusedMedia(mediaId, { expectedUpdatedAt: date.toISOString() }), 'MEDIA_IN_USE')
+  assert.equal(state.media.id, mediaId)
+  assert.deepEqual(state.writes, [])
+  assert.equal(state.calls.some(call => call.name === 'mediaDelete' || call.name === 'unlink'), false)
+  assert.equal(state.calls.filter(call => call.name === 'coverCount').length, 1)
+  assert.equal(state.calls.filter(call => call.name === 'versionCount').length, 0)
+})
+
+test('known current cover reference returns MEDIA_IN_USE without relying on a later version query', async () => {
+  scenario({ used: 1, versionCountError: true })
+  failure(await actions.deleteUnusedMedia(mediaId, { expectedUpdatedAt: date.toISOString() }), 'MEDIA_IN_USE')
+  assert.equal(state.calls.some(call => call.name === 'versionCount' || call.name === 'mediaDelete' || call.name === 'unlink'), false)
+  assert.deepEqual(state.writes, [])
+})
+
+test('delete-used with no current or historical reference completes the existing delete journal', async () => {
+  scenario({ used: 0, versionUsed: 0 })
+  const result = await actions.deleteUnusedMedia(mediaId, { expectedUpdatedAt: date.toISOString() })
+  assert.equal(result.ok, true, result.error?.code)
+  assert.deepEqual(result.data, { id: mediaId, storagePending: false })
+  assert.equal(state.media, null)
+  assert.deepEqual(state.writes, ['media-delete'])
+  assert.equal(state.calls.filter(call => call.name === 'unlink').length, 1)
+  assert.equal(state.calls.some(call => call.name === 'journalStage' && call.args.stage === 'complete'), true)
+  assert.ok(state.calls.findIndex(call => call.name === 'versionCount') < state.calls.findIndex(call => call.name === 'mediaDelete'))
+})
+
+test('version-reference query failure fails closed before DB delete or unlink', async () => {
+  scenario({ used: 0, versionUsed: 0, versionCountError: true })
+  failure(await actions.deleteUnusedMedia(mediaId, { expectedUpdatedAt: date.toISOString() }), 'UNKNOWN_OUTCOME')
+  assert.equal(state.media.id, mediaId)
+  assert.deepEqual(state.writes, [])
+  assert.equal(state.calls.some(call => call.name === 'mediaDelete' || call.name === 'unlink'), false)
+  assert.ok(state.calls.findIndex(call => call.name === 'rowLock') < state.calls.findIndex(call => call.name === 'versionCount'))
+  assert.equal(state.calls.some(call => call.name === 'journalStage' && call.args.stage === 'db-deleted'), false)
+  assert.deepEqual(state.calls.filter(call => call.name === 'journalStage').map(call => call.args.stage), ['dispatched'])
 })
 test('delete committed in DB with failed unlink reports storagePending without restoring row', async () => {
   scenario({ unlinkDenied: true })
