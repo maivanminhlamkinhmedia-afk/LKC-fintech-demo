@@ -21,7 +21,7 @@ try {
 const { EDITOR_LIMITS, EDITOR_SCHEMA_VERSION, EMPTY_EDITOR_DOCUMENT, EditorDocumentError, createEditorExtensions,
   validateEditorDocument, validateStoredEditorDocument, isSafeEditorLink } = editor
 const { ARTICLE_TYPES, ArticleDraftError, canonicalizeArticleSlug, normalizeCreateDraftInput, normalizeUpdateDraftInput,
-  canEditArticleDraft, parseArticleId, parseArticlePage, parseExpectedUpdatedAt, nextArticleUpdatedAt, mapDraftError } = draft
+  canEditArticleDraft, readStoredDraftAudience, parseArticleId, parseArticlePage, parseExpectedUpdatedAt, nextArticleUpdatedAt, mapDraftError } = draft
 const text = value => ({ type: 'text', text: value })
 const paragraph = value => ({ type: 'paragraph', ...(value ? { content: [text(value)] } : {}) })
 const document = (...content) => ({ type: 'doc', content })
@@ -246,4 +246,116 @@ test('safe errors recognize only Article slug conflicts and real conflict codes 
   const malicious = Object.defineProperty({}, 'code', { get() { calls++; throw Error(diagnostics) } })
   assert.equal(mapDraftError(malicious).code, 'INTERNAL_ERROR')
   assert.equal(calls, 0)
+})
+
+test('W0 create defaults omitted audience to explicit null and copies explicit null/PUBLIC without mutating inputs', () => {
+  assert.deepEqual(normalizeCreateDraftInput(input()).audience, { accessMode: null, productIds: [] })
+  for (const accessMode of [null, 'PUBLIC']) {
+    const audience = Object.freeze({ accessMode, productIds: Object.freeze([]) })
+    const source = Object.freeze({ ...input(), audience })
+    const before = JSON.stringify(source)
+    const created = normalizeCreateDraftInput(source)
+    assert.deepEqual(created.audience, { accessMode, productIds: [] })
+    assert.notEqual(created.audience, audience)
+    assert.notEqual(created.audience.productIds, audience.productIds)
+    created.audience.productIds.push('must-not-mutate-input')
+    assert.equal(JSON.stringify(source), before)
+    assert.deepEqual(audience.productIds, [])
+  }
+})
+
+test('W0 legacy update omission is distinct from explicit null or PUBLIC audience', () => {
+  const source = { ...input(), expectedUpdatedAt: '2026-10-10T00:00:00.123Z' }
+  const omitted = normalizeUpdateDraftInput(source)
+  assert.equal(Object.hasOwn(omitted.data, 'audience'), false, 'old client must preserve persisted audience')
+  for (const accessMode of [null, 'PUBLIC']) {
+    const result = normalizeUpdateDraftInput({ ...source, audience: { accessMode, productIds: [] } })
+    assert.deepEqual(result.data.audience, { accessMode, productIds: [] })
+    assert.equal(result.expectedUpdatedAt.toISOString(), source.expectedUpdatedAt)
+    assert.equal(Object.hasOwn(result.data, 'expectedUpdatedAt'), false)
+  }
+  assert.equal(Object.hasOwn(source, 'audience'), false)
+})
+
+test('W0 audience rejects malformed and partial envelopes, unknown fields, and access mode coercion', () => {
+  for (const audience of [undefined, null, [], '', {}, { accessMode: null }, { productIds: [] },
+    { accessMode: undefined, productIds: [] }, { accessMode: 'public', productIds: [] },
+    { accessMode: 0, productIds: [] }, { accessMode: { toString: () => 'PUBLIC' }, productIds: [] },
+    { accessMode: 'PUBLIC', productIds: [], extra: 'internal' },
+    { accessMode: 'PUBLIC', productIds: [], [Symbol('private')]: 'internal' },
+    Object.create({ accessMode: 'PUBLIC', productIds: [] }),
+    Object.defineProperty({ productIds: [] }, 'accessMode', { value: 'PUBLIC', enumerable: false }),
+  ]) validation({ ...input(), audience }, 'audience')
+  for (const field of ['accessMode', 'productIds', 'products']) validation({ ...input(), [field]: 'forged' })
+  const nullPrototype = Object.assign(Object.create(null), { accessMode: 'PUBLIC', productIds: [] })
+  assert.deepEqual(normalizeCreateDraftInput({ ...input(), audience: nullPrototype }).audience, { accessMode: 'PUBLIC', productIds: [] })
+})
+
+test('W0 product IDs are strict and null/PUBLIC cannot carry Product references; paid binding always fails closed', () => {
+  for (const accessMode of [null, 'PUBLIC']) {
+    for (const productIds of [['product-1'], [''], [null], {}, 'product-1', undefined]) {
+      validation({ ...input(), audience: { accessMode, productIds } }, 'audience')
+    }
+  }
+  for (const productIds of [[' product'], ['product/1'], ['x'.repeat(192)], ['same', 'same'], [null], [1],
+    Array(1), Object.assign([], { extra: 'private' }), Object.assign([], { [Symbol('extra')]: 'private' }),
+    Object.assign(Object.create(Array.prototype), { length: 0 }),
+  ]) validation({ ...input(), audience: { accessMode: 'PAID_PRODUCT', productIds } }, 'audience')
+  for (const productIds of [[], ['product-1'], ['a'.repeat(191), 'Product_2']]) {
+    for (const normalize of [value => normalizeCreateDraftInput(value), value => normalizeUpdateDraftInput({ ...value, expectedUpdatedAt: '2026-10-10T00:00:00.123Z' })]) {
+      assert.throws(() => normalize({ ...input(), audience: { accessMode: 'PAID_PRODUCT', productIds } }), error => {
+        assert.equal(error.code, 'POLICY_UNRESOLVED')
+        assert.equal(mapDraftError(error).code, 'POLICY_UNRESOLVED')
+        assert.ok(mapDraftError(error).fieldErrors.audience)
+        return true
+      })
+    }
+  }
+})
+
+test('W0 hostile audience descriptors/proxies never execute getters or expose raw exceptions', () => {
+  const secret = 'PRIVATE PAYLOAD MUST NOT LEAK'
+  let calls = 0
+  const getter = () => { calls++; throw new Error(secret) }
+  const accessorMode = Object.defineProperty({ productIds: [] }, 'accessMode', { enumerable: true, get: getter })
+  const accessorProducts = Object.defineProperty({ accessMode: 'PUBLIC' }, 'productIds', { enumerable: true, get: getter })
+  const accessorId = Object.defineProperty(Array(1), '0', { enumerable: true, get: getter })
+  const throwingError = new Proxy({}, { getPrototypeOf: () => { throw Error(secret) } })
+  const revoked = Proxy.revocable({}, {})
+  revoked.revoke()
+  const audiences = [accessorMode, accessorProducts, { accessMode: 'PAID_PRODUCT', productIds: accessorId }, revoked.proxy,
+    new Proxy({}, { getPrototypeOf: () => { throw throwingError } }),
+    new Proxy({ accessMode: null, productIds: [] }, { ownKeys: () => { throw Error(secret) } }),
+    new Proxy({ accessMode: null, productIds: [] }, { getOwnPropertyDescriptor: () => { throw Error(secret) } }),
+    { accessMode: 'PAID_PRODUCT', productIds: new Proxy([], { ownKeys: () => { throw throwingError } }) },
+  ]
+  for (const audience of audiences) {
+    assert.throws(() => normalizeCreateDraftInput({ ...input(), audience }), error => {
+      assert.equal(error.code, 'VALIDATION_ERROR')
+      assert.equal(JSON.stringify(mapDraftError(error)).includes(secret), false)
+      return true
+    })
+  }
+  const payloads = [new Proxy(input(), { ownKeys: () => { throw throwingError } }),
+    Object.defineProperty(input(), 'audience', { enumerable: true, get: getter })]
+  for (const value of payloads) validation(value)
+  assert.equal(calls, 0)
+})
+
+test('W0 persisted audience requires a known mode and exact zero Product edges, without normalizing bad state', () => {
+  for (const accessMode of [null, 'PUBLIC']) {
+    assert.deepEqual(readStoredDraftAudience(accessMode, 0), { accessMode, productIds: [] })
+    for (const count of [undefined, null, '0', NaN, Infinity, -1, 0.5, 1, 2]) {
+      assert.throws(() => readStoredDraftAudience(accessMode, count), error => error.code === 'INTERNAL_ERROR')
+    }
+  }
+  for (const accessMode of [undefined, '', 'public', {}, 0]) {
+    assert.throws(() => readStoredDraftAudience(accessMode, 0), error => error.code === 'INTERNAL_ERROR')
+  }
+  for (const count of [0, 1, 2]) {
+    assert.throws(() => readStoredDraftAudience('PAID_PRODUCT', count), error => error.code === 'POLICY_UNRESOLVED')
+  }
+  const first = readStoredDraftAudience(null, 0)
+  first.productIds.push('isolated')
+  assert.deepEqual(readStoredDraftAudience(null, 0), { accessMode: null, productIds: [] })
 })

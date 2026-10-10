@@ -15,6 +15,7 @@ import {
   normalizeCreateDraftInput,
   normalizeUpdateDraftInput,
   parseArticleId,
+  readStoredDraftAudience,
   type DraftFailure,
   type NormalizedDraftData,
 } from '@/features/cms/article-draft'
@@ -28,7 +29,8 @@ export type ArticleDraftActionResult =
 const savedSelect = { id: true, slug: true, updatedAt: true } as const
 
 function writeData(data: NormalizedDraftData) {
-  // Never spread request input or write ownership, lifecycle or relation fields.
+  // Never spread request input or write ownership/relation fields. Audience is
+  // normalized server-side; an omitted update leaves the persisted mode alone.
   return {
     title: data.title,
     slug: data.slug,
@@ -36,6 +38,7 @@ function writeData(data: NormalizedDraftData) {
     articleType: data.articleType,
     contentJson: data.contentJson as Prisma.InputJsonValue,
     contentText: data.contentText,
+    ...(data.audience === undefined ? {} : { accessMode: data.audience.accessMode }),
   }
 }
 
@@ -113,13 +116,26 @@ export async function updateArticleDraft(articleId: unknown, input: unknown): Pr
       const scope = articleCmsScope(actor)
       const article = await tx.article.findFirst({
         where: { AND: [{ id }, scope] },
-        select: { id: true, authorId: true, status: true, updatedAt: true, editorSchemaVersion: true, contentJson: true },
+        select: {
+          id: true, authorId: true, status: true, updatedAt: true, editorSchemaVersion: true,
+          title: true, slug: true, excerpt: true, articleType: true, contentJson: true, contentText: true,
+          accessMode: true, _count: { select: { products: true } },
+        },
       })
       if (!article) throw new ArticleDraftError('NOT_FOUND')
       if (!canEditArticleDraft(actor, article)) throw new ArticleDraftError('NOT_EDITABLE')
-      validateStoredEditorDocument(article.contentJson, article.editorSchemaVersion)
+      const persistedDocument = validateStoredEditorDocument(article.contentJson, article.editorSchemaVersion)
       if (article.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ArticleDraftError('EDIT_CONFLICT')
 
+      // W0 cannot interpret or mutate existing paid/product bindings. Read this
+      // evidence in the same transaction as the Article CAS; never treat missing
+      // or failed evidence as an empty set or infer PUBLIC from legacy null.
+      const audience = readStoredDraftAudience(article.accessMode, article._count.products)
+      const changed = article.title !== data.title || article.slug !== data.slug
+        || article.excerpt !== data.excerpt || article.articleType !== data.articleType
+        || article.contentText !== data.contentText
+        || JSON.stringify(persistedDocument.contentJson) !== JSON.stringify(data.contentJson)
+        || (data.audience !== undefined && audience.accessMode !== data.audience.accessMode)
       const nextUpdatedAt = nextArticleUpdatedAt(article.updatedAt)
       const updated = await tx.article.updateMany({
         where: { AND: [
@@ -129,7 +145,12 @@ export async function updateArticleDraft(articleId: unknown, input: unknown): Pr
           { updatedAt: expectedUpdatedAt },
           { authorId: article.authorId, status: article.status, editorSchemaVersion: 1 },
         ] },
-        data: { ...writeData(data), updatedAt: nextUpdatedAt },
+        data: {
+          ...writeData(data), updatedAt: nextUpdatedAt,
+          // Clear only the active basis, atomically with meaningful draft edits.
+          // Historical snapshots/reviews and lifecycle/publication fields stay intact.
+          ...(changed ? { activeReviewVersionId: null, activeApprovalVersionId: null } : {}),
+        },
       })
       if (updated.count !== 1) throw new ArticleDraftError('EDIT_CONFLICT')
 

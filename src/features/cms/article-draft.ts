@@ -17,11 +17,12 @@ const MESSAGES = {
   NOT_FOUND: 'Không tìm thấy bài viết.',
   NOT_EDITABLE: 'Bài viết không ở trạng thái cho phép chỉnh sửa.',
   EDIT_CONFLICT: 'Bài viết đã thay đổi. Giữ bản đang nhập và tải lại để đối chiếu.',
+  POLICY_UNRESOLVED: 'Quyền xem này chưa được hỗ trợ. Nội dung đang nhập vẫn được giữ lại.',
   UNSUPPORTED_DOCUMENT: 'Nội dung chưa được trình soạn thảo hỗ trợ.',
   INTERNAL_ERROR: 'Không thể lưu bài viết. Nội dung đang nhập vẫn được giữ lại.',
 } as const
 export type DraftErrorCode = keyof typeof MESSAGES
-export type DraftField = 'title' | 'slug' | 'excerpt' | 'articleType' | 'contentJson' | 'expectedUpdatedAt'
+export type DraftField = 'title' | 'slug' | 'excerpt' | 'articleType' | 'contentJson' | 'expectedUpdatedAt' | 'audience'
 export type DraftFailure = { code: DraftErrorCode; message: string; fieldErrors?: Partial<Record<DraftField, string>> }
 export class ArticleDraftError extends Error {
   readonly code: DraftErrorCode
@@ -34,7 +35,7 @@ export class ArticleDraftError extends Error {
   }
 }
 
-const FIELDS: readonly DraftField[] = ['title', 'slug', 'excerpt', 'articleType', 'contentJson', 'expectedUpdatedAt']
+const FIELDS: readonly DraftField[] = ['title', 'slug', 'excerpt', 'articleType', 'contentJson', 'expectedUpdatedAt', 'audience']
 const COMBINING_MARKS = new RegExp('\\p{M}', 'gu')
 function validation(field?: DraftField): never { throw new ArticleDraftError('VALIDATION_ERROR', field) }
 
@@ -60,9 +61,60 @@ function payload(input: unknown, update: boolean): Record<string, unknown> {
     }
     return result
   } catch (error) {
-    if (error instanceof ArticleDraftError) throw error
-    return validation()
+    const safe = mapDraftError(error)
+    return validation(FIELDS.find(field => safe.fieldErrors?.[field] !== undefined))
   }
+}
+
+// W0 can persist only unconfigured or PUBLIC audience. Paid binding requires
+// the authoritative C01 port in the same future writer transaction.
+export type DraftAudience = { accessMode: null | 'PUBLIC'; productIds: [] }
+
+// Persisted-state validation is separate from input validation: missing columns
+// or unexpected Product edges must never turn into an unconfigured draft.
+export function readStoredDraftAudience(accessMode: unknown, productCount: unknown): DraftAudience {
+  if (typeof productCount !== 'number' || !Number.isSafeInteger(productCount) || productCount < 0) {
+    throw new ArticleDraftError('INTERNAL_ERROR')
+  }
+  if (accessMode === 'PAID_PRODUCT') throw new ArticleDraftError('POLICY_UNRESOLVED', 'audience')
+  if ((accessMode !== null && accessMode !== 'PUBLIC') || productCount !== 0) throw new ArticleDraftError('INTERNAL_ERROR')
+  return { accessMode, productIds: [] }
+}
+
+function normalizeAudience(input: unknown): DraftAudience {
+  let mode: null | 'PUBLIC' | 'PAID_PRODUCT'
+  try {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return validation('audience')
+    const prototype = Object.getPrototypeOf(input)
+    if (prototype !== Object.prototype && prototype !== null) return validation('audience')
+    const keys = Reflect.ownKeys(input)
+    if (keys.length !== 2 || !keys.includes('accessMode') || !keys.includes('productIds')) return validation('audience')
+    const access = Object.getOwnPropertyDescriptor(input, 'accessMode')
+    const products = Object.getOwnPropertyDescriptor(input, 'productIds')
+    if (!access || !('value' in access) || !access.enumerable
+      || !products || !('value' in products) || !products.enumerable) return validation('audience')
+    if (access.value !== null && access.value !== 'PUBLIC' && access.value !== 'PAID_PRODUCT') return validation('audience')
+    mode = access.value
+    const ids: unknown = products.value
+    if (!Array.isArray(ids) || Object.getPrototypeOf(ids) !== Array.prototype) return validation('audience')
+    const length = Object.getOwnPropertyDescriptor(ids, 'length')
+    if (!length || !('value' in length) || !Number.isSafeInteger(length.value) || length.value < 0) return validation('audience')
+    const idKeys = Reflect.ownKeys(ids)
+    if (idKeys.length !== length.value + 1 || !idKeys.includes('length')) return validation('audience')
+    const seen = new Set<string>()
+    for (let index = 0; index < length.value; index++) {
+      const id = Object.getOwnPropertyDescriptor(ids, String(index))
+      if (!id || !('value' in id) || !id.enumerable || typeof id.value !== 'string'
+        || !/^[a-zA-Z0-9_-]{1,191}$/.test(id.value) || seen.has(id.value)) return validation('audience')
+      seen.add(id.value)
+    }
+    if (mode !== 'PAID_PRODUCT' && length.value !== 0) return validation('audience')
+  } catch {
+    // Do not propagate proxy trap errors, invoke accessors, or serialize input.
+    return validation('audience')
+  }
+  if (mode === 'PAID_PRODUCT') throw new ArticleDraftError('POLICY_UNRESOLVED', 'audience')
+  return { accessMode: mode, productIds: [] }
 }
 
 export type NormalizedDraftData = ValidatedEditorDocument & {
@@ -70,6 +122,7 @@ export type NormalizedDraftData = ValidatedEditorDocument & {
   slug: string
   excerpt: string
   articleType: ArticleType
+  audience?: DraftAudience
 }
 
 function normalize(input: Record<string, unknown>): NormalizedDraftData {
@@ -86,11 +139,13 @@ function normalize(input: Record<string, unknown>): NormalizedDraftData {
     excerpt,
     articleType: input.articleType as ArticleType,
     ...validateEditorDocument(input.contentJson),
+    ...(Object.prototype.hasOwnProperty.call(input, 'audience') ? { audience: normalizeAudience(input.audience) } : {}),
   }
 }
 
-export function normalizeCreateDraftInput(input: unknown): NormalizedDraftData {
-  return normalize(payload(input, false))
+export function normalizeCreateDraftInput(input: unknown): NormalizedDraftData & { audience: DraftAudience } {
+  const data = normalize(payload(input, false))
+  return { ...data, audience: data.audience ?? { accessMode: null, productIds: [] } }
 }
 
 export function parseExpectedUpdatedAt(input: unknown): Date {

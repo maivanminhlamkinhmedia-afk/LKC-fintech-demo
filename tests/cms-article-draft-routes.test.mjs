@@ -110,6 +110,7 @@ const updatedAt = new Date('2026-09-24T01:02:03.456Z')
 const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Tiếng Việt trong bản nháp' }] }] }
 function article(overrides = {}) {
   return { id: 'article-a', authorId: 'creator-a', title: 'Bài viết riêng', slug: 'bai-viet-rieng', excerpt: 'Tóm tắt', articleType: 'NEWS',
+    accessMode: null, _count: { products: 0 },
     status: 'DRAFT', updatedAt, publishedAt: null, editorSchemaVersion: 1, contentJson: doc, contentText: 'PRIVATE_DERIVED_TEXT',
     user: { password: 'PRIVATE_PASSWORD', email: 'PRIVATE_EMAIL' }, ...overrides }
 }
@@ -184,7 +185,7 @@ test('EDIT-06/08/09: eligible own/admin edit routes pass only safe canonical for
       assert.deepEqual(current.calls.slice(0, 3).map(call => call.kind), ['auth', 'params', 'editorQuery'])
       assert.deepEqual(calls('editorQuery')[0].args.where, { AND: [{ id: 'article-a' }, role === 'CREATOR' ? { authorId: 'creator-a' } : {}] })
       assert.deepEqual(calls('form')[0].args, { id: 'article-a', title: 'Bài viết riêng', slug: 'bai-viet-rieng', excerpt: 'Tóm tắt',
-        articleType: 'NEWS', contentJson: doc, updatedAt: updatedAt.toISOString() })
+        articleType: 'NEWS', contentJson: doc, updatedAt: updatedAt.toISOString(), audience: { accessMode: null, productIds: [] } })
     }
   }
 })

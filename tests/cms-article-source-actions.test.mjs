@@ -15,6 +15,7 @@ const base = new Date('2026-09-27T01:02:03.456Z')
 const actor = { id: 'creator-a', role: 'CREATOR', status: 'ACTIVE' }
 const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Nội dung tiếng Việt' }] }] }
 function article(overrides = {}) { return { id: 'article-a', authorId: actor.id, status: 'DRAFT', title: 'Bài viết', slug: 'bai-viet',
+  accessMode: null, _count: { products: 0 },
   contentJson: clone(doc), contentText: 'Nội dung tiếng Việt', editorSchemaVersion: 1, updatedAt: new Date(base), ...overrides } }
 function row(overrides = {}) { return { id: 'source-a', articleId: 'article-a', createdById: actor.id, sourceType: 'REPORT', title: 'Báo cáo',
   publisher: null, url: null, publishedAt: null, accessedAt: null, dataTimestamp: null, note: null,
