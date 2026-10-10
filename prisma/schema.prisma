@@ -72,6 +72,11 @@ enum ArticleType {
   OPINION
 }
 
+enum ArticleAccessMode {
+  PUBLIC
+  PAID_PRODUCT
+}
+
 enum ArticleStatus {
   DRAFT
   SUBMITTED
@@ -296,6 +301,8 @@ model Article {
   editorSchemaVersion Int           @default(1)
   articleType         ArticleType
   status              ArticleStatus @default(DRAFT)
+  /// NULL means UNCONFIGURED; audience is never inferred from Article status.
+  accessMode          ArticleAccessMode?
   authorId            String
   editorId            String?
   categoryId          String?
@@ -320,6 +327,7 @@ model Article {
   activeApprovalVersion ArticleVersion? @relation("ArticleActiveApprovalVersion", fields: [id, activeApprovalVersionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
 
   versions          ArticleVersion[]
+  products          ArticleProduct[]
   topics            ArticleTopicMapping[]
   tags              ArticleTagMapping[]
   instruments       ArticleInstrument[]
@@ -356,6 +364,8 @@ model ArticleVersion {
   editorSchemaVersion Int      @default(1)
   snapshotFormatVersion Int?
   basisUpdatedAt      DateTime? @db.DateTime(3)
+  /// Captured audience; NULL preserves incomplete legacy snapshots.
+  accessMode          ArticleAccessMode?
   slug                String?
   articleType         ArticleType?
   seoTitle            String?
@@ -378,6 +388,7 @@ model ArticleVersion {
   sources ArticleVersionSource[]
   disclosures ArticleVersionDisclosure[]
   media ArticleVersionMedia[]
+  products ArticleVersionProduct[]
 
   @@unique([articleId, versionNumber])
   @@unique([articleId, id])
@@ -788,4 +799,34 @@ model Product {
   saleStopped  Boolean             @default(true)
   createdAt    DateTime            @default(now()) @db.DateTime(3)
   updatedAt    DateTime            @updatedAt @db.DateTime(3)
+
+  articles        ArticleProduct[]
+  versionArticles ArticleVersionProduct[]
+}
+
+/// Working audience references. PUBLIC/PAID_PRODUCT consistency is a writer gate.
+model ArticleProduct {
+  articleId String
+  productId String @db.VarChar(191)
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([articleId, productId])
+  @@index([productId])
+}
+
+/// Snapshot audience references. Future writers enforce append-only capture;
+/// these FKs preserve identity/retention, not Product eligibility or entitlement.
+model ArticleVersionProduct {
+  articleId String
+  versionId String
+  productId String @db.VarChar(191)
+
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([versionId, productId])
+  @@index([articleId, versionId])
+  @@index([productId])
 }
