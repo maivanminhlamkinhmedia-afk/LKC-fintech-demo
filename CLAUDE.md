@@ -1,109 +1,44 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Start with [AGENTS.md](AGENTS.md) and the [LKC AI delivery operating model](docs/lkc-platform/AI-DELIVERY-OPERATING-MODEL.md). Claude 1 reviews CMS; Claude 2 reviews Portal/Product. Codex implements and fixes findings. ChatGPT provides BA, solution architecture and cross-team decisions; a complete task contract/checkpoint is sufficient for review without another ChatGPT-authored prompt.
 
-## Commands
+## Independent review
 
-```bash
-npm run dev       # Start dev server on localhost:3000
-npm run build     # Production build (also runs type-check)
-npm run lint      # ESLint
+Review the exact task allowlist, source branch/base/HEAD, working-tree diff and fingerprints. Keep source and assertions unchanged in review-only work; do not stage, commit, push or grant a shared slot. Tests, diff inspection and negative controls may run in isolated scratch environments with filtered/dummy configuration and separate outputs.
 
-# Prisma (use ./node_modules/.bin/prisma — global `prisma` may not be available)
-./node_modules/.bin/prisma generate          # Regenerate client after schema changes
-./node_modules/.bin/prisma migrate dev       # Create + apply migration (dev)
-./node_modules/.bin/prisma migrate deploy    # Apply migrations (production)
-./node_modules/.bin/prisma studio            # GUI to inspect the database
-```
+Return PASS/FAIL, finding IDs/severity/status, inspected revision and actual validation. Separate evidence you personally checked from author evidence or reports relayed by PO. A FAIL goes to Codex for scoped fixes and Claude regression; a PASS permits the authorized Codex publication workflow. Changes after review require evidence comparison and review of the affected delta. Never report a copied/mirrored reproduction as the original verified Git blob.
 
-No test runner is configured yet.
+Apply A/B/C classification from governance. Lane-private work needs no per-task registry slot; shared paths still have one writer and an effective handoff. High-risk execution and unresolved business decisions keep their approval gates. Keep current CMS/Product slots and independent lanes intact.
 
-## Architecture
+## Commands and their boundaries
 
-**Next.js 16 App Router** — feature-based structure. App router pages are thin shells; all logic lives in `src/features/`.
+Read [package.json](package.json) and the relevant test/source files at the task ref before running commands. The repository has Node's test runner and Playwright; there is no fixed test-count baseline for every branch.
 
-### Folder structure
-
-```
-src/
-├── app/
-│   ├── (dashboard)/          # Internal tool — Sidebar + Header shell
-│   │   ├── layout.tsx
-│   │   ├── page.tsx          # thin: imports from features/dashboard
-│   │   ├── traders/page.tsx  # thin: imports from features/traders
-│   │   ├── upload/page.tsx   # thin: imports from features/upload
-│   │   └── reports/page.tsx  # thin: imports from features/reports
-│   ├── page.tsx              # Landing homepage
-│   └── gioi-thieu, san-pham, goc-nhin, kien-thuc, nha-dau-tu/
-├── features/
-│   ├── landing/
-│   │   ├── data.ts           # All static landing content (NAV_LINKS, SLIDES, PRODUCTS…)
-│   │   └── components/       # Navbar, Footer, Logo, SectionLabel
-│   ├── dashboard/
-│   │   └── components/StatCards.tsx
-│   ├── traders/
-│   │   ├── components/TraderTable.tsx
-│   │   ├── queries.ts        # Prisma reads
-│   │   └── actions.ts        # Server Actions (mutations)
-│   ├── upload/
-│   │   ├── components/       # UploadZone, BatchHistory
-│   │   ├── excel.ts          # parseExcelBuffer(), detectWeekYear()
-│   │   ├── queries.ts
-│   │   └── actions.ts
-│   ├── scoring/
-│   │   └── engine.ts         # calculateScore(), getGrade()
-│   └── reports/
-│       ├── components/ReportTabs.tsx
-│       └── queries.ts
-├── components/
-│   ├── layout/               # Header, Sidebar — shared dashboard shell
-│   └── ui/                   # shadcn primitives (do not edit manually)
-└── lib/
-    ├── prisma.ts             # PrismaClient singleton
-    └── utils.ts              # cn() and other utilities
-```
-
-### Adding a new feature
-
-1. Create `src/features/<name>/` with `components/`, `queries.ts`, `actions.ts` as needed
-2. Import into the relevant `src/app/` page — keep pages thin
-3. Never import from one feature into another — shared logic goes in `src/lib/`
-
-### Data flow
-
-```
-Excel file (upload page)
-  → parseExcelBuffer()          src/features/upload/excel.ts
-  → API route (to be built)     src/app/api/upload/
-  → WeeklyEntry.rawData (JSON)  prisma/schema.prisma
-  → calculateScore(rawData)     src/features/scoring/engine.ts  ← computed on read, not stored
-  → UI pages / charts
-```
-
-`WeeklyEntry.rawData` stores raw Excel row data as JSON (MySQL native JSON column). Scores are **never persisted** — they are calculated on the fly by `calculateScore()` each time data is read. Changing the scoring formula retroactively applies to all historical entries without a migration.
-
-### Two stubs awaiting spec
-
-- **`src/features/scoring/engine.ts`** — `calculateScore()` returns zeroed placeholder. Once the scoring logic is known, implement it here. `ScoreResult` shape: `{ total: 0–100, components: {}, grade: A–F, flags: string[] }`.
-- **`src/features/upload/excel.ts`** — `detectWeekYear()` returns `null`. Once the Excel template format is known, implement column detection here.
-
-### Prisma setup (v7)
-
-Prisma 7 moves the connection URL out of `schema.prisma` — it lives in `prisma.config.ts` (reads `DATABASE_URL` from `.env`). The schema has **no `url =`** in the datasource block. After any schema change, run `prisma generate` before building.
-
-### Key models
-
-| Model | Purpose |
+| Command | Purpose / boundary |
 |---|---|
-| `Trader` | One row per trader; `accountId` maps to Excel identity column |
-| `WeeklyEntry` | One row per trader × week. `rawData` is the entire Excel row as JSON. Unique on `(traderId, year, week)`. |
-| `UploadBatch` | Audit trail for each file upload; entries link back to their batch for rollback |
-| `User` | Auth only — `Role` enum: `ADMIN / MANAGER / TRADER` |
+| `node --test tests/cms-article-draft-validation.test.mjs` | Example focused unit test; choose files for the actual delta. |
+| `npm run test:unit` | Unit/action suite: `node --test tests/*.test.mjs`; report actual pass/fail/skip/cancelled and skip reasons. |
+| `npm run lint` | ESLint; scoped lint is appropriate for small deltas. |
+| `npx tsc --noEmit --incremental false` | TypeScript check with the correct generated client and isolated output. |
+| `npx prisma validate` / `npx prisma generate` | Offline schema/client checks with dummy config; generation writes output, so isolate it. Neither proves DB compatibility. |
+| `npm run build` | Next build plus `scripts/cms-media/assemble-standalone.mjs`; use filtered/dummy env and separate output when required by the task. |
+| `npm run test:e2e:list` | Playwright discovery only, not browser execution PASS. |
+| `npm run test:e2e:staging` / `npm run test:e2e:cleanup` | Guarded staging execution/cleanup; require separately authorized target, lease, ownership and runbook. Do not run to validate docs. |
 
-### Adding new shadcn components
+On PowerShell use `npm.cmd`/`npx.cmd` if script execution policy blocks the .ps1 shims; do not change execution policy. Do not install dependencies, change Node or run a server just for a documentation review.
 
-```bash
-npx shadcn@latest add <component-name>
-```
+## Source architecture and current inventory
 
-Components install to `src/components/ui/`. `components.json` is the shadcn config.
+Next.js App Router pages delegate to feature modules in `src/features/`; shared contracts/infrastructure belong in `src/lib/`. Do not introduce cross-feature value imports; use an approved shared port/composition boundary. Preserve the Next.js agent rules and read the relevant installed Next guide before framework code changes.
+
+At the G0 base `5e6b14f006453da7f9b1554c210e9ad85a9f8c0c`, feature directories are chart, cms, crm, landing and users. The old traders/upload/scoring inventory and stub claims do not describe this tree. Use the current task ref for later Product/CMS branches; an unmerged PR is not code already on main.
+
+- [prisma/schema.prisma](prisma/schema.prisma) is the physical model inventory. [src/lib/roles.ts](src/lib/roles.ts) defines current permissions; [src/lib/auth.ts](src/lib/auth.ts) and [src/lib/authz.ts](src/lib/authz.ts) define auth boundaries. Do not rely on the obsolete ADMIN/MANAGER/TRADER role list.
+- [prisma.config.ts](prisma.config.ts) supplies the datasource URL; schema uses the mysql provider and [src/lib/prisma.ts](src/lib/prisma.ts) uses PrismaMariaDb. Do not open .env or infer the MariaDB target version from provider/adapter names.
+- [docs/cms/ROADMAP.md](docs/cms/ROADMAP.md) and [docs/cms/ACCEPTANCE.md](docs/cms/ACCEPTANCE.md) retain CMS history. Verify implementation/test status against source and evidence rather than treating historical checklists as current PASS.
+
+## CI and production
+
+[ci.yml](.github/workflows/ci.yml) currently validates pull requests targeting main, or workflow_dispatch with mode=validate. It configures Node 22, Prisma validate/generate, unit/action tests, lint, TypeScript and production build; inspect actual run/job logs before claiming any gate PASS. Dependency-base PRs need an authorized validate dispatch if no matching run exists. Never select the pinned cms009-candidate mode as replacement source CI.
+
+[deploy.yml](.github/workflows/deploy.yml) triggers on push to main, including docs merges, and supports manual dispatch. Do not merge, deploy, apply a real migration, run production tests or bypass branch protection through review/publication authority. G0 changes neither workflow nor protection. Manual authenticated production UAT remains **DEFERRED**.
