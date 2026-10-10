@@ -30,6 +30,7 @@ function DraftFormInstance({ initial }: { initial?: DraftEditorData }) {
     title: initial?.title ?? '', slug: initial?.slug ?? '', excerpt: initial?.excerpt ?? '',
     articleType: initial?.articleType ?? 'NEWS' as ArticleType,
     contentJson: initial?.contentJson ?? EMPTY_EDITOR_DOCUMENT,
+    audience: initial?.audience ?? { accessMode: null, productIds: [] },
   }))
   const valuesRef = useRef(values)
   const [controller] = useState(() => initial ? createArticleAutosave({
@@ -242,6 +243,20 @@ function DraftFormInstance({ initial }: { initial?: DraftEditorData }) {
             </select>
             <p id="article-type-error" className="mt-1 text-sm text-red-700">{fieldErrors?.articleType}</p>
           </div>
+        </div>
+        <div>
+          <label htmlFor="article-audience" className="mb-2 block font-medium">Quyền xem</label>
+          <select id="article-audience" name="audience" value={values.audience?.accessMode ?? ''} className={inputClass}
+            aria-invalid={!!fieldErrors?.audience} aria-describedby="article-audience-help article-audience-error"
+            onChange={event => {
+              const accessMode = event.target.value === 'PUBLIC' ? 'PUBLIC' : null
+              changeValues(current => ({ ...current, audience: { accessMode, productIds: [] } }))
+            }}>
+            <option value="">Chưa cấu hình</option>
+            <option value="PUBLIC">Công khai (PUBLIC)</option>
+          </select>
+          <p id="article-audience-help" className="mt-1 text-xs text-slate-500">Có thể lưu nháp khi chưa cấu hình. Lựa chọn này không xuất bản bài viết.</p>
+          <p id="article-audience-error" className="mt-1 text-sm text-red-700">{fieldErrors?.audience}</p>
         </div>
         <div>
           <label htmlFor="article-excerpt" className="mb-2 block font-medium">Tóm tắt</label>

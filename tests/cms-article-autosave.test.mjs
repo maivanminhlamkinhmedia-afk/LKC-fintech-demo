@@ -321,7 +321,7 @@ test('AUTO-12 INTERNAL_ERROR and synchronous transport throws never cause automa
   assert.equal(JSON.stringify(throwing.controller.getState()).includes('SYNTHETIC_PRIVATE'), false)
 })
 
-for (const code of ['EDIT_CONFLICT', 'FORBIDDEN', 'NOT_FOUND', 'NOT_EDITABLE', 'UNSUPPORTED_DOCUMENT']) {
+for (const code of ['EDIT_CONFLICT', 'FORBIDDEN', 'NOT_FOUND', 'NOT_EDITABLE', 'UNSUPPORTED_DOCUMENT', 'POLICY_UNRESOLVED']) {
   test(`AUTO-13/14/15/16/17 ${code} stops queued and future mutations while preserving dirty navigation warning`, async () => {
     const h = setup()
     h.controller.setValues(values({ title: 'S1' })); await h.tick(2000)
@@ -414,4 +414,99 @@ test('invalid ACK identity/token cannot advance the confirmed baseline or trigge
     assert.equal(h.calls.length, 1)
     assert.equal(h.controller.getState().phase, 'uncertain')
   }
+})
+
+test('W0 audience participates in immutable snapshots, dirty state and the single-flight confirmed baseline', async () => {
+  const audience = { accessMode: null, productIds: [] }
+  const h = setup({ initial: values({ audience }) })
+  h.controller.setValues(values({ audience: { accessMode: null, productIds: [] } }))
+  await h.tick(5000)
+  assert.equal(h.calls.length, 0, 'Initial audience must not cause a hydration write')
+  const input = values({ audience: { accessMode: 'PUBLIC', productIds: [] } })
+  h.controller.setValues(input)
+  assert.equal(h.controller.getState().dirty, true)
+  input.audience.accessMode = null
+  input.audience.productIds.push('mutated-after-capture')
+  await h.tick(1999); assert.equal(h.calls.length, 0)
+  await h.tick(1)
+  assert.deepEqual(h.calls[0].payload.audience, { accessMode: 'PUBLIC', productIds: [] })
+  assert.equal(h.controller.getState().phase, 'saving')
+  assert.throws(() => { h.calls[0].payload.audience.accessMode = null }, TypeError)
+  assert.throws(() => h.calls[0].payload.audience.productIds.push('injected'), TypeError)
+  h.controller.setValues(values({ title: 'Newest content', audience: { accessMode: null, productIds: [] } }))
+  await h.tick(2000)
+  assert.equal(h.calls.length, 1)
+  await h.ack(0, ok(6))
+  assert.equal(h.calls.length, 2)
+  assert.equal(h.calls[1].payload.title, 'Newest content')
+  assert.equal(h.calls[1].payload.expectedUpdatedAt, token(6))
+  assert.deepEqual(h.calls[1].payload.audience, { accessMode: null, productIds: [] })
+  assert.equal(h.controller.getState().phase, 'saving', 'An older ACK must not confirm unsent audience/content')
+  await h.ack(1, ok(7))
+  assert.equal(h.controller.getState().phase, 'clean')
+  assert.equal(h.maxConcurrent(), 1)
+  await h.controller.manualSave(); await h.tick(5000)
+  assert.equal(h.calls.length, 2)
+})
+
+test('W0 legacy audience omission survives snapshot capture and canonical ACK without manufacturing a clear', async () => {
+  const h = setup()
+  h.controller.setValues(values({ slug: 'Canonical Slug' }))
+  await h.tick(2000)
+  assert.equal(Object.hasOwn(h.calls[0].payload, 'audience'), false)
+  await h.ack(0, ok(1, 'canonical-slug'))
+  await h.tick(5000)
+  assert.equal(h.controller.getState().phase, 'clean')
+  assert.equal(h.calls.length, 1)
+  h.controller.setValues(values({ slug: 'canonical-slug', audience: { accessMode: null, productIds: [] } }))
+  await h.tick(2000)
+  assert.equal(h.calls.length, 2, 'Explicit unconfigured is distinct from omitted audience')
+  assert.deepEqual(h.calls[1].payload.audience, { accessMode: null, productIds: [] })
+  await h.ack(1, ok(2, 'canonical-slug'))
+})
+
+test('W0 offline audience edits remain local; unknown outcome keeps old CAS and never automatically retries', async () => {
+  const h = setup({ initial: values({ audience: { accessMode: null, productIds: [] } }) })
+  h.controller.setOnline(false)
+  h.controller.setValues(values({ audience: { accessMode: 'PUBLIC', productIds: [] } }))
+  await h.tick(5000); await h.controller.manualSave()
+  assert.equal(h.calls.length, 0)
+  assert.equal(h.controller.getState().phase, 'offline')
+  h.controller.setOnline(true)
+  await h.tick(1999); assert.equal(h.calls.length, 0)
+  await h.tick(1)
+  assert.deepEqual(h.calls[0].payload.audience, { accessMode: 'PUBLIC', productIds: [] })
+  await h.reject(0)
+  assert.equal(h.controller.getState().phase, 'uncertain')
+  h.controller.setValues(values({ title: 'Keep typing', audience: { accessMode: null, productIds: [] } }))
+  h.controller.setOnline(false); h.controller.setOnline(true)
+  await h.tick(10000)
+  assert.equal(h.calls.length, 1)
+  const manual = h.controller.manualSave()
+  assert.equal(h.calls[1].payload.expectedUpdatedAt, initialToken)
+  assert.deepEqual(h.calls[1].payload.audience, { accessMode: null, productIds: [] })
+  await h.ack(1, fail('EDIT_CONFLICT')); await manual
+  await h.controller.manualSave(); await h.tick(5000)
+  assert.equal(h.calls.length, 2)
+  assert.equal(h.controller.shouldWarn(), true)
+})
+
+test('W0 strict audience capture blocks malformed, paid and hostile payloads before dispatch', async () => {
+  let invoked = 0
+  const getter = Object.defineProperty({}, 'accessMode', { enumerable: true, get() { invoked++; return 'PUBLIC' } })
+  getter.productIds = []
+  const h = setup()
+  for (const audience of [undefined, null, {}, { accessMode: 'PUBLIC' }, { accessMode: 'PUBLIC', productIds: ['product-a'] },
+    { accessMode: 'PAID_PRODUCT', productIds: ['product-a'] }, getter,
+    new Proxy({}, { ownKeys() { throw new Error('PRIVATE_PROXY_ERROR') } })]) {
+    h.controller.setValues(values({ audience }))
+    await h.controller.manualSave(); await h.tick(5000)
+    assert.equal(h.calls.length, 0)
+    assert.equal(h.controller.getState().phase, 'validation-blocked')
+    assert.equal(JSON.stringify(h.controller.getState()).includes('PRIVATE_PROXY_ERROR'), false)
+  }
+  assert.equal(invoked, 0)
+  h.controller.setValues(values({ audience: { accessMode: 'PUBLIC', productIds: [] } }))
+  await h.tick(2000); await h.ack(0)
+  assert.equal(h.controller.getState().phase, 'clean')
 })

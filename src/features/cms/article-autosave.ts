@@ -5,7 +5,7 @@ import {
 } from './article-draft'
 
 export const AUTOSAVE_DELAY_MS = 2000
-export type DraftValues = Pick<NormalizedDraftData, 'title' | 'slug' | 'excerpt' | 'articleType' | 'contentJson'>
+export type DraftValues = Pick<NormalizedDraftData, 'title' | 'slug' | 'excerpt' | 'articleType' | 'contentJson' | 'audience'>
 export type AutosavePhase = 'clean' | 'dirty' | 'saving' | 'offline' | 'validation-blocked' | 'conflict' | 'terminal' | 'uncertain' | 'leaving'
 export type ArticleAutosaveState = Readonly<{
   phase: AutosavePhase; dirty: boolean; pending: boolean; error: DraftFailure | null; warning: string
@@ -31,8 +31,12 @@ function snapshot(input: unknown): Snapshot {
   // Validation must precede any stringify or property read: never invoke an
   // untrusted getter/toJSON or erase a rejected value to manufacture valid JSON.
   const normalized = normalizeCreateDraftInput(input)
+  // Omission is meaningful for an older client: keep the persisted audience.
+  // Only include explicit audience in a captured update, after strict validation.
+  const audience = Object.getOwnPropertyDescriptor(input, 'audience')
   const values = freezeJson({ title: normalized.title, slug: normalized.slug, excerpt: normalized.excerpt,
-    articleType: normalized.articleType, contentJson: normalized.contentJson })
+    articleType: normalized.articleType, contentJson: normalized.contentJson,
+    ...(audience ? { audience: normalized.audience } : {}) })
   const rawSlug = Object.getOwnPropertyDescriptor(input, 'slug')!.value as string
   return { values, fingerprint: JSON.stringify(values), rawSlug }
 }
@@ -141,7 +145,7 @@ export function createArticleAutosave(options: Options) {
             case 'VALIDATION_ERROR': blockedFingerprint = sent.fingerprint; break
             case 'SLUG_CONFLICT': blockedSlug = sent.values.slug; break
             case 'EDIT_CONFLICT': barrier = 'conflict'; break
-            case 'FORBIDDEN': case 'NOT_FOUND': case 'NOT_EDITABLE': case 'UNSUPPORTED_DOCUMENT': barrier = 'terminal'; break
+            case 'FORBIDDEN': case 'NOT_FOUND': case 'NOT_EDITABLE': case 'UNSUPPORTED_DOCUMENT': case 'POLICY_UNRESOLVED': barrier = 'terminal'; break
             default: uncertain()
           }
         }
