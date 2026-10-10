@@ -78,7 +78,7 @@ const hook = registerHooks({
   resolve(specifier, context, nextResolve) {
     if (substitutes.has(specifier)) return nextResolve(substitutes.get(specifier), context)
     if (specifier === '@/components/portal/PortalShell') return nextResolve(shellUrl, context)
-    if (specifier === '@/lib/roles') return nextResolve([homeUrl, shellUrl].includes(context.parentURL) ? navRolesUrl : rolesUrl, context)
+    if (specifier === '@/lib/roles') return nextResolve([pageUrl, homeUrl, shellUrl].includes(context.parentURL) ? navRolesUrl : rolesUrl, context)
     if (specifier.startsWith('@/')) return nextResolve(new URL(`${specifier.slice(2)}.ts`, sourceRoot).href, context)
     if (context.parentURL === helperUrl && specifier === './access') return nextResolve(accessUrl, context)
     if (context.parentURL?.startsWith(sourceRoot.href) && specifier.startsWith('./') && !/\.[a-z]+$/i.test(specifier)) {
@@ -405,4 +405,19 @@ test('creator dashboard remains a Server Component and removes the former Analys
   scenario()
   const html = await render()
   assert.equal(html.includes('Creator/Analyst/Admin'), false)
+})
+
+test('Q1: creator dashboard links the review queue only when both existing reviewer permissions are present', async () => {
+  for (const role of ['CREATOR', 'ADMIN', 'SUPER_ADMIN']) {
+    scenario(role)
+    const links = hrefs(await render())
+    const eligible = hasPermission(role, 'cms:article:read:any') && hasPermission(role, 'cms:article:review')
+    assert.equal(links.includes('/creator/review'), eligible, role)
+  }
+  // Separate the permissions so a future matrix change cannot silently weaken
+  // the navigation condition to either permission alone.
+  for (const [readAny, review] of [[false, false], [false, true], [true, false], [true, true]]) {
+    scenario('ADMIN', { navOverrides: { 'cms:article:read:any': readAny, 'cms:article:review': review } })
+    assert.equal(hrefs(await render()).includes('/creator/review'), readAny && review)
+  }
 })
