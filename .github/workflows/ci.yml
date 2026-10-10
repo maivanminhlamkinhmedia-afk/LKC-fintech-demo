@@ -37,7 +37,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0 # merge-base history for advisory PR path audit
           persist-credentials: false
 
       - name: Record checkout provenance
@@ -83,6 +83,23 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+
+      - name: Advisory PR evidence audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          node scripts/ci/pr-evidence-audit.mjs > "$RUNNER_TEMP/pr-evidence-audit.json"
+          cat "$RUNNER_TEMP/pr-evidence-audit.json"
+
+      - name: Upload advisory evidence report
+        if: ${{ always() && !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-evidence-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pr-evidence-audit.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Install dependencies
         run: npm ci
