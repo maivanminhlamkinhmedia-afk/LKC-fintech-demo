@@ -18,6 +18,76 @@ const columns = new Map([...executableSql.matchAll(/^\s*`(\w+)` ([^\r\n]+)/gm)]
   .map(([, name, declaration]) => [name, declaration.replace(/,$/, '')]))
 const names = ['id', 'name', 'contentState', 'saleStopped', 'createdAt', 'updatedAt']
 
+function modelFields(candidateSchema, modelName) {
+  const match = candidateSchema.match(new RegExp(`^model ${modelName} \\{([\\s\\S]*?)^\\}`, 'm'))
+  assert.ok(match, `${modelName} model must exist`)
+  const entries = match[1].split(/\r?\n/).map(line => line.replace(/\/\/.*$/, '').trim())
+    .filter(line => line && !line.startsWith('@@')).map(line => {
+      const [name, ...declaration] = line.split(/\s+/)
+      return [name, declaration.join(' ')]
+    })
+  assert.equal(new Set(entries.map(([name]) => name)).size, entries.length, 'no duplicate fields')
+  return new Map(entries)
+}
+
+function assertProductBoundary(candidateSchema) {
+  const candidateFields = modelFields(candidateSchema, 'Product')
+  const scalarFields = [...candidateFields].filter(([, declaration]) => !declaration.includes('[]'))
+  assert.deepEqual(scalarFields.map(([name]) => name), names, 'exactly six persisted Product scalars')
+  for (const [, declaration] of scalarFields) assert.doesNotMatch(declaration, /\?/)
+  const reverseTypes = [...candidateFields].filter(([, declaration]) => declaration.includes('[]'))
+    .map(([, declaration]) => {
+      assert.match(declaration, /^(?:ArticleProduct|ArticleVersionProduct)\[\]$/, 'only audience reverse lists')
+      return declaration
+    })
+  assert.equal(new Set(reverseTypes).size, reverseTypes.length, 'at most one reverse list per edge type')
+  assert.doesNotMatch(candidateSchema, /^model (?:ProductPlan|Subscription)\b/m)
+  // Audience edges may reference Product; they must not become another catalog.
+  // Exact FK/index/retention enforcement belongs to the audience schema tests.
+  for (const [edge, ids, targets] of [
+    ['ArticleProduct', ['articleId', 'productId'], ['Article', 'Product']],
+    ['ArticleVersionProduct', ['articleId', 'productId', 'versionId'], ['ArticleVersion', 'Product']],
+  ]) {
+    if (!new RegExp(`^model ${edge} \\{`, 'm').test(candidateSchema)) continue
+    const edgeFields = [...modelFields(candidateSchema, edge)]
+    const edgeScalars = edgeFields.filter(([, declaration]) => !declaration.includes('@relation'))
+    assert.deepEqual(edgeScalars.map(([name]) => name).sort(), ids, 'edge stores IDs, not catalog scalars')
+    for (const [, declaration] of edgeScalars) assert.match(declaration, /^String(?: @db\.VarChar\(191\))?$/)
+    const relations = edgeFields.filter(([, declaration]) => declaration.includes('@relation'))
+    assert.deepEqual(relations.map(([, declaration]) => declaration.split(' ')[0]).sort(), targets)
+    const productRelation = relations.find(([, declaration]) => declaration.startsWith('Product '))
+    assert.match(productRelation[1], /fields:\s*\[productId\],\s*references:\s*\[id\]/)
+  }
+}
+
+const audienceSchema = /^model ArticleProduct \{/m.test(schema) ? schema : schema.replace(/^model Product \{/m,
+  'model Product {\n  articles ArticleProduct[]\n  versionArticles ArticleVersionProduct[]')
+  .replace(/^model Article \{/m, 'model Article {\n  accessMode ArticleAccessMode?\n  products ArticleProduct[]')
+  .replace(/^model ArticleVersion \{/m, 'model ArticleVersion {\n  accessMode ArticleAccessMode?\n  products ArticleVersionProduct[]') + `
+enum ArticleAccessMode {
+  PUBLIC
+  PAID_PRODUCT
+}
+model ArticleProduct {
+  articleId String
+  productId String @db.VarChar(191)
+  article Article @relation(fields: [articleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@id([articleId, productId])
+  @@index([productId])
+}
+model ArticleVersionProduct {
+  articleId String
+  versionId String
+  productId String @db.VarChar(191)
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  @@id([versionId, productId])
+  @@index([articleId, versionId])
+  @@index([productId])
+}
+`
+
 test('PERSIST-01: only the opaque ID is identity; names can be renamed or shared', () => {
   assert.equal(fields.get('id'), 'String @id @default(cuid()) @db.VarChar(191)')
   assert.equal(fields.get('name'), 'String @db.VarChar(191)')
@@ -54,9 +124,8 @@ test('PERSIST-02: fail-closed defaults keep saleStopped independent of contentSt
 })
 
 test('PERSIST-03: required scalar fields and timestamp precision match SQL', () => {
-  assert.deepEqual([...fields.keys()], names)
+  assertProductBoundary(schema)
   assert.deepEqual([...columns.keys()], names)
-  assert.doesNotMatch(product, /\?|\[\]/)
   assert.equal(fields.get('createdAt'), 'DateTime @default(now()) @db.DateTime(3)')
   assert.equal(fields.get('updatedAt'), 'DateTime @updatedAt @db.DateTime(3)')
   assert.equal(columns.get('createdAt'), 'DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)')
@@ -74,8 +143,31 @@ test('PERSIST-03: migration is exactly one expand-only Product creation', () => 
   assert.deepEqual(constraints, ['PRIMARY KEY (`id`)'])
 })
 
-test('PERSIST-03: Product has no Plan, CMS, audience, entitlement or runtime binding', () => {
-  assert.doesNotMatch(product, /@relation|@@index|\b(?:ProductPlan|Article|ArticleVersion|User|Subscription|price|productId|accessMode)\b/)
-  assert.doesNotMatch(schema, /^model (?:ProductPlan|ArticleProduct|ArticleVersionProduct)\b/m)
+test('PERSIST-03: Product permits only audience reverse relations, not commercial or runtime binding', () => {
+  assertProductBoundary(schema)
+  assert.doesNotMatch(product, /@relation|@@index/)
   assert.doesNotMatch(executableSql, /`(?:Article|ArticleVersion|ProductPlan|Subscription|User|publishedVersionId|accessMode)`/)
+})
+
+test('PERSIST-03 compatibility: typed audience edges preserve the six Product scalars', () => {
+  assertProductBoundary(audienceSchema)
+})
+
+test('PERSIST-03 negative controls: reject extra scalars, FK fields and unrelated relations', () => {
+  for (const declaration of [
+    'price Int', 'productId String', 'entitled Boolean', 'plan ProductPlan[]',
+    'users User[]', 'subscription Subscription?', 'other ArticleProduct[]',
+    'retained ArticleVersionProduct[]', 'article ArticleProduct?',
+  ]) {
+    const invalid = audienceSchema.replace(/^model Product \{/m, `model Product {\n  ${declaration}`)
+    assert.throws(() => assertProductBoundary(invalid), assert.AssertionError, declaration)
+  }
+  for (const edge of ['ArticleProduct', 'ArticleVersionProduct']) {
+    const invalid = audienceSchema.replace(`model ${edge} {`, `model ${edge} {\n  name String`)
+    assert.throws(() => assertProductBoundary(invalid), assert.AssertionError, `${edge} is not a catalog`)
+  }
+  for (const model of ['ProductPlan', 'Subscription']) {
+    assert.throws(() => assertProductBoundary(`${audienceSchema}\nmodel ${model} {\n  id String @id\n}\n`),
+      assert.AssertionError, model)
+  }
 })
