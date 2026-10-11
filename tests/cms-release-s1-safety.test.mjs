@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   EXECUTION_GRANT, createOperationLedger, deriveMigrationBytes, evaluateWorkflowEvent,
-  executeRehearsal, validateTarget, verifyArtifact,
+  assessExecutionPreflight, executeRehearsal, parsePartialDdlFailure, validateMigrationHistory, validateTarget, verifyArtifact,
 } from '../scripts/cms-release-s1/run.mjs';
 import * as fixtures from '../scripts/cms-release-s1/fixture-plan.mjs';
 import * as metadata from '../scripts/cms-release-s1/metadata.mjs';
@@ -647,4 +647,463 @@ test('ledger snapshots cannot be used to rewrite prior operation state', () => {
     else snapshot.entries = [];
   } catch { /* Frozen snapshots reject writes; detached snapshots are also safe. */ }
   assert.equal(metadata.canonicalJson(ledger.snapshot()), expected);
+});
+
+function partialDdlLog() {
+  return "A migration failed.\nDatabase error code: 1050\n\nDatabase error:\nTable 'ArticleVersionCategory' already exists\n";
+}
+
+function syntheticHistory(variant, phase = 'final') {
+  const count = phase === 'baseline' ? 4 : variant === 'fault' ? 5 : 7;
+  return fixtures.MIGRATIONS.slice(0, count).map((migration, index) => {
+    const failed = phase === 'final' && variant === 'fault' && index === 4;
+    return {
+      migration_name: migration.name,
+      checksum: variant === 'crlf' && index < 3 ? migration.crlfSha256 : migration.lfSha256,
+      started: 1, completed: failed ? 0 : 1, rolled_back: 0,
+      applied_steps_count: failed ? 0 : 1,
+      logs: failed ? partialDdlLog() : null,
+    };
+  });
+}
+
+test('P7 partial-DDL parser fixes the historical double-escaped whitespace regression', () => {
+  const input = partialDdlLog();
+  assert.equal(/Database error code:\\s*1050/.test(input), false,
+    'negative control: reviewed baseline regex fails ordinary Prisma code text');
+  const result = parsePartialDdlFailure(input);
+  assert.deepEqual(result, {
+    errorCode: 1050, table: 'ArticleVersionCategory', logsSha256: hash(input),
+  });
+  assert.ok(Object.isFrozen(result));
+});
+
+test('P7 partial-DDL parser accepts bounded LF/CRLF, tab separators and expected backtick table identity', () => {
+  const inputs = [
+    partialDdlLog(),
+    partialDdlLog().replaceAll('\n', '\r\n'),
+    partialDdlLog().replace('code: 1050', 'code:\t1050'),
+    partialDdlLog().replace('code: 1050', 'code:\n1050'),
+    partialDdlLog().replace("'ArticleVersionCategory'", String.fromCharCode(96) + 'ArticleVersionCategory' + String.fromCharCode(96)),
+  ];
+  for (const input of inputs) {
+    assert.deepEqual(parsePartialDdlFailure(input), {
+      errorCode: 1050, table: 'ArticleVersionCategory', logsSha256: hash(input),
+    });
+  }
+});
+
+test('P7 partial-DDL parser rejects missing whitespace and nearby or suffixed error codes', async () => {
+  for (const replacement of [
+    'code:1050', 'code: 105', 'code: 10500', 'code: 10501', 'code: 11050',
+    'code: 1050suffix', 'code: 1050.0', 'code: +1050', 'code: 1050 1051',
+  ]) {
+    await refuses(() => parsePartialDdlFailure(partialDdlLog().replace('code: 1050', replacement)));
+  }
+  await refuses(() => parsePartialDdlFailure(partialDdlLog().replace('error:\nTable', "error:Table")));
+});
+
+test('P7 partial-DDL parser rejects wrong, prefixed, suffixed and differently cased table identities', async () => {
+  for (const name of [
+    'ArticleVersionProduct', 'OtherArticleVersionCategory', 'ArticleVersionCategoryExtra',
+    'articleversioncategory', 'private.ArticleVersionCategory',
+  ]) {
+    await refuses(() => parsePartialDdlFailure(partialDdlLog().replace('ArticleVersionCategory', name)));
+  }
+  await refuses(() => parsePartialDdlFailure(partialDdlLog().replace('already exists', 'does not exist')));
+});
+
+test('P7 partial-DDL parser does not join table identity and exists text across newline or arbitrary text', async () => {
+  for (const separator of ['\n', '\r\n', ' unexpected table ']) {
+    const input = partialDdlLog().replace("' already exists", "'" + separator + 'already exists');
+    await refuses(() => parsePartialDdlFailure(input));
+  }
+  const oldNewlineBug = "ArticleVersionCategory'\nalready exists";
+  assert.equal(/ArticleVersionCategory[^\\n]*already exists/.test(oldNewlineBug), true,
+    'negative control: historical regex can match across a newline');
+});
+
+test('P7 partial-DDL parser rejects missing or repeated error identity fields', async () => {
+  for (const input of [
+    partialDdlLog().replace('Database error code: 1050\n', ''),
+    partialDdlLog().replace('Database error:\n', ''),
+    partialDdlLog() + 'Database error code: 1050\n',
+    partialDdlLog() + 'Database error code: 1051\n',
+    partialDdlLog() + "Database error:\nTable 'ArticleVersionCategory' already exists\n",
+  ]) await refuses(() => parsePartialDdlFailure(input));
+});
+
+test('P7 partial-DDL parser rejects malformed/oversized input without invoking hostile values', async () => {
+  let reads = 0;
+  const getter = Object.defineProperty({}, 'logs', {
+    get() { reads += 1; throw new Error(secretCanary); },
+  });
+  const proxy = new Proxy({}, { get() { throw new Error(secretCanary); }, ownKeys() { throw new Error(secretCanary); } });
+  for (const input of [null, undefined, {}, [], 1050, Buffer.from(partialDdlLog()), getter, proxy,
+    partialDdlLog() + 'x'.repeat(8 * 1024 * 1024 + 1)]) {
+    await refuses(() => parsePartialDdlFailure(input));
+  }
+  assert.equal(reads, 0);
+});
+
+test('P7 partial-DDL parser hashes but never exports raw error text or a synthetic secret canary', () => {
+  const input = partialDdlLog() + secretCanary;
+  const result = parsePartialDdlFailure(input);
+  assert.equal(result.logsSha256, hash(input));
+  assert.equal(JSON.stringify(result).includes(secretCanary), false);
+  assert.deepEqual(Object.keys(result).sort(), ['errorCode', 'logsSha256', 'table']);
+});
+
+test('P7 baseline history accepts exactly four completed migration identities in each variant', () => {
+  for (const variant of ['lf', 'crlf', 'fault', 'recovery']) {
+    const result = validateMigrationHistory(syntheticHistory(variant, 'baseline'), variant, 'baseline');
+    assert.equal(result.variant, variant);
+    assert.equal(result.phase, 'baseline');
+    assert.equal(result.rows.length, 4);
+    assert.ok(result.rows.every((row) => row.status === 'COMPLETED' && row.started === true
+      && row.completed === true && row.rolledBack === false));
+    assert.equal(result.historySha256, hash(metadata.canonicalJson({ variant: result.variant, phase: result.phase, rows: result.rows })));
+  }
+});
+
+test('P7 final LF, CRLF and recovery histories require all seven completed migrations', () => {
+  for (const variant of ['lf', 'crlf', 'recovery']) {
+    const rows = syntheticHistory(variant);
+    const result = validateMigrationHistory(rows, variant);
+    assert.equal(result.variant, variant);
+    assert.equal(result.phase, 'final');
+    assert.equal(result.rows.length, 7);
+    assert.deepEqual(result.rows.map((row) => row.name), fixtures.MIGRATIONS.map((migration) => migration.name));
+    assert.ok(result.rows.every((row) => row.status === 'COMPLETED' && row.started === true
+      && row.completed === true && row.rolledBack === false && row.logsSha256 === null));
+    assert.equal(result.historySha256, hash(metadata.canonicalJson({ variant: result.variant, phase: result.phase, rows: result.rows })));
+  }
+});
+
+test('P7 final fault history contains four completions and only the expected foundation failure', () => {
+  const input = syntheticHistory('fault');
+  const result = validateMigrationHistory(input, 'fault');
+  assert.equal(result.rows.length, 5);
+  assert.ok(result.rows.slice(0, 4).every((row) => row.status === 'COMPLETED'));
+  assert.deepEqual(result.rows[4], {
+    name: fixtures.MIGRATIONS[4].name,
+    checksum: fixtures.MIGRATIONS[4].lfSha256,
+    status: 'EXPECTED_FAILED', started: true, completed: false, rolledBack: false,
+    appliedSteps: 0, logsSha256: hash(input[4].logs),
+  });
+  assert.equal(result.historySha256, hash(metadata.canonicalJson({ variant: result.variant, phase: result.phase, rows: result.rows })));
+});
+
+test('P7 history rejects missing, duplicated, extra, reordered or substituted migrations', async () => {
+  for (const variant of ['lf', 'crlf', 'fault', 'recovery']) {
+    for (const mutate of [
+      (rows) => { rows.pop(); },
+      (rows) => { rows.push(copy(rows[0])); },
+      (rows) => { rows[1] = copy(rows[0]); },
+      (rows) => { [rows[0], rows[1]] = [rows[1], rows[0]]; },
+      (rows) => { rows[0].migration_name = '20261010000000_unexpected'; },
+    ]) {
+      const rows = syntheticHistory(variant);
+      mutate(rows);
+      await refuses(() => validateMigrationHistory(rows, variant));
+    }
+  }
+  const fault = syntheticHistory('fault');
+  fault.push(syntheticHistory('lf')[5]);
+  await refuses(() => validateMigrationHistory(fault, 'fault'));
+});
+
+test('P7 history rejects checksum corruption and LF/CRLF representation confusion', async () => {
+  for (const variant of ['lf', 'crlf', 'fault', 'recovery']) {
+    for (const checksum of [null, '', '0'.repeat(64), secretCanary]) {
+      const rows = syntheticHistory(variant);
+      rows[0].checksum = checksum;
+      await refuses(() => validateMigrationHistory(rows, variant));
+    }
+    const swapped = syntheticHistory(variant);
+    swapped[0].checksum = variant === 'crlf'
+      ? fixtures.MIGRATIONS[0].lfSha256 : fixtures.MIGRATIONS[0].crlfSha256;
+    await refuses(() => validateMigrationHistory(swapped, variant));
+  }
+  const fourth = syntheticHistory('crlf');
+  fourth[3].checksum = fixtures.MIGRATIONS[3].crlfSha256;
+  await refuses(() => validateMigrationHistory(fourth, 'crlf'));
+  const fault = syntheticHistory('fault');
+  fault[4].checksum = '0'.repeat(64);
+  await refuses(() => validateMigrationHistory(fault, 'fault'));
+});
+
+test('P7 history rejects rollback, unstarted, incomplete and inconsistent completion states', async () => {
+  for (const variant of ['lf', 'crlf', 'fault', 'recovery']) {
+    for (const patch of [
+      { rolled_back: 1 }, { started: 0 }, { completed: 0 }, { applied_steps_count: 0 },
+    ]) {
+      const rows = syntheticHistory(variant);
+      Object.assign(rows[0], patch);
+      await refuses(() => validateMigrationHistory(rows, variant));
+    }
+  }
+  for (const patch of [
+    { completed: 1 }, { started: 0 }, { rolled_back: 1 }, { logs: null },
+    { logs: partialDdlLog().replace('1050', '1051') },
+    { logs: partialDdlLog().replace('ArticleVersionCategory', 'ArticleVersionMedia') },
+  ]) {
+    const rows = syntheticHistory('fault');
+    Object.assign(rows[4], patch);
+    await refuses(() => validateMigrationHistory(rows, 'fault'));
+  }
+});
+
+test('P7 history requires bounded integer step counts and numeric database flags', async () => {
+  for (const value of [-1, 1.5, 100001, '1', null, NaN, Infinity]) {
+    const rows = syntheticHistory('lf');
+    rows[0].applied_steps_count = value;
+    await refuses(() => validateMigrationHistory(rows, 'lf'));
+  }
+  for (const field of ['started', 'completed', 'rolled_back']) {
+    for (const value of [true, false, '0', '1', null, 2, -1]) {
+      const rows = syntheticHistory('lf');
+      rows[0][field] = value;
+      await refuses(() => validateMigrationHistory(rows, 'lf'));
+    }
+  }
+});
+
+test('P7 history rejects unknown fields, hostile rows and malformed variant/phase without raw leakage', async () => {
+  const unknown = syntheticHistory('lf');
+  unknown[0].credentials = secretCanary;
+  const missing = syntheticHistory('lf');
+  delete missing[0].started;
+  const getter = syntheticHistory('lf');
+  let reads = 0;
+  Object.defineProperty(getter[0], 'logs', {
+    enumerable: true, get() { reads += 1; throw new Error(secretCanary); },
+  });
+  const proxy = new Proxy({}, { ownKeys() { throw new Error(secretCanary); } });
+  for (const rows of [null, {}, new Array(7), unknown, missing, getter, [proxy]]) {
+    await refuses(() => validateMigrationHistory(rows, 'lf'));
+  }
+  assert.equal(reads, 0);
+  for (const variant of ['', 'production', 'LF', '../lf', secretCanary]) {
+    await refuses(() => validateMigrationHistory(syntheticHistory('lf'), variant));
+  }
+  for (const phase of ['', 'expanded', 'FINAL', secretCanary]) {
+    await refuses(() => validateMigrationHistory(syntheticHistory('lf'), 'lf', phase));
+  }
+});
+
+test('P7 history evidence is deterministic, deeply frozen, detached and contains no raw failure logs', () => {
+  const rows = syntheticHistory('fault');
+  rows[4].logs += secretCanary;
+  const before = copy(rows);
+  const result = validateMigrationHistory(rows, 'fault');
+  assert.deepEqual(rows, before, 'validation does not mutate supplied database observations');
+  assert.ok(Object.isFrozen(result));
+  assert.ok(Object.isFrozen(result.rows));
+  assert.ok(result.rows.every((row) => Object.isFrozen(row)));
+  assert.equal(JSON.stringify(result).includes(secretCanary), false);
+  assert.equal(JSON.stringify(result).includes('Database error'), false);
+  assert.equal(result.rows[4].logsSha256, hash(rows[4].logs));
+  assert.deepEqual(Object.keys(result).sort(), ['historySha256', 'phase', 'rows', 'variant']);
+  assert.deepEqual(Object.keys(result.rows[4]).sort(),
+    ['appliedSteps', 'checksum', 'completed', 'logsSha256', 'name', 'rolledBack', 'started', 'status']);
+  const reorderedKeys = rows.map((row) => Object.fromEntries(Object.entries(row).reverse()));
+  assert.equal(validateMigrationHistory(reorderedKeys, 'fault').historySha256, result.historySha256);
+  rows[0].checksum = '0'.repeat(64);
+  assert.equal(result.rows[0].checksum, fixtures.MIGRATIONS[0].lfSha256);
+});
+
+test('P7 final history sweep is wired after the rehearsal variants and before successful publication', () => {
+  const source = readFileSync(join(repoRoot, 'scripts/cms-release-s1/run.mjs'), 'utf8');
+  const matrixStart = source.indexOf('async function runMatrix(');
+  const loop = source.indexOf("for (const variant of ['lf', 'crlf', 'fault', 'recovery']) {", matrixStart);
+  const sweep = source.indexOf('await finalHistorySweep(', loop);
+  const publish = source.indexOf("publish('PASS')", sweep);
+  assert.ok(matrixStart >= 0 && loop > matrixStart && sweep > loop && publish > sweep,
+    'source must place final-history observation between matrix execution and PASS');
+  const preceding = source.slice(loop, sweep);
+  assert.match(preceding, /if \(connection\) await connection\.end\(\);[\s\S]*\}\s*\}\s*finalHistory =\s*$/);
+  assert.match(source, /async function finalHistorySweep\(/);
+  assert.equal(EXECUTION_GRANT, null);
+});
+function preflightClaims() {
+  const event = request();
+  event.pullRequest.number = 59;
+  const workflowSha = 'b'.repeat(40);
+  const workflowBlob = 'c'.repeat(40);
+  const workflowPayloadSha256 = 'd'.repeat(64);
+  return {
+    request: event, observedAt: '2026-10-11T14:00:00.000Z',
+    provenance: {
+      sourceSha, baselineSha: fixtures.BASELINE_SHA,
+      schemaGitBlob: '2ac6b2c9688ddac6dcd20f1c0ec9f47007314858', schemaPayloadSha256: fixtures.SCHEMA_SHA256,
+      lockPayloadSha256: '4cac08c47dab4658df87a6a5cdbb05bd50fb6df0823eeda16fb8652bb4cb024a',
+      harnessSha: reviewedHead, checkoutSha: reviewedHead, workflowSha, workflowBlob, workflowPayloadSha256,
+      workflowPath: '.github/workflows/cms-release-s1.yml', eventSha: workflowSha,
+      mergeParents: [sourceSha, reviewedHead], runId: '12345678901', runAttempt: 1, platform: 'linux/amd64',
+      nodeImage: 'sha256:c4d5523090a817b7aa86d2111241fdd4f66d1e27782b44160e6aa63b357ecb2d',
+      mariadbImage: 'sha256:3a7d3cbc8b6fddf66433d80dc124c1e4e75a73ebab9c6e137529cc270bdadfc0',
+    },
+    approval: {
+      approvalId: 'S1-SYNTHETIC-APPROVAL', repository, prNumber: 59, headSha: reviewedHead, baseSha: sourceSha,
+      workflowSha, workflowBlob, workflowPayloadSha256, runId: '12345678901', runAttempt: 1,
+      operator: event.actor, reviewer: 'synthetic-independent-reviewer',
+      issuedAt: '2026-10-11T13:00:00.000Z', expiresAt: '2026-10-11T15:00:00.000Z', consumed: false,
+      environment: { id: 123, name: 'cms-release-s1-mariadb', requiredReviewers: ['synthetic-independent-reviewer'],
+        preventSelfReview: true, canAdminsBypass: false, reviewState: 'approved', reviewRunId: '12345678901' },
+    },
+  };
+}
+
+function assertInvalidPreflight(value) {
+  assert.deepEqual(assessExecutionPreflight(value), {
+    executionAuthorized: false, authorityVerified: false, code: 'S1_EXECUTION_HOLD', consistency: 'INVALID',
+  });
+}
+
+test('P7 consistent fabricated claims are deterministic UNTRUSTED evidence, never execution authority', async () => {
+  const input = preflightClaims();
+  const before = copy(input);
+  const result = assessExecutionPreflight(input);
+  assert.deepEqual(result, { executionAuthorized: false, authorityVerified: false,
+    code: 'S1_EXECUTION_HOLD', consistency: 'CONSISTENT_UNTRUSTED', claimsSha256: hash(metadata.canonicalJson(input)) });
+  assert.ok(Object.isFrozen(result));
+  assert.deepEqual(input, before);
+  assert.deepEqual(assessExecutionPreflight(input), result, 'repeating an offline check still grants nothing');
+  await refuses(() => executeRehearsal({ ...input, preflight: result, EXECUTION_GRANT: input.approval }));
+  assert.equal(EXECUTION_GRANT, null);
+});
+
+test('P7 preflight rejects missing approval/protection and untrusted REAL_DRIVER extra fields', () => {
+  for (const mutate of [
+    (value) => { delete value.approval; },
+    (value) => { value.approval = null; },
+    (value) => { delete value.approval.environment; },
+    (value) => { value.approval.environment = {}; },
+    (value) => { value.provenance.REAL_DRIVER = true; },
+    (value) => { value.approved = true; },
+    (value) => { value.approval.password = secretCanary; },
+  ]) { const input = preflightClaims(); mutate(input); assertInvalidPreflight(input); }
+});
+
+test('P7 preflight binds exact PR, repositories, branches, event and freshly added label', () => {
+  for (const mutate of [
+    (value) => { value.request.pullRequest.number = 60; },
+    (value) => { value.approval.prNumber = 60; },
+    (value) => { value.approval.repository = 'other/repository'; },
+    (value) => { value.request.repository = 'other/repository'; },
+    (value) => { value.request.pullRequest.head.repository = 'fork/repository'; },
+    (value) => { value.request.pullRequest.base.repository = 'other/repository'; },
+    (value) => { value.request.pullRequest.head.ref = 'main'; },
+    (value) => { value.request.pullRequest.base.ref = 'main'; },
+    (value) => { value.request.name = 'workflow_dispatch'; },
+    (value) => { value.request.action = 'synchronize'; },
+    (value) => { value.request.label = 's1'; },
+  ]) { const input = preflightClaims(); mutate(input); assertInvalidPreflight(input); }
+});
+
+test('P7 preflight rejects source, artifact, image, checkout and workflow identity drift', () => {
+  for (const field of ['sourceSha', 'baselineSha', 'schemaGitBlob', 'schemaPayloadSha256', 'lockPayloadSha256',
+    'harnessSha', 'checkoutSha', 'workflowSha', 'workflowBlob', 'workflowPayloadSha256', 'workflowPath',
+    'eventSha', 'platform', 'nodeImage', 'mariadbImage']) {
+    const input = preflightClaims(); input.provenance[field] = 'wrong'; assertInvalidPreflight(input);
+  }
+  for (const field of ['headSha', 'baseSha', 'workflowSha', 'workflowBlob', 'workflowPayloadSha256']) {
+    const input = preflightClaims(); input.approval[field] = 'e'.repeat(field.includes('256') ? 64 : 40);
+    assertInvalidPreflight(input);
+  }
+  const stale = preflightClaims(); stale.request.pullRequest.head.sha = 'e'.repeat(40); assertInvalidPreflight(stale);
+});
+
+test('P7 preflight distinguishes source checkout, workflow commit and synthetic merge parents', () => {
+  const valid = preflightClaims();
+  assert.notEqual(valid.provenance.sourceSha, valid.provenance.harnessSha);
+  assert.notEqual(valid.provenance.workflowSha, valid.provenance.harnessSha);
+  for (const parents of [[], [sourceSha], [reviewedHead, sourceSha], [sourceSha, 'e'.repeat(40)], [sourceSha, reviewedHead, sourceSha]]) {
+    const input = preflightClaims(); input.provenance.mergeParents = parents; assertInvalidPreflight(input);
+  }
+  const mistaken = preflightClaims(); mistaken.provenance.eventSha = reviewedHead;
+  mistaken.provenance.workflowSha = reviewedHead; mistaken.approval.workflowSha = reviewedHead;
+  assertInvalidPreflight(mistaken);
+});
+
+test('P7 preflight rejects expired/not-yet-issued/malformed timestamps without consulting the clock', () => {
+  for (const mutate of [
+    (value) => { value.observedAt = value.approval.expiresAt; },
+    (value) => { value.observedAt = '2026-10-11T16:00:00.000Z'; },
+    (value) => { value.observedAt = '2026-10-11T12:00:00.000Z'; },
+    (value) => { value.approval.issuedAt = '2026-02-30T13:00:00.000Z'; },
+    (value) => { value.approval.expiresAt = 'forever'; },
+    (value) => { value.observedAt = new Date(); },
+    (value) => { value.approval.issuedAt = '2026-10-11T13:00:00+00:00'; },
+  ]) { const input = preflightClaims(); mutate(input); assertInvalidPreflight(input); }
+});
+
+test('P7 preflight rejects reruns, changed run IDs, consumed grants and mismatched native-review run claims', () => {
+  for (const mutate of [
+    (value) => { value.provenance.runAttempt = 2; },
+    (value) => { value.approval.runAttempt = 2; },
+    (value) => { value.provenance.runId = '22345678901'; },
+    (value) => { value.approval.runId = '22345678901'; },
+    (value) => { value.approval.environment.reviewRunId = '22345678901'; },
+    (value) => { value.approval.consumed = true; },
+    (value) => { value.provenance.runId = 12345678901; },
+  ]) { const input = preflightClaims(); mutate(input); assertInvalidPreflight(input); }
+});
+
+test('P7 preflight rejects unprotected/self-reviewed/unapproved Environment claims', () => {
+  for (const mutate of [
+    (value) => { value.approval.environment.id = 0; },
+    (value) => { value.approval.environment.name = 'production'; },
+    (value) => { value.approval.environment.requiredReviewers = []; },
+    (value) => { value.approval.environment.requiredReviewers = ['another-user']; },
+    (value) => { value.approval.environment.requiredReviewers.push('SYNTHETIC-INDEPENDENT-REVIEWER'); },
+    (value) => { value.approval.environment.preventSelfReview = false; },
+    (value) => { value.approval.environment.canAdminsBypass = true; },
+    (value) => { value.approval.environment.reviewState = 'pending'; },
+    (value) => { value.approval.reviewer = value.approval.operator.toUpperCase(); },
+    (value) => { value.request.actor = 'another-operator'; },
+  ]) { const input = preflightClaims(); mutate(input); assertInvalidPreflight(input); }
+});
+
+test('P7 preflight refuses hostile getters/proxies and never echoes secret-bearing claims', () => {
+  let reads = 0;
+  const input = preflightClaims();
+  Object.defineProperty(input.approval, 'operator', { get() { reads += 1; throw new Error(secretCanary); } });
+  for (const value of [input, null, [], new Proxy({}, { ownKeys() { throw new Error(secretCanary); } })]) {
+    assertInvalidPreflight(value);
+    assert.equal(JSON.stringify(assessExecutionPreflight(value)).includes(secretCanary), false);
+  }
+  assert.equal(reads, 0);
+});
+
+test('P7 workflow keeps both dormant locks and adds only PR/attempt/ref defense in depth', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/cms-release-s1.yml'), 'utf8');
+  const source = readFileSync(join(repoRoot, 'scripts/cms-release-s1/run.mjs'), 'utf8');
+  assert.match(workflow, /\$\{\{ false &&/);
+  assert.match(workflow, /github\.event\.pull_request\.number == 59/);
+  assert.match(workflow, /github\.run_attempt == 1/);
+  assert.match(workflow, /github\.ref == 'refs\/pull\/59\/merge'/);
+  assert.doesNotMatch(workflow, /^\s*environment:/m, 'do not auto-create an unprotected Environment');
+  assert.match(source, /export const EXECUTION_GRANT = null;/);
+  assert.match(source, /export async function executeRehearsal\(options\) \{\s*if \(EXECUTION_GRANT === null\) reject\('S1_EXECUTION_HOLD'\);/);
+});
+
+test('P7 parser enforces the exact UTF-8 byte boundary and rejects NUL/bare CR', async () => {
+  const base = partialDdlLog();
+  const boundary = base + 'x'.repeat(65_536 - Buffer.byteLength(base));
+  assert.equal(parsePartialDdlFailure(boundary).logsSha256, hash(boundary));
+  await refuses(() => parsePartialDdlFailure(boundary + 'x'));
+  const multi = base + 'é'.repeat(Math.floor((65_536 - Buffer.byteLength(base)) / 2));
+  assert.ok(multi.length < 65_536);
+  assert.equal(parsePartialDdlFailure(multi).logsSha256, hash(multi));
+  await refuses(() => parsePartialDdlFailure(multi + 'é'));
+  for (const suffix of ['\0', '\r']) await refuses(() => parsePartialDdlFailure(base + suffix));
+});
+
+test('P7 history refuses failure text on a completed row rather than leaking or discarding it', async () => {
+  for (const variant of ['lf', 'crlf', 'fault', 'recovery']) {
+    const rows = syntheticHistory(variant); rows[0].logs = secretCanary;
+    await refuses(() => validateMigrationHistory(rows, variant));
+  }
 });

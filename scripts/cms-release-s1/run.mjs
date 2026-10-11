@@ -46,6 +46,109 @@ export function evaluateWorkflowEvent(input, suppliedApproval = null) {
   } catch { return Object.freeze({ allowed: false, code: 'S1_REQUEST_DENIED' }); }
 }
 
+/** Parse only the expected disposable collision; never return the raw log. */
+export function parsePartialDdlFailure(input) {
+  try {
+    check(typeof input === 'string' && input.length > 0
+      && Buffer.byteLength(input, 'utf8') <= 65_536 && !input.includes('\0'), 'S1_FAULT_HISTORY_MISMATCH');
+    const text = input.replaceAll('\r\n', '\n');
+    check(!text.includes('\r')
+      && [...text.matchAll(/^Database error code:/gm)].length === 1
+      && [...text.matchAll(/^Database error:/gm)].length === 1
+      && /^Database error code:(?:[ \t]+|[ \t]*\n[ \t]*)1050[ \t]*(?=\n|$)/m.test(text)
+      && /^Database error:(?:[ \t]+|[ \t]*\n[ \t]*)Table (['`])ArticleVersionCategory\1 already exists[ \t]*(?=\n|$)/m.test(text),
+    'S1_FAULT_HISTORY_MISMATCH');
+    return Object.freeze({ errorCode: 1050, table: 'ArticleVersionCategory', logsSha256: sha256(input) });
+  } catch { reject('S1_FAULT_HISTORY_MISMATCH'); }
+}
+
+/** Pure validation of projected history rows; no Date, SQL adapter or I/O. */
+export function validateMigrationHistory(input, variant, phase = 'final') {
+  try {
+    check(['lf', 'crlf', 'fault', 'recovery'].includes(variant)
+      && ['baseline', 'final'].includes(phase), 'S1_HISTORY_MISMATCH');
+    const rows = plain(input);
+    const fault = variant === 'fault' && phase === 'final';
+    const count = phase === 'baseline' ? 4 : fault ? 5 : 7;
+    check(Array.isArray(rows) && rows.length === count, 'S1_HISTORY_MISMATCH');
+    const sanitized = rows.map((row, index) => {
+      exactKeys(row, ['migration_name', 'checksum', 'started', 'completed', 'rolled_back', 'applied_steps_count', 'logs']);
+      const expected = MIGRATIONS[index];
+      const failed = fault && index === 4;
+      check(row.migration_name === expected.name
+        && row.checksum === (variant === 'crlf' && index < 3 ? expected.crlfSha256 : expected.lfSha256)
+        && row.started === 1 && row.rolled_back === 0 && row.completed === (failed ? 0 : 1)
+        && Number.isSafeInteger(row.applied_steps_count) && row.applied_steps_count >= (failed ? 0 : 1)
+        && row.applied_steps_count <= 100_000, 'S1_HISTORY_MISMATCH');
+      const diagnostic = failed ? parsePartialDdlFailure(row.logs) : null;
+      if (!failed) check(row.logs === null || row.logs === '', 'S1_HISTORY_MISMATCH');
+      return Object.freeze({ name: expected.name, checksum: row.checksum,
+        status: failed ? 'EXPECTED_FAILED' : 'COMPLETED', started: true,
+        completed: !failed, rolledBack: false, appliedSteps: row.applied_steps_count,
+        logsSha256: diagnostic?.logsSha256 ?? null });
+    });
+    const evidence = { variant, phase, rows: Object.freeze(sanitized) };
+    return Object.freeze({ ...evidence, historySha256: sha256(canonicalJson(evidence)) });
+  } catch { reject('S1_HISTORY_MISMATCH'); }
+}
+
+const NODE_IMAGE = 'sha256:c4d5523090a817b7aa86d2111241fdd4f66d1e27782b44160e6aa63b357ecb2d';
+const MARIADB_IMAGE = 'sha256:3a7d3cbc8b6fddf66433d80dc124c1e4e75a73ebab9c6e137529cc270bdadfc0';
+
+/** Offline consistency ONLY. Caller claims, even consistent ones, grant NOTHING.
+ * A separately reviewed trusted GitHub observation/approval bridge is absent.
+ * No caller-supplied record is wired into EXECUTION_GRANT or executeRehearsal.
+ */
+export function assessExecutionPreflight(input) {
+  const denied = { executionAuthorized: false, authorityVerified: false, code: 'S1_EXECUTION_HOLD' };
+  try {
+    const value = plain(input);
+    exactKeys(value, ['request', 'provenance', 'approval', 'observedAt']);
+    const { request, provenance: p, approval: a } = value;
+    exactKeys(p, ['sourceSha', 'baselineSha', 'schemaGitBlob', 'schemaPayloadSha256', 'lockPayloadSha256',
+      'harnessSha', 'checkoutSha', 'workflowSha', 'workflowBlob', 'workflowPayloadSha256', 'workflowPath',
+      'eventSha', 'mergeParents', 'runId', 'runAttempt', 'platform', 'nodeImage', 'mariadbImage']);
+    exactKeys(a, ['approvalId', 'repository', 'prNumber', 'headSha', 'baseSha', 'workflowSha', 'workflowBlob',
+      'workflowPayloadSha256', 'runId', 'runAttempt', 'operator', 'reviewer', 'issuedAt', 'expiresAt',
+      'consumed', 'environment']);
+    exactKeys(a.environment, ['id', 'name', 'requiredReviewers', 'preventSelfReview', 'canAdminsBypass',
+      'reviewState', 'reviewRunId']);
+    const sha1 = (text) => typeof text === 'string' && /^(?!0{40}$)[a-f0-9]{40}$/.test(text);
+    const sha256Value = (text) => typeof text === 'string' && /^(?!0{64}$)[a-f0-9]{64}$/.test(text);
+    const instant = (text) => typeof text === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(text)
+      && Number.isFinite(Date.parse(text)) && new Date(text).toISOString() === text;
+    const login = (text) => typeof text === 'string' && /^[A-Za-z0-9-]{1,39}$/.test(text);
+    check(evaluateWorkflowEvent(request, { reviewedHeadSha: a.headSha, actor: a.operator, approvalId: a.approvalId }).allowed
+      && request.pullRequest.number === 59 && a.prNumber === 59 && a.repository === REPOSITORY
+      && a.baseSha === SOURCE_SHA && p.sourceSha === SOURCE_SHA && p.baselineSha === BASELINE_SHA
+      && p.schemaGitBlob === '2ac6b2c9688ddac6dcd20f1c0ec9f47007314858'
+      && p.schemaPayloadSha256 === SCHEMA_SHA256 && p.lockPayloadSha256 === LOCK_SHA256
+      && [p.harnessSha, p.checkoutSha, p.workflowSha, p.workflowBlob, p.eventSha].every(sha1)
+      && sha256Value(p.workflowPayloadSha256) && p.harnessSha === a.headSha && p.checkoutSha === a.headSha
+      && p.workflowSha === a.workflowSha && p.workflowBlob === a.workflowBlob
+      && p.workflowPayloadSha256 === a.workflowPayloadSha256
+      && p.workflowPath === '.github/workflows/cms-release-s1.yml'
+      && p.eventSha !== p.harnessSha && canonicalJson(p.mergeParents) === canonicalJson([SOURCE_SHA, p.harnessSha])
+      && p.workflowSha === p.eventSha
+      && typeof p.runId === 'string' && /^[1-9][0-9]{7,19}$/.test(p.runId)
+      && p.runId === a.runId && p.runAttempt === 1 && a.runAttempt === 1
+      && p.platform === 'linux/amd64' && p.nodeImage === NODE_IMAGE && p.mariadbImage === MARIADB_IMAGE
+      && login(a.operator) && login(a.reviewer) && a.operator.toLowerCase() !== a.reviewer.toLowerCase()
+      && instant(value.observedAt) && instant(a.issuedAt) && instant(a.expiresAt)
+      && a.issuedAt <= value.observedAt && value.observedAt < a.expiresAt && a.consumed === false
+      && Number.isSafeInteger(a.environment.id) && a.environment.id > 0
+      && a.environment.name === 'cms-release-s1-mariadb'
+      && Array.isArray(a.environment.requiredReviewers) && a.environment.requiredReviewers.length >= 1
+      && a.environment.requiredReviewers.length <= 6 && a.environment.requiredReviewers.every(login)
+      && new Set(a.environment.requiredReviewers.map((name) => name.toLowerCase())).size === a.environment.requiredReviewers.length
+      && a.environment.requiredReviewers.some((name) => name.toLowerCase() === a.reviewer.toLowerCase())
+      && a.environment.preventSelfReview === true && a.environment.canAdminsBypass === false
+      && a.environment.reviewState === 'approved' && a.environment.reviewRunId === p.runId,
+    'S1_PROVENANCE_REFUSED');
+    return Object.freeze({ ...denied, consistency: 'CONSISTENT_UNTRUSTED', claimsSha256: sha256(canonicalJson(value)) });
+  } catch { return Object.freeze({ ...denied, consistency: 'INVALID' }); }
+}
+
 export function validateTarget(input) {
   try {
     const target = plain(input);
@@ -242,15 +345,33 @@ async function oldFields(client, ids) {
     reviews: await client.articleReview.findMany(spec.reviews),
   });
 }
+const HISTORY_SELECT = 'SELECT migration_name, checksum, (started_at IS NOT NULL) AS started, '
+  + '(finished_at IS NOT NULL) AS completed, (rolled_back_at IS NOT NULL) AS rolled_back, '
+  + 'applied_steps_count, logs FROM _prisma_migrations ORDER BY migration_name';
 async function history(connection, count, variant) {
-  const rows = await connection.query('SELECT migration_name, checksum, finished_at, rolled_back_at, applied_steps_count FROM _prisma_migrations ORDER BY migration_name');
-  check(rows.length === count, 'S1_HISTORY_MISMATCH');
-  for (const [index, row] of rows.entries()) {
-    const expected = MIGRATIONS[index];
-    check(row.migration_name === expected.name && row.finished_at !== null && row.rolled_back_at === null
-      && row.checksum === (variant === 'crlf' && index < 3 ? expected.crlfSha256 : expected.lfSha256),
-    'S1_HISTORY_MISMATCH');
+  check(count === 4 || count === 7, 'S1_HISTORY_MISMATCH');
+  const rows = await connection.query(HISTORY_SELECT);
+  // MariaDB result arrays carry driver metadata; only projected rows enter the validator.
+  return validateMigrationHistory([...rows], variant, count === 4 ? 'baseline' : 'final');
+}
+
+/** Re-read every owned database after ALL matrix operations, including recovery. */
+async function finalHistorySweep(mariadb, credentials, runId, runAttempt) {
+  const result = {};
+  for (const variant of ['lf', 'crlf', 'fault', 'recovery']) {
+    const database = 's1_' + runId + '_' + variant;
+    validateTarget({ host: 'mariadb', port: 3306, database, runId, user: 's1_ddl',
+      resourceIdentity: { runId, runAttempt, service: 'mariadb', sourceSha: SOURCE_SHA } });
+    let connection;
+    try {
+      connection = await mariadb.createConnection({ host: 'mariadb', port: 3306, user: 's1_ddl',
+        password: credentials.ddl, database, connectTimeout: 5000, timezone: 'Z' });
+      const evidence = validateMigrationHistory([...(await connection.query(HISTORY_SELECT))], variant);
+      const entry = { database, runId, runAttempt, sourceSha: SOURCE_SHA, ...evidence };
+      result[variant] = Object.freeze({ ...entry, evidenceSha256: sha256(canonicalJson(entry)) });
+    } finally { if (connection) await connection.end(); }
   }
+  return Object.freeze(result);
 }
 async function concurrencyAndKeyset(client, second, connection, ids) {
   let firstLocked, releaseFirst, secondStarted;
@@ -395,6 +516,7 @@ async function runMatrix(options) {
   });
   let bootstrap;
   const inventories = {};
+  let finalHistory = null;
   const publish = (status) => {
     writeExclusive(join(output, 'results.json'), canonicalJson(sanitizeEvidence(records)));
     writeExclusive(join(output, 'manifest.json'), canonicalJson({
@@ -406,7 +528,7 @@ async function runMatrix(options) {
       resultsSha256: sha256(readFileSync(join(output, 'results.json'))),
       ledgerSha256: sha256(canonicalJson(ledger.snapshot())),
       ledger: ledger.snapshot(), runtime: 'EXECUTED_DISPOSABLE_ONLY',
-      metadata: inventories,
+      metadata: inventories, finalHistory,
     }));
   };
   try {
@@ -452,10 +574,8 @@ async function runMatrix(options) {
           const outcome = await operate(ledger, output, 'fault-partial-ddl', async () => seven.apply());
           check(outcome.status !== 0, 'S1_FAULT_NOT_REPRODUCED');
           const failed = await connection.query('SELECT migration_name, finished_at, rolled_back_at, logs FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL');
-          check(failed.length === 1 && failed[0].migration_name === MIGRATIONS[4].name
-            && typeof failed[0].logs === 'string' && failed[0].logs.length <= MAX_BYTES
-            && /Database error code:\\s*1050/.test(failed[0].logs)
-            && /ArticleVersionCategory[^\\n]*already exists/.test(failed[0].logs), 'S1_FAULT_HISTORY_MISMATCH');
+          check(failed.length === 1 && failed[0].migration_name === MIGRATIONS[4].name, 'S1_FAULT_HISTORY_MISMATCH');
+          const diagnostic = parsePartialDdlFailure(failed[0].logs);
           // Raw migration error text stays in memory, never in stdout or artifacts.
           const partial = await captureMetadata(connection, database);
           const collisionColumns = partial.columns.filter((field) => field.table === 'ArticleVersionCategory');
@@ -464,7 +584,7 @@ async function runMatrix(options) {
             && partial.columns.some((field) => field.table === 'ArticleReview' && field.name === 'versionId'), 'S1_PARTIAL_DDL_NOT_OBSERVED');
           inventories.fault = partial;
           records.push({ caseId: 'S1-PARTIAL-DDL-HISTORY', status: 'PASS', code: 'EXPECTED_REJECTION',
-            hashes: { metadata: sha256(canonicalJson(partial)), actual: sha256(failed[0].logs) } });
+            hashes: { metadata: sha256(canonicalJson(partial)), actual: diagnostic.logsSha256 } });
           passed('S1-PARTIAL-DDL', { migrations: 4 });
           continue; // Preserve damaged disposable DB; NEVER retry/resolve/reverse its DDL.
         }
@@ -525,6 +645,12 @@ async function runMatrix(options) {
         if (connection) await connection.end();
       }
     }
+    finalHistory = await finalHistorySweep(mariadb, credentials, runId, runAttempt);
+    for (const variant of ['lf', 'crlf', 'fault', 'recovery']) records.push({
+      caseId: 'S1-' + variant.toUpperCase() + '-FINAL-HISTORY', status: 'PASS', code: 'SCHEMA_MATCH',
+      counts: { migrations: finalHistory[variant].rows.length },
+      hashes: { actual: finalHistory[variant].evidenceSha256 },
+    });
     publish('PASS');
   } catch (error) {
     records.push({ caseId: 'S1-STOP', status: 'UNKNOWN_OUTCOME', code: safeError(error).code });
