@@ -133,3 +133,43 @@ Controlled CRLF artifacts are retained consistently within the historical-EOL sc
 Before execution, resolve the immutable approval-controller/harness binding. A workflow cannot embed its own eventual commit SHA by editing itself; P1's all-zero head and null grant are intentionally non-authorizing. A separate reviewed authority mechanism must bind the actual reviewed harness commit, operator, event and execution permission. No environment-variable or label-only shortcut is authorized.
 
 Independent Claude review is PENDING. Source review must scrutinize every runtime operation, SQL/Prisma compatibility, journal durability and evidence failure path; offline tests do not exercise real Prisma calls, service startup, migration-engine output wording, Linux symlink permission branch or hosting behavior. Do not infer runtime readiness from the local commit.
+## P7 local correction — execution remains closed
+
+P7 starts from reviewed S1 `cb24f25cf9b90e87781dba52fbf50df13b78da1f` in a separate worktree. It changes only this document, `run.mjs`, its safety test and the S1 workflow. Q1, migration bytes, fixture-plan, metadata, PR #59/#61 and the dedicated Linux workflow remain unchanged. P7 authorizes offline tests and a local commit only. It does not supply GitHub Environment protection, independent approval or an execution grant.
+
+Historical evidence is preserved: P1's review-pending paragraph above describes that earlier checkpoint. Claude subsequently reviewed that source; existing CI run `38146537134`, attempt 1, job `114490976631` ran the exact `cb24f25…` source on Ubuntu 24.04.5 / Node 22.23.3: S1 43 PASS / 0 FAIL / 0 SKIP, including file-symlink rejection; full suite 1045 PASS / 0 FAIL / 1 unrelated SKIP. Its one-run authorization is consumed. Dedicated Linux PR #61 was NOT_RUN. These outcomes are not P7 source CI or MariaDB execution evidence.
+
+### S1-P6-BUG-001 and bounded error classification
+
+The original doubled escapes in the partial-DDL regex did not recognize ordinary `Database error code: 1050` output correctly. P7 requires one exact error-code field, mandatory whitespace (horizontal or one newline), standalone code 1050, and one `Database error:` field containing `Table 'ArticleVersionCategory' already exists` (matching single quotes or backticks). The table message cannot span arbitrary lines, use a prefix/suffix table, or conceal another error code. Input is a primitive string of at most 65,536 UTF-8 bytes; NUL, bare CR, duplicate/contradictory fields and malformed input fail closed. CRLF normalization is parser-local; the output hash is of the original string bytes.
+
+Only fixed code/table identity and `logsSha256` leave the parser. Raw migration logs stay in memory and are not printed or uploaded. Synthetic offline strings cover this parser; actual Prisma/MariaDB failure text remains NOT_RUN. An unexpected real wording must STOP for review, not broaden the parser or retry DDL automatically.
+
+### Final history sweep
+
+After every LF/CRLF/fault/recovery matrix operation finishes, and before `publish('PASS')`, the harness reopens each exact owned database for one SELECT-only history observation. Database identity is revalidated. It does not reuse the earlier four-/seven-migration assertion as final evidence.
+
+The query projects `started_at`, `finished_at` and `rolled_back_at` to numeric presence flags, avoiding adapter Date/string ambiguity. The pure validator checks exact keys, ordered unique migration names, exact checksum, started/completed/rollback states, bounded integer step counts and expected diagnostics:
+
+- LF, CRLF and recovery: exactly seven completed migrations, none rolled back, no failure logs.
+- CRLF uses the derived checksum for only the first three historical migrations; all others remain LF.
+- Fault: exactly four completed LF migrations and one unfinished, unrolled-back foundation record with the exact LF checksum and expected 1050/table identity. No Product/audience history may appear.
+- Missing, extra, duplicate, reordered, partially completed, rolled-back or unexpected history fails closed. No `resolve`, checksum edit, migration retry or reverse DDL is performed.
+
+The manifest's `finalHistory` has per-variant database/run/attempt/Q1-source provenance, sanitized rows, canonical history SHA-256 and an evidence SHA-256 covering provenance plus history. Each result record points to that evidence hash using the existing allowlist. No raw migration ID/log, timestamp, credentials or SQL is emitted. Hash canonicalization is UTF-8 of `metadata.canonicalJson` with stable sorted object keys and ordered arrays; Git blob, Git payload and raw-working-copy identities remain distinct. On sweep failure, PASS cannot be published; the existing STOPPED/UNKNOWN_OUTCOME path and no-replay behavior apply. A failed sweep does not authorize cleanup.
+
+### Offline authority/provenance boundary
+
+`assessExecutionPreflight` checks only consistency of supplied claims. Even a fully consistent synthetic fixture returns `executionAuthorized: false`, `authorityVerified: false`, `S1_EXECUTION_HOLD`, and `CONSISTENT_UNTRUSTED`. Invalid inputs return INVALID without echoing claims. Nothing from this helper sets `EXECUTION_GRANT`, reads environment authority, starts a process or obtains a trusted approval.
+
+Claims are bounded/exact-key validated and include repository/PR #59/head/base/event/label/operator, Q1 and old-client SHAs, schema and lockfile fingerprints, distinct harness checkout and PR merge identity/parents, workflow commit/blob/payload, fixed image digests/platform, run ID/attempt 1, approval expiration/consumption and independent reviewer/protection claims. This preparation models `pull_request:labeled` workflow execution from the verified synthetic merge; its workflow SHA is compared to that event SHA, not substituted with the application checkout SHA. A future GitHub observation that differs from this model requires review rather than inference.
+
+Dates are supplied explicitly for deterministic offline validation; no clock or API is consulted. Claim matching is not live attestation, authentic reviewer approval, replay detection or durable single-use consumption. A caller can fabricate a consistent fixture and still receives DENIED. Environment variables, CLI arguments, labels and approval JSON cannot unlock the runtime. Current Environment/protection is NOT VERIFIED. No Environment is added to YAML, avoiding automatic creation of an unprotected gate.
+
+The workflow retains its literal `false &&` and all-zero reviewed-head placeholder; the runtime retains `EXECUTION_GRANT = null` as the first execution guard. PR number, attempt and synthetic ref checks add defense in depth only. No external approval bridge is implemented. A separately reviewed integration must obtain trustworthy Environment/rules/native approval and exact run-bound grant, verify observed workflow/image identity, and enforce admission before service startup. Neither a label nor `REAL_DRIVER` is execution evidence.
+
+### P7 review and open execution gates
+
+Run the existing scoped offline suite on Node 22 and Node 24, including the new synthetic parser/history/provenance cases, then syntax, scoped lint, YAML parse/trigger checks and four-path diff validation. Record actual counts and the Windows file-symlink limitation in the external handoff, not as a Linux runtime result. Offline adapter/source-wiring tests do not prove the final SELECT executed on MariaDB.
+
+Claude 1 must independently review the full four-file diff, negative controls, unchanged execution locks, complete final-sweep placement and fingerprints. P7 independent review is PENDING until that verdict exists. Remote publication, Environment setup, authority integration/activation, MariaDB execution, migration recovery and staging remain separate gates. `DEPLOY-P4-BUG-001` remains open: disposable MariaDB cannot establish isolation of VinaHost staging sharing a server instance with production. No production authorization or manual authenticated UAT follows from P7.

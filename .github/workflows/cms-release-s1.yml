@@ -14,15 +14,22 @@ concurrency:
 
 jobs:
   rehearse:
-    # P1 authorizes implementation only. The literal false is an independent
+    # P7 remains offline-only. The literal false is an independent
     # pre-container execution lock; a matching label grants no authority.
     # All-zero reviewed-head placeholder can never authorize this candidate.
     # A separately approved grant/controller and reviewed wiring are required;
     # do not replace this with an environment variable or label-only gate.
+    # No Environment is wired: existence/protection/reviewer are NOT VERIFIED.
+    # assessExecutionPreflight checks only supplied claims and always DENIES authority.
+    # Future authority must bind exact run/attempt, workflow blob/payload and native
+    # independent approval BEFORE service startup; a new review/grant is required.
     if: >-
       ${{ false &&
           github.event_name == 'pull_request' &&
           github.event.action == 'labeled' &&
+          github.event.pull_request.number == 59 &&
+          github.run_attempt == 1 &&
+          github.ref == 'refs/pull/59/merge' &&
           github.repository == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
           github.event.pull_request.head.repo.full_name == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
           github.event.pull_request.base.repo.full_name == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
