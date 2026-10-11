@@ -1,0 +1,172 @@
+name: CMS release S1 rehearsal (execution locked)
+
+on:
+  pull_request:
+    types: [labeled]
+    branches: [feature/cms-0112-q1-review-queue-readonly]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cms-release-s1-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    # P1 authorizes implementation only. The literal false is an independent
+    # pre-container execution lock; a matching label grants no authority.
+    # All-zero reviewed-head placeholder can never authorize this candidate.
+    # A separately approved grant/controller and reviewed wiring are required;
+    # do not replace this with an environment variable or label-only gate.
+    if: >-
+      ${{ false &&
+          github.event_name == 'pull_request' &&
+          github.event.action == 'labeled' &&
+          github.repository == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
+          github.event.pull_request.head.repo.full_name == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
+          github.event.pull_request.base.repo.full_name == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
+          github.event.pull_request.head.ref == 'test/cms-release-s1-mariadb-rehearsal' &&
+          github.event.pull_request.base.ref == 'feature/cms-0112-q1-review-queue-readonly' &&
+          github.event.pull_request.base.sha == '61c5591bb875bffaeb3d71d2f734d39d1e87faf7' &&
+          github.event.pull_request.head.sha == '0000000000000000000000000000000000000000' &&
+          github.event.label.name == format('s1-{0}', github.event.pull_request.head.sha) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: node:22-bookworm@sha256:c4d5523090a817b7aa86d2111241fdd4f66d1e27782b44160e6aa63b357ecb2d
+      options: --platform linux/amd64 --cpus 2 --memory 6g
+    services:
+      mariadb:
+        image: mariadb:10.11.14@sha256:3a7d3cbc8b6fddf66433d80dc124c1e4e75a73ebab9c6e137529cc270bdadfc0
+        options: >-
+          --platform linux/amd64 --cpus 2 --memory 2g
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s --health-timeout 5s --health-retries 24
+        # Synthetic service-only bootstrap value, never a VinaHost credential.
+        # Root access is constrained to this disposable job network and no port
+        # is published. This network still permits egress; it is not a firewall.
+        env:
+          MARIADB_ROOT_PASSWORD: s1-${{ github.run_id }}-${{ github.run_attempt }}-synthetic-only
+          MARIADB_ROOT_HOST: '%'
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: 'true'
+      NEXT_TELEMETRY_DISABLED: '1'
+      DATABASE_URL: mysql://s1_dummy:s1_dummy@127.0.0.1:1/s1_install_only
+      NEXTAUTH_URL: http://127.0.0.1:1
+      S1_EXECUTION_APPROVAL_ID: UNGRANTED
+      S1_REVIEWED_HEAD_SHA: '0000000000000000000000000000000000000000'
+      SOURCE_SHA: 61c5591bb875bffaeb3d71d2f734d39d1e87faf7
+      BASELINE_SHA: 5e6b14f006453da7f9b1554c210e9ad85a9f8c0c
+
+    steps:
+      - name: Checkout reviewed harness head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: harness
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Checkout immutable Q1 source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo
+          ref: 61c5591bb875bffaeb3d71d2f734d39d1e87faf7
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Checkout independent production-source client baseline
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo
+          ref: 5e6b14f006453da7f9b1554c210e9ad85a9f8c0c
+          path: baseline
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify immutable checkout identities and no env files
+        env:
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_HEAD_SHA" = "$S1_REVIEWED_HEAD_SHA"
+          test "$(git -C harness rev-parse HEAD)" = "$EVENT_HEAD_SHA"
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C baseline rev-parse HEAD)" = "$BASELINE_SHA"
+          if find harness source baseline -type f -name '.env*' -print -quit | grep -q .; then
+            echo 'S1_ENV_FILE_REFUSED' >&2
+            exit 1
+          fi
+          node --version
+          npm --version
+          test "$(node -p 'process.versions.node.split(".")[0]')" = '22'
+          available_kib="$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')"
+          test "$available_kib" -ge 6291456
+
+      - name: Install immutable Q1 dependencies
+        working-directory: source
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate independent Q1 client
+        working-directory: source
+        run: node node_modules/prisma/build/index.js generate
+
+      - name: Install immutable baseline dependencies
+        working-directory: baseline
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate independent old client
+        working-directory: baseline
+        run: node node_modules/prisma/build/index.js generate
+
+      - name: Execute separately authorized rehearsal (compiled grant currently absent)
+        env:
+          S1_BOOTSTRAP_PASSWORD: s1-${{ github.run_id }}-${{ github.run_attempt }}-synthetic-only
+        run: |
+          set -euo pipefail
+          node --experimental-transform-types harness/scripts/cms-release-s1/run.mjs --execute \
+            --source source --baseline baseline --output "$RUNNER_TEMP/s1-evidence"
+
+      - name: Locate complete bounded evidence without exposing content
+        id: evidence
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFileSync, lstatSync } from 'node:fs';
+          import { join } from 'node:path';
+          const paths = ['manifest.json', 'results.json'].map(name => join(process.env.RUNNER_TEMP, 's1-evidence', name));
+          const stats = paths.map(path => {
+            try { return lstatSync(path); } catch (error) {
+              if (error.code === 'ENOENT') return null;
+              throw new Error('S1_EVIDENCE_STAT_FAILED');
+            }
+          });
+          if (stats.every(stat => stat === null)) {
+            appendFileSync(process.env.GITHUB_OUTPUT, 'present=false\n');
+          } else {
+            if (stats.some(stat => !stat || !stat.isFile() || stat.isSymbolicLink()) ||
+                stats.reduce((sum, stat) => sum + stat.size, 0) > 25 * 1024 * 1024) {
+              throw new Error('S1_EVIDENCE_UPLOAD_REFUSED');
+            }
+            appendFileSync(process.env.GITHUB_OUTPUT, 'present=true\n');
+          }
+          NODE
+
+      - name: Upload only bounded sanitized result files
+        if: ${{ always() && steps.evidence.outputs.present == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cms-release-s1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/s1-evidence/manifest.json
+            ${{ runner.temp }}/s1-evidence/results.json
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: false
