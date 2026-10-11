@@ -1,0 +1,259 @@
+name: CMS release S1 Linux safety (execution locked)
+
+on:
+  pull_request:
+    types: [labeled]
+    branches: [test/cms-release-s1-mariadb-rehearsal]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cms-release-s1-linux-safety
+  cancel-in-progress: false
+
+jobs:
+  linux-safety:
+    # P3 grants LOCAL IMPLEMENTATION ONLY. No label/env/PR text can unlock this.
+    # Zero is an intentionally ungranted reviewed-head placeholder, not a source pin.
+    # A workflow cannot embed its own eventual commit SHA. Before execution, a
+    # separately reviewed authority binding must name the actual reviewed workflow
+    # head, operator, approval record and Linux-only scope. Do not remove either
+    # hold merely because source review or a matching label exists.
+    if: >-
+      ${{ false &&
+          github.event_name == 'pull_request' &&
+          github.event.action == 'labeled' &&
+          github.repository == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
+          github.event.pull_request.head.repo.full_name == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
+          github.event.pull_request.base.repo.full_name == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
+          github.event.pull_request.head.ref == 'test/cms-release-s1-linux-safety' &&
+          github.event.pull_request.base.ref == 'test/cms-release-s1-mariadb-rehearsal' &&
+          github.event.pull_request.base.sha == 'cb24f25cf9b90e87781dba52fbf50df13b78da1f' &&
+          github.event.pull_request.head.sha == '0000000000000000000000000000000000000000' &&
+          github.event.label.name == format('s1-safety-{0}', github.event.pull_request.head.sha) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: 'true'
+      NODE_DISABLE_COLORS: '1'
+      S1_SOURCE_SHA: cb24f25cf9b90e87781dba52fbf50df13b78da1f
+      Q1_SOURCE_SHA: 61c5591bb875bffaeb3d71d2f734d39d1e87faf7
+
+    steps:
+      - name: Require separate operator execution authority
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          // Deliberately no authority input from labels, arguments, env or PR JSON.
+          // A separately approved integration must bind an immutable operator
+          // decision to workflow/head/source and validate its exact execution scope.
+          const OPERATOR_EXECUTION_AUTHORITY = null;
+          if (OPERATOR_EXECUTION_AUTHORITY === null) {
+            throw new Error('S1_LINUX_EXECUTION_HOLD');
+          }
+          NODE
+
+      - name: Checkout exact reviewed S1 test source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: maivanminhlamkinhmedia-afk/LKC-fintech-demo
+          ref: cb24f25cf9b90e87781dba52fbf50df13b78da1f
+          path: s1
+          persist-credentials: false
+          fetch-depth: 2
+          submodules: false
+          lfs: false
+
+      - name: Select exact Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.2'
+          architecture: x64
+          check-latest: false
+
+      - name: Run and verify offline Linux safety only
+        working-directory: s1
+        env:
+          SAFETY_EVENT_NAME: ${{ github.event_name }}
+          SAFETY_EVENT_ACTION: ${{ github.event.action }}
+          SAFETY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SAFETY_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SAFETY_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SAFETY_RUN_ID: ${{ github.run_id }}
+          SAFETY_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { execFileSync, spawnSync } from 'node:child_process';
+          import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { isAbsolute, join, resolve } from 'node:path';
+
+          const SOURCE = 'cb24f25cf9b90e87781dba52fbf50df13b78da1f';
+          const Q1 = '61c5591bb875bffaeb3d71d2f734d39d1e87faf7';
+          const REQUIRED_NAME = 'file symlink is rejected as an artifact, when OS grants symlink creation';
+          const TEST_PATH = 'tests/cms-release-s1-safety.test.mjs';
+          const EXPECTED_BLOBS = Object.freeze({
+            '.github/workflows/cms-release-s1.yml': '8d44f420ee3a5b5d6faedff73b12a9874cf23794',
+            'scripts/cms-release-s1/run.mjs': 'f76b405b0190f34120bc9939f183acab41ec1eff',
+            'scripts/cms-release-s1/fixture-plan.mjs': '212a80b44fc33cccfbaaf5f083eb1394cce97eda',
+            'scripts/cms-release-s1/metadata.mjs': 'd9f83e1e18b077271a237b3d2200ee0e1f35538a',
+            'tests/cms-release-s1-safety.test.mjs': 'fb8e4ba239fa932b74579e26cae42ac98350de19',
+            'docs/cms/operations/cms-release-s1.md': 'fce6e45e7d7d27df972de8554016bd7c4a9cd306',
+          });
+          function requireValue(value, code) {
+            if (!value) throw new Error(code);
+          }
+          function digest(bytes, algorithm = 'sha256') {
+            return createHash(algorithm).update(bytes).digest('hex');
+          }
+          function git(...args) {
+            // Errors stay bounded and are never forwarded as arbitrary process data.
+            try {
+              return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 262144,
+                timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+            } catch { throw new Error('S1_LINUX_GIT_VERIFICATION_FAILED'); }
+          }
+          function sourceEvidence() {
+            requireValue(git('rev-parse', 'HEAD') === SOURCE, 'S1_LINUX_WRONG_CHECKOUT');
+            requireValue(git('rev-parse', 'HEAD^') === Q1, 'S1_LINUX_WRONG_SOURCE_PARENT');
+            requireValue(git('status', '--porcelain', '--untracked-files=all') === '', 'S1_LINUX_SOURCE_DIRTY');
+            const evidence = [];
+            for (const [path, expected] of Object.entries(EXPECTED_BLOBS)) {
+              const stat = lstatSync(path);
+              requireValue(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 1048576, 'S1_LINUX_UNSAFE_SOURCE');
+              const bytes = readFileSync(path);
+              const blob = digest(Buffer.concat([Buffer.from('blob ' + bytes.length + '\0'), bytes]), 'sha1');
+              requireValue(git('rev-parse', 'HEAD:' + path) === expected && blob === expected, 'S1_LINUX_SOURCE_BLOB_MISMATCH');
+              evidence.push({ path, gitBlob: blob, gitPayloadSha256: digest(bytes), rawCheckoutSha256: digest(bytes) });
+            }
+            const workflow = readFileSync('.github/workflows/cms-release-s1.yml', 'utf8');
+            const runner = readFileSync('scripts/cms-release-s1/run.mjs', 'utf8');
+            requireValue(/\$\{\{\s*false\s*&&/.test(workflow), 'S1_REHEARSAL_JOB_UNLOCKED');
+            requireValue(/^export const EXECUTION_GRANT = null;$/m.test(runner), 'S1_REHEARSAL_RUNNER_UNLOCKED');
+            return evidence;
+          }
+          function validateTap(text, expectedNames) {
+            requireValue(typeof text === 'string' && Buffer.byteLength(text) <= 1048576
+              && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text), 'S1_LINUX_MALFORMED_TAP');
+            const lines = text.replace(/\r\n/g, '\n').split('\n');
+            requireValue(lines[0] === 'TAP version 13', 'S1_LINUX_TAP_VERSION');
+            requireValue(!lines.some(line => /^\s*(?:not ok\b|Bail out!)/i.test(line)
+              || /^\s*(?:not )?ok\b.*#\s*(?:SKIP|TODO)\b/i.test(line)), 'S1_LINUX_NONPASS_TEST');
+            const plan = lines.filter(line => /^\d+\.\.\d+/.test(line));
+            requireValue(plan.length === 1 && plan[0] === '1..43', 'S1_LINUX_WRONG_PLAN');
+            const subtests = lines.filter(line => line.startsWith('# Subtest: ')).map(line => line.slice(11));
+            const records = lines.filter(line => /^ok\b/.test(line)).map(line => /^ok ([1-9]\d*) - (.+)$/.exec(line));
+            requireValue(expectedNames.length === 43 && new Set(expectedNames).size === 43
+              && records.length === 43 && subtests.length === 43, 'S1_LINUX_MISSING_REGISTRATION');
+            for (let index = 0; index < 43; index += 1) {
+              requireValue(records[index] && Number(records[index][1]) === index + 1
+                && records[index][2] === expectedNames[index] && subtests[index] === expectedNames[index],
+              'S1_LINUX_TEST_IDENTITY_MISMATCH');
+            }
+            for (const [key, expected] of Object.entries({
+              tests: 43, suites: 0, pass: 43, fail: 0, cancelled: 0, skipped: 0, todo: 0,
+            })) {
+              const values = lines.filter(line => line.startsWith('# ' + key + ' '));
+              requireValue(values.length === 1 && values[0] === '# ' + key + ' ' + expected,
+                'S1_LINUX_BAD_TOTALS');
+            }
+            const required = records.filter(record => record[2] === REQUIRED_NAME);
+            requireValue(required.length === 1 && subtests.filter(name => name === REQUIRED_NAME).length === 1,
+              'S1_LINUX_SYMLINK_NOT_PROVEN');
+            return { total: 43, passed: 43, failed: 0, skipped: 0, cancelled: 0,
+              fileSymlink: { name: REQUIRED_NAME, ordinal: Number(required[0][1]), result: 'PASS' },
+              tests: records.map(record => ({ ordinal: Number(record[1]), name: record[2], result: 'PASS' })) };
+          }
+
+          requireValue(process.platform === 'linux' && process.arch === 'x64'
+            && process.versions.node === '22.23.2', 'S1_LINUX_RUNTIME_MISMATCH');
+          requireValue(process.env.S1_SOURCE_SHA === SOURCE && process.env.Q1_SOURCE_SHA === Q1
+            && process.env.SAFETY_EVENT_NAME === 'pull_request' && process.env.SAFETY_EVENT_ACTION === 'labeled'
+            && process.env.SAFETY_BASE_SHA === SOURCE
+            && /^[a-f0-9]{40}$/.test(process.env.SAFETY_HEAD_SHA ?? '')
+            && /^[a-f0-9]{40}$/.test(process.env.SAFETY_WORKFLOW_SHA ?? '')
+            && /^[1-9]\d*$/.test(process.env.SAFETY_RUN_ID ?? '')
+            && process.env.SAFETY_RUN_ATTEMPT === '1', 'S1_LINUX_PROVENANCE_REFUSED');
+          const before = sourceEvidence();
+          const expectedNames = [...readFileSync(TEST_PATH, 'utf8').matchAll(/^test\('([^']+)',/gm)].map(match => match[1]);
+          const temporary = process.env.RUNNER_TEMP;
+          requireValue(typeof temporary === 'string' && isAbsolute(temporary)
+            && lstatSync(temporary).isDirectory() && !lstatSync(temporary).isSymbolicLink(), 'S1_LINUX_TEMP_REFUSED');
+          const output = join(resolve(temporary), 's1-linux-safety-evidence');
+          mkdirSync(output); // Must be new; never overwrite a prior run's evidence.
+          const childEnvironment = {
+            PATH: process.env.PATH ?? '', HOME: temporary, TMPDIR: temporary,
+            LANG: 'C.UTF-8', CI: 'true', NODE_DISABLE_COLORS: '1',
+          };
+          // Exact requested command; pinned Node 22 with piped output produces TAP.
+          // No inherited GitHub token, credentials, DATABASE_URL, NODE_OPTIONS or .env.
+          const child = spawnSync(process.execPath, ['--test', TEST_PATH], {
+            cwd: process.cwd(), env: childEnvironment, shell: false, encoding: 'utf8',
+            timeout: 120000, maxBuffer: 1048576, stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          const stdout = child.stdout ?? '';
+          const stderr = child.stderr ?? '';
+          const provenance = {
+            sourceSha: SOURCE, q1Sha: Q1,
+            safetyPrHeadSha: process.env.SAFETY_HEAD_SHA,
+            workflowSha: process.env.SAFETY_WORKFLOW_SHA,
+            event: 'pull_request:labeled', runId: process.env.SAFETY_RUN_ID, runAttempt: 1,
+            node: process.versions.node, platform: process.platform, architecture: process.arch,
+            stdoutSha256: digest(stdout), stderrSha256: digest(stderr),
+          };
+          let result;
+          try {
+            requireValue(!child.error && child.signal === null && child.status === 0,
+              'S1_LINUX_TEST_PROCESS_FAILED');
+            requireValue(stderr.length === 0, 'S1_LINUX_UNEXPECTED_STDERR');
+            const parsed = validateTap(stdout, expectedNames);
+            const after = sourceEvidence();
+            requireValue(JSON.stringify(before) === JSON.stringify(after), 'S1_LINUX_SOURCE_CHANGED');
+            result = { verdict: 'S1_LINUX_SAFETY_PASS', ...parsed, sourceFiles: after,
+              rehearsalJobLocked: true, rehearsalRunnerLocked: true, databaseExecution: 'NOT_RUN' };
+          } catch (error) {
+            // Only workflow-owned error literals may leave this boundary; never raw child output.
+            const safeCodes = new Set([
+              'S1_LINUX_TEST_PROCESS_FAILED', 'S1_LINUX_UNEXPECTED_STDERR',
+              'S1_LINUX_MALFORMED_TAP', 'S1_LINUX_TAP_VERSION', 'S1_LINUX_NONPASS_TEST',
+              'S1_LINUX_WRONG_PLAN', 'S1_LINUX_MISSING_REGISTRATION',
+              'S1_LINUX_TEST_IDENTITY_MISMATCH', 'S1_LINUX_BAD_TOTALS',
+              'S1_LINUX_SYMLINK_NOT_PROVEN', 'S1_LINUX_SOURCE_CHANGED',
+              'S1_LINUX_GIT_VERIFICATION_FAILED', 'S1_LINUX_WRONG_CHECKOUT',
+              'S1_LINUX_WRONG_SOURCE_PARENT', 'S1_LINUX_SOURCE_DIRTY',
+              'S1_LINUX_UNSAFE_SOURCE', 'S1_LINUX_SOURCE_BLOB_MISMATCH',
+              'S1_REHEARSAL_JOB_UNLOCKED', 'S1_REHEARSAL_RUNNER_UNLOCKED',
+            ]);
+            const code = error instanceof Error && safeCodes.has(error.message)
+              ? error.message : 'S1_LINUX_VALIDATION_FAILED';
+            result = { verdict: 'S1_LINUX_SAFETY_FAIL', code,
+              databaseExecution: 'NOT_RUN' };
+          }
+          writeFileSync(join(output, 'provenance.json'), JSON.stringify(provenance, null, 2), { flag: 'wx', mode: 0o600 });
+          writeFileSync(join(output, 'results.json'), JSON.stringify(result, null, 2), { flag: 'wx', mode: 0o600 });
+          console.log(JSON.stringify({ verdict: result.verdict, total: result.total ?? null,
+            passed: result.passed ?? null, skipped: result.skipped ?? null, fileSymlink: result.fileSymlink ?? null }));
+          if (result.verdict !== 'S1_LINUX_SAFETY_PASS') process.exitCode = 1;
+          NODE
+
+      - name: Upload bounded sanitized safety evidence only
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cms-s1-linux-safety-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/s1-linux-safety-evidence/provenance.json
+            ${{ runner.temp }}/s1-linux-safety-evidence/results.json
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+    # No job container, DB service, migration, npm install, application server,
+    # browser or deployment step. The frozen suite uses owned temporary files and
+    # a child Node import audit only. Runner egress remains possible: this is not
+    # an OS egress sandbox or MariaDB/runtime validation.
