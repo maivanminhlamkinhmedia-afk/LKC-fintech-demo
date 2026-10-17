@@ -69,6 +69,60 @@ const nextFiles = new Set(['BUILD_ID', 'package.json', 'app-path-routes-manifest
   'prerender-manifest.json', 'required-server-files.json', 'routes-manifest.json'])
 const nextDirectory = rel => ['.next/server', '.next/node_modules', '.next/static'].some(root => rel === root || rel.startsWith(`${root}/`))
 const portable = path => path.split(sep).join('/')
+// Diagnostic-only: never use these classifications as permission to copy a link.
+// Emit known structural names only. Unknown names may contain customer/secret data.
+function diagnosticBundlePath(path) {
+  const rel = portable(relative(bundle, path))
+  if (!rel || rel.length > 240 || isAbsolute(rel) || /[\x00-\x20\x7f-\uffff]/u.test(rel)
+    || rel.split('/').some(part => part === '..' || part === '.' || !part)) return '[REDACTED]'
+  const names = new Set(['.next', 'isolated-build', 'node_modules', '.bin', '@prisma', 'client',
+    'runtime', 'pngjs', 'jpeg-js', 'index.js', 'client.js', 'package.json'])
+  return rel.split('/').map((part, index, parts) => names.has(part)
+    || (parts[index - 1] === '@prisma' && /^client-[a-f0-9]{16}$/u.test(part)) ? part : '[REDACTED]').join('/')
+}
+function diagnosticDependency(target) {
+  // Only the existing assembler-owned dependencies can receive this classification.
+  // Name/version metadata verification is diagnostic evidence, not a runtime permit.
+  for (const name of ['@prisma/client', 'pngjs', 'jpeg-js']) {
+    const root = resolve(project, 'node_modules', name)
+    const rel = relative(root, target)
+    if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) continue
+    try {
+      checkedDirectory(project, root)
+      const packageFile = join(root, 'package.json'), lockFile = join(project, 'package-lock.json')
+      if (regularSource(packageFile).size > 65536 || regularSource(lockFile).size > 4 * 1024 * 1024) return false
+      const metadata = JSON.parse(sourceBytes(packageFile).toString('utf8'))
+      const lock = JSON.parse(sourceBytes(lockFile).toString('utf8'))
+      return metadata.name === name && typeof metadata.version === 'string' && metadata.version.length > 0
+        && metadata.version === lock.packages?.[`node_modules/${name}`]?.version
+    } catch { return false }
+  }
+  return false
+}
+function inventoryLinkError(path) {
+  let linkType = 'unresolvable', targetClass = 'UNRESOLVED'
+  try {
+    const target = realpathSync(path), info = lstatSync(target)
+    linkType = info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'unresolvable'
+    const rel = relative(bundle, target)
+    targetClass = !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)
+      ? 'INSIDE_BUNDLE' : diagnosticDependency(target) ? 'VERIFIED_CHECKOUT_DEPENDENCY' : 'OUTSIDE_SCOPE'
+  } catch (error) {
+    // Never forward native error messages, raw targets, or absolute filesystem paths.
+    linkType = error?.code === 'ENOENT' ? 'dangling' : 'unresolvable'
+  }
+  let bundlePath = '[REDACTED]'
+  try { bundlePath = diagnosticBundlePath(path) } catch { /* Diagnostics stay fail-closed. */ }
+  console.error(`CMS_RELEASE_LINK_DIAGNOSTIC ${JSON.stringify({ bundlePath, linkType, targetClass })}`)
+  const error = new Error('CMS_RELEASE_INVENTORY_LINK')
+  // The ordinary Node stack would expose the checkout's absolute host path.
+  error.stack = 'Error: CMS_RELEASE_INVENTORY_LINK'
+  return error
+}
+function inventoryRealpath(path) {
+  try { return realpathSync(path) } catch { throw inventoryLinkError(path) }
+}
+
 function forbiddenEntry(path) {
   return path.split('/').some(part => /^\.env/iu.test(part) || /^(?:AGENTS|CLAUDE)\.md$/iu.test(part)
     || /\.xlsx$/iu.test(part) || /(?:runbook|staging[-_]cleanup)/iu.test(part)
@@ -80,7 +134,7 @@ function regularTree(root, directory = root) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
     if (forbiddenEntry(portable(relative(root, path)))) throw new Error('CMS_RELEASE_INVENTORY_FORBIDDEN')
-    if (entry.isSymbolicLink()) throw new Error('CMS_RELEASE_INVENTORY_LINK')
+    if (entry.isSymbolicLink()) throw inventoryLinkError(path)
     if (entry.isDirectory()) regularTree(root, path)
     else regularSource(path)
   }
@@ -96,10 +150,10 @@ function releaseInventory(directory, preflight) {
     if (entry.isSymbolicLink()) {
       // Preserve the existing nested-output codec junction handling below.
       if (preflight && runtimeBundle !== bundle && rel === 'node_modules'
-        && samePath(realpathSync(path), resolve(project, 'node_modules'))) continue
+        && samePath(inventoryRealpath(path), resolve(project, 'node_modules'))) continue
       const source = resolve(project, 'node_modules', '@prisma', 'client')
       if (!preflight || !/^\.next\/node_modules\/@prisma\/client-[a-f0-9]{16}$/u.test(rel)
-        || !samePath(realpathSync(path), source)) throw new Error('CMS_RELEASE_INVENTORY_LINK')
+        || !samePath(inventoryRealpath(path), source)) throw inventoryLinkError(path)
       checkedDirectory(project, source)
       const manifest = JSON.parse(sourceBytes(join(source, 'package.json')).toString('utf8'))
       const lock = JSON.parse(sourceBytes(join(project, 'package-lock.json')).toString('utf8'))
@@ -155,7 +209,7 @@ for (const rel of ['docs/cms/operations', 'docs/cms', 'docs']) {
 }
 for (const { path, source } of materialize) {
   checkedDirectory(bundle, dirname(path))
-  if (!lstatSync(path).isSymbolicLink() || !samePath(realpathSync(path), source)) throw new Error('CMS_RELEASE_INVENTORY_LINK')
+  if (!lstatSync(path).isSymbolicLink() || !samePath(inventoryRealpath(path), source)) throw inventoryLinkError(path)
   unlinkSync(path) // Unlink the verified junction, never its target.
   cpSync(source, path, { recursive: true, force: false, errorOnExist: true })
   regularTree(path)
