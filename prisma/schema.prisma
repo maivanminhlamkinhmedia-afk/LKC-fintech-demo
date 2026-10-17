@@ -72,6 +72,11 @@ enum ArticleType {
   OPINION
 }
 
+enum ArticleAccessMode {
+  PUBLIC
+  PAID_PRODUCT
+}
+
 enum ArticleStatus {
   DRAFT
   SUBMITTED
@@ -90,6 +95,16 @@ enum ReviewDecision {
   REQUEST_CHANGES
   APPROVE
   REJECT
+}
+
+enum ArticleReviewAction {
+  SUBMIT
+  TAKE
+  APPROVE
+}
+
+enum ArticleVersionMediaContext {
+  COVER
 }
 
 enum SourceType {
@@ -157,6 +172,7 @@ model User {
   sourceReferencesCreated   SourceReference[]   @relation("SourceReferenceCreator")
   articleDisclosuresCreated ArticleDisclosure[] @relation("ArticleDisclosureCreator")
   articleReviews            ArticleReview[]     @relation("ArticleReviewer")
+  articleReviewEvents       ArticleReviewEvent[] @relation("ArticleReviewEventActor")
   editorialCommentsAuthored EditorialComment[]  @relation("EditorialCommentAuthor")
   editorialCommentsResolved EditorialComment[]  @relation("EditorialCommentResolver")
   mediaAssetsUploaded       MediaAsset[]        @relation("MediaAssetUploader")
@@ -285,10 +301,14 @@ model Article {
   editorSchemaVersion Int           @default(1)
   articleType         ArticleType
   status              ArticleStatus @default(DRAFT)
+  /// NULL means UNCONFIGURED; audience is never inferred from Article status.
+  accessMode          ArticleAccessMode?
   authorId            String
   editorId            String?
   categoryId          String?
   coverMediaId        String?
+  activeReviewVersionId   String?
+  activeApprovalVersionId String?
   seoTitle            String?
   seoDescription      String?       @db.Text
   featured            Boolean       @default(false)
@@ -303,14 +323,18 @@ model Article {
   editor     User?            @relation("ArticleEditor", fields: [editorId], references: [id], onDelete: SetNull)
   category   ArticleCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   coverMedia MediaAsset?      @relation("ArticleCoverMedia", fields: [coverMediaId], references: [id], onDelete: SetNull)
+  activeReviewVersion ArticleVersion? @relation("ArticleActiveReviewVersion", fields: [id, activeReviewVersionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  activeApprovalVersion ArticleVersion? @relation("ArticleActiveApprovalVersion", fields: [id, activeApprovalVersionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
 
   versions          ArticleVersion[]
+  products          ArticleProduct[]
   topics            ArticleTopicMapping[]
   tags              ArticleTagMapping[]
   instruments       ArticleInstrument[]
   sources           SourceReference[]
   disclosures       ArticleDisclosure[]
   reviews           ArticleReview[]
+  reviewEvents      ArticleReviewEvent[]
   editorialComments EditorialComment[]
   corrections       CorrectionNotice[]
   publicationEvents PublicationEvent[]
@@ -321,6 +345,8 @@ model Article {
   @@index([editorId])
   @@index([categoryId])
   @@index([coverMediaId])
+  @@index([id, activeReviewVersionId])
+  @@index([id, activeApprovalVersionId])
   @@index([publishedAt])
   @@index([scheduledAt])
   @@index([createdAt])
@@ -336,16 +362,166 @@ model ArticleVersion {
   contentJson         Json
   contentText         String   @db.LongText
   editorSchemaVersion Int      @default(1)
+  snapshotFormatVersion Int?
+  basisUpdatedAt      DateTime? @db.DateTime(3)
+  /// Captured audience; NULL preserves incomplete legacy snapshots.
+  accessMode          ArticleAccessMode?
+  slug                String?
+  articleType         ArticleType?
+  seoTitle            String?
+  seoDescription      String? @db.Text
+  featured            Boolean?
   createdById         String
   changeSummary       String?  @db.Text
   createdAt           DateTime @default(now())
 
   article   Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
   createdBy User    @relation("ArticleVersionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  activeReviewArticles Article[] @relation("ArticleActiveReviewVersion")
+  activeApprovalArticles Article[] @relation("ArticleActiveApprovalVersion")
+  reviews ArticleReview[] @relation("ArticleReviewVersion")
+  reviewEvents ArticleReviewEvent[]
+  categories ArticleVersionCategory[]
+  topics ArticleVersionTopic[]
+  tags ArticleVersionTag[]
+  instruments ArticleVersionInstrument[]
+  sources ArticleVersionSource[]
+  disclosures ArticleVersionDisclosure[]
+  media ArticleVersionMedia[]
+  products ArticleVersionProduct[]
 
   @@unique([articleId, versionNumber])
+  @@unique([articleId, id])
   @@index([articleId, createdAt])
   @@index([createdById])
+}
+
+// Foundation only: no application writer creates these rows until the shared
+// Article CAS, media retention, and fixture graph are activated together.
+model ArticleVersionCategory {
+  versionId String @id
+  articleId String
+  categoryId String
+  nameAtCapture String
+
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  category ArticleCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([articleId, versionId])
+  @@index([categoryId])
+}
+
+model ArticleVersionTopic {
+  versionId String
+  articleId String
+  topicId String
+  nameAtCapture String
+
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  topic ArticleTopic @relation(fields: [topicId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([versionId, topicId])
+  @@index([articleId, versionId])
+  @@index([topicId])
+}
+
+model ArticleVersionTag {
+  versionId String
+  articleId String
+  tagId String
+  nameAtCapture String
+
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  tag ArticleTag @relation(fields: [tagId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([versionId, tagId])
+  @@index([articleId, versionId])
+  @@index([tagId])
+}
+
+model ArticleVersionInstrument {
+  versionId String
+  articleId String
+  instrumentId String
+  nameAtCapture String
+  symbolAtCapture String
+  isPrimary Boolean
+
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  instrument FinancialInstrument @relation(fields: [instrumentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([versionId, instrumentId])
+  @@index([articleId, versionId])
+  @@index([instrumentId])
+}
+
+model ArticleVersionSource {
+  versionId String
+  articleId String
+  position Int
+  sourceIdAtCapture String
+  sourceType SourceType
+  title String
+  publisher String?
+  url String? @db.Text
+  publishedAt DateTime? @db.DateTime(3)
+  accessedAt DateTime? @db.DateTime(3)
+  dataTimestamp DateTime? @db.DateTime(3)
+
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([versionId, position])
+  @@index([articleId, versionId])
+}
+
+model ArticleVersionDisclosure {
+  versionId String
+  articleId String
+  position Int
+  disclosureIdAtCapture String
+  statement String @db.Text
+  conflictType String?
+
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([versionId, position])
+  @@index([articleId, versionId])
+}
+
+model ArticleVersionMedia {
+  versionId String
+  articleId String
+  assetId String
+  context ArticleVersionMediaContext
+  altTextAtCapture String? @db.Text
+  captionAtCapture String? @db.Text
+
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  asset MediaAsset @relation(fields: [assetId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([versionId, assetId, context])
+  @@index([articleId, versionId])
+  @@index([assetId])
+}
+
+model ArticleReviewEvent {
+  id String @id @default(cuid())
+  articleId String
+  versionId String
+  actorId String
+  action ArticleReviewAction
+  fromStatus ArticleStatus
+  toStatus ArticleStatus
+  operationId String? // Future lost-ACK correlation; never an authorization token.
+  occurredAt DateTime @default(now()) @db.DateTime(3)
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  actor User @relation("ArticleReviewEventActor", fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([articleId, operationId])
+  @@index([articleId, versionId, occurredAt])
+  @@index([actorId])
 }
 
 model AuthorProfile {
@@ -376,6 +552,7 @@ model ArticleCategory {
   updatedAt   DateTime @updatedAt
 
   articles Article[]
+  versionCategories ArticleVersionCategory[]
 
   @@index([isActive, sortOrder])
 }
@@ -390,6 +567,7 @@ model ArticleTopic {
   updatedAt   DateTime @updatedAt
 
   articles ArticleTopicMapping[]
+  versionTopics ArticleVersionTopic[]
 
   @@index([isActive])
 }
@@ -402,6 +580,7 @@ model ArticleTag {
   updatedAt DateTime @updatedAt
 
   articles ArticleTagMapping[]
+  versionTags ArticleVersionTag[]
 }
 
 model ArticleTopicMapping {
@@ -443,6 +622,7 @@ model FinancialInstrument {
   updatedAt      DateTime       @updatedAt
 
   articles ArticleInstrument[]
+  versionInstruments ArticleVersionInstrument[]
 
   @@index([symbol, exchange])
   @@index([instrumentType, isActive])
@@ -505,6 +685,7 @@ model ArticleDisclosure {
 model ArticleReview {
   id         String         @id @default(cuid())
   articleId  String
+  versionId  String?
   reviewerId String
   decision   ReviewDecision
   comment    String?        @db.Text
@@ -514,8 +695,10 @@ model ArticleReview {
 
   article  Article @relation(fields: [articleId], references: [id], onDelete: Restrict)
   reviewer User    @relation("ArticleReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  version ArticleVersion? @relation("ArticleReviewVersion", fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([articleId])
+  @@index([articleId, versionId])
   @@index([reviewerId])
   @@index([createdAt])
 }
@@ -556,6 +739,7 @@ model MediaAsset {
 
   uploadedBy    User      @relation("MediaAssetUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
   coverArticles Article[] @relation("ArticleCoverMedia")
+  versionMedia ArticleVersionMedia[]
 
   @@index([uploadedById])
   @@index([createdAt])
@@ -597,4 +781,52 @@ model PublicationEvent {
   @@index([actorId])
   @@index([eventType])
   @@index([scheduledFor])
+}
+
+enum ProductContentState {
+  SELECTABLE
+  UNSELECTABLE
+  RETIRED
+}
+
+/// Foundation only: no producer, CMS binding or application writer is activated.
+/// Future writers must retain the opaque ID across rename/retirement; this
+/// schema alone does not prevent re-keying or deletion through direct SQL.
+model Product {
+  id           String              @id @default(cuid()) @db.VarChar(191)
+  name         String              @db.VarChar(191)
+  contentState ProductContentState @default(UNSELECTABLE)
+  saleStopped  Boolean             @default(true)
+  createdAt    DateTime            @default(now()) @db.DateTime(3)
+  updatedAt    DateTime            @updatedAt @db.DateTime(3)
+
+  articles        ArticleProduct[]
+  versionArticles ArticleVersionProduct[]
+}
+
+/// Working audience references. PUBLIC/PAID_PRODUCT consistency is a writer gate.
+model ArticleProduct {
+  articleId String
+  productId String @db.VarChar(191)
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([articleId, productId])
+  @@index([productId])
+}
+
+/// Snapshot audience references. Future writers enforce append-only capture;
+/// these FKs preserve identity/retention, not Product eligibility or entitlement.
+model ArticleVersionProduct {
+  articleId String
+  versionId String
+  productId String @db.VarChar(191)
+
+  version ArticleVersion @relation(fields: [articleId, versionId], references: [articleId, id], onDelete: Restrict, onUpdate: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([versionId, productId])
+  @@index([articleId, versionId])
+  @@index([productId])
 }
