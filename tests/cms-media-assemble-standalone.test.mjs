@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { link, lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, posix } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
 
 const script = resolve('scripts/cms-media/assemble-standalone.mjs')
@@ -334,3 +335,130 @@ test('public asset mismatch refuses release without changing the asset', async t
   refused(f.run())
   assert.equal(await readFile(file, 'utf8'), 'unexpected content')
 })
+
+
+function diagnostic(result, scratch) {
+  refused(result)
+  assert.match(result.stderr, /Error: CMS_RELEASE_INVENTORY_LINK/)
+  const records = result.stderr.split(/\r?\n/u).filter(line => line.startsWith('CMS_RELEASE_LINK_DIAGNOSTIC '))
+  assert.equal(records.length, 1)
+  assert.ok(!result.stderr.includes(scratch))
+  assert.doesNotMatch(result.stderr, /(?:file:\/\/\/|[A-Za-z]:[\\/]|\/home\/|\/Users\/)/u)
+  const value = JSON.parse(records[0].slice('CMS_RELEASE_LINK_DIAGNOSTIC '.length))
+  assert.deepEqual(Object.keys(value).sort(), ['bundlePath', 'linkType', 'targetClass'])
+  return value
+}
+for (const nested of [false, true]) {
+  test(`link diagnostic retains denial for an in-bundle directory (${nested ? 'nested' : 'root'})`, async t => {
+    const f = await fixture(t)
+    let runtime = f.runtime
+    if (nested) {
+      runtime = join(f.runtime, '.next/isolated-build')
+      await mkdir(runtime, { recursive: true })
+      await rename(join(f.runtime, 'server.js'), join(runtime, 'server.js'))
+    }
+    const target = join(runtime, 'node_modules/pngjs')
+    await mkdir(target, { recursive: true }); await writeFile(join(target, 'index.js'), 'synthetic target bytes')
+    const linkPath = join(runtime, '.next/node_modules/@prisma/client-1111111111111111')
+    await mkdir(dirname(linkPath), { recursive: true })
+    await symlink(target, linkPath, process.platform === 'win32' ? 'junction' : 'dir')
+    assert.deepEqual(diagnostic(f.run(), f.scratch), {
+      bundlePath: `${nested ? '.next/isolated-build/' : ''}.next/node_modules/@prisma/client-1111111111111111`,
+      linkType: 'directory', targetClass: 'INSIDE_BUNDLE',
+    })
+    assert.equal((await lstat(linkPath)).isSymbolicLink(), true)
+    assert.equal(await readFile(join(target, 'index.js'), 'utf8'), 'synthetic target bytes')
+  })
+}
+for (const matchedVersion of [true, false]) {
+  test(`diagnostic dependency identity (${matchedVersion ? 'verified' : 'mismatched'}) never permits an unapproved link path`, async t => {
+    const f = await fixture(t), p = await prismaJunction(f)
+    const alias = join(dirname(p.destination), 'client')
+    await rename(p.destination, alias) // Name is not the existing materialization allowlist.
+    if (!matchedVersion) await writeFile(join(p.source, 'package.json'), JSON.stringify({ name: '@prisma/client', version: '0.0.0' }))
+    assert.deepEqual(diagnostic(f.run(), f.scratch), {
+      bundlePath: '.next/node_modules/@prisma/client', linkType: 'directory',
+      targetClass: matchedVersion ? 'VERIFIED_CHECKOUT_DEPENDENCY' : 'OUTSIDE_SCOPE',
+    })
+    assert.equal((await lstat(alias)).isSymbolicLink(), true)
+    assert.equal(await readFile(join(p.source, 'runtime/client.js'), 'utf8'), 'synthetic runtime client')
+  })
+}
+test('diagnostic redacts sensitive link names and never emits external target or contents', async t => {
+  const f = await fixture(t), outside = join(f.scratch, 'private-secret-password-canary')
+  await mkdir(outside); await writeFile(join(outside, 'private.txt'), 'SECRET-CONTENT-CANARY')
+  const path = join(f.runtime, 'node_modules/credential-secret-canary')
+  await mkdir(dirname(path), { recursive: true })
+  await symlink(outside, path, process.platform === 'win32' ? 'junction' : 'dir')
+  const result = f.run()
+  assert.deepEqual(diagnostic(result, f.scratch), { bundlePath: 'node_modules/[REDACTED]', linkType: 'directory', targetClass: 'OUTSIDE_SCOPE' })
+  for (const value of ['private-secret-password-canary', 'credential-secret-canary', 'SECRET-CONTENT-CANARY', outside])
+    assert.ok(!`${result.stdout}${result.stderr}`.includes(value))
+  assert.equal(await readFile(join(outside, 'private.txt'), 'utf8'), 'SECRET-CONTENT-CANARY')
+})
+test('dangling previously recognized link emits sanitized failure instead of raw realpath error', async t => {
+  const f = await fixture(t), p = await prismaJunction(f)
+  await rename(p.source, `${p.source}-moved`)
+  const value = diagnostic(f.run(), f.scratch)
+  assert.equal(value.bundlePath, '.next/node_modules/@prisma/client-2c3a283f134fdcb6')
+  assert.equal(value.linkType, 'dangling')
+  assert.equal(value.targetClass, 'UNRESOLVED')
+  assert.equal((await lstat(p.destination)).isSymbolicLink(), true)
+})
+
+// Pure diagnostic privacy tests use POSIX paths and synthetic metadata. These are
+// not Linux filesystem execution evidence; real junction tests above are separate.
+async function diagnosticModel({ path, target = '/checkout/.next/standalone/node_modules/pngjs/index.js', errorCode, kind = 'file', badMetadata = false }) {
+  const source = await readFile(script, 'utf8')
+  const helper = source.slice(source.indexOf('// Diagnostic-only:'), source.indexOf('function forbiddenEntry('))
+  assert.ok(helper.includes('function inventoryLinkError('))
+  const output = [], metadataReads = []
+  const context = {
+    project: '/checkout', bundle: '/checkout/.next/standalone', sep: '/',
+    relative: posix.relative, resolve: posix.resolve, join: posix.join, isAbsolute: posix.isAbsolute,
+    portable: value => value, console: { error: value => output.push(value) },
+    realpathSync: () => {
+      if (errorCode) throw Object.assign(new Error('RAW-SECRET /outside/password'), { code: errorCode })
+      return target
+    },
+    lstatSync: () => ({ isDirectory: () => kind === 'directory', isFile: () => kind === 'file' }),
+    checkedDirectory: () => {}, regularSource: () => ({ size: 100 }),
+    sourceBytes: file => {
+      metadataReads.push(file)
+      assert.ok(['/checkout/node_modules/pngjs/package.json', '/checkout/package-lock.json'].includes(file))
+      return Buffer.from(JSON.stringify(file.endsWith('package-lock.json')
+        ? { packages: { 'node_modules/pngjs': { version: '7.0.0' } } }
+        : { name: 'pngjs', version: badMetadata ? '0.0.0' : '7.0.0' }))
+    },
+  }
+  const run = runInNewContext(`${helper}\n(path) => { try { inventoryRealpath(path) } catch (e) { return e.message }; return inventoryLinkError(path).message }`, context)
+  assert.equal(run(path), 'CMS_RELEASE_INVENTORY_LINK')
+  assert.equal(output.length, 1)
+  assert.ok(output[0].length < 600)
+  assert.ok(!output[0].includes('RAW-SECRET'))
+  assert.ok(!output[0].includes('/checkout'))
+  assert.ok(!output[0].includes('/outside'))
+  return { value: JSON.parse(output[0].slice('CMS_RELEASE_LINK_DIAGNOSTIC '.length)), metadataReads }
+}
+for (const [name, target, kind, errorCode, expected] of [
+  ['file inside bundle', '/checkout/.next/standalone/node_modules/pngjs/index.js', 'file', undefined, ['file', 'INSIDE_BUNDLE']],
+  ['file outside bundle', '/outside/private.env', 'file', undefined, ['file', 'OUTSIDE_SCOPE']],
+  ['prefix sibling is outside', '/checkout/.next/standalone-secret/private', 'directory', undefined, ['directory', 'OUTSIDE_SCOPE']],
+  ['dangling', undefined, 'file', 'ENOENT', ['dangling', 'UNRESOLVED']],
+  ['loop', undefined, 'file', 'ELOOP', ['unresolvable', 'UNRESOLVED']],
+  ['permission denied', undefined, 'file', 'EACCES', ['unresolvable', 'UNRESOLVED']],
+]) {
+  test(`diagnostic model: ${name} remains a sanitized rejection`, async () => {
+    const { value, metadataReads } = await diagnosticModel({ path: '/checkout/.next/standalone/node_modules/pngjs', target, kind, errorCode })
+    assert.deepEqual([value.linkType, value.targetClass], expected)
+    assert.deepEqual(metadataReads, []) // Never read target contents or arbitrary package metadata.
+  })
+}
+for (const [caseIndex, name] of ['secret-token-abc', '.env.production', 'customer@example.com', 'secret\nforged-log', 'secret\u001b[31m', 'secret\u202etxt', 'x'.repeat(300), '../outside'].entries()) {
+  test(`diagnostic path privacy model case ${caseIndex + 1}`, async () => {
+    const { value } = await diagnosticModel({ path: `/checkout/.next/standalone/node_modules/${name}` })
+    assert.ok(value.bundlePath.includes('[REDACTED]'))
+    assert.ok(!value.bundlePath.includes(name))
+    assert.doesNotMatch(value.bundlePath, /[\x00-\x20\x7f-\uffff]/u)
+  })
+}
