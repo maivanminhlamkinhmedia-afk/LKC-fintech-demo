@@ -1,0 +1,145 @@
+name: W0 MariaDB validation (execution locked)
+
+on:
+  pull_request:
+    types: [labeled]
+    branches: [feature/cms-access-001a-draft-writer-foundation]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cms-w0-mariadb-validation
+  cancel-in-progress: false
+
+jobs:
+  validate-w0:
+    # Local source grant only. Approval/service attestation is NOT implemented by a label.
+    # The zero placeholder and literal false remain until a separately reviewed execution grant.
+    if: >-
+      ${{ false &&
+          github.event_name == 'pull_request' && github.event.action == 'labeled' &&
+          github.repository == 'maivanminhlamkinhmedia-afk/LKC-fintech-demo' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.base.repo.full_name == github.repository &&
+          github.event.pull_request.head.ref == 'test/cms-w0-mariadb-validation' &&
+          github.event.pull_request.base.ref == 'feature/cms-access-001a-draft-writer-foundation' &&
+          github.event.pull_request.base.sha == '5321f28673eeee11ed8f913c78c7cdcb38896f9e' &&
+          github.event.pull_request.head.sha == '0000000000000000000000000000000000000000' &&
+          github.event.label.name == format('w0-db-{0}', github.event.pull_request.head.sha) &&
+          github.run_attempt == 1 }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # Candidate digests inherited from S1, NOT re-attested in this offline checkpoint.
+    container:
+      image: node:22-bookworm@sha256:c4d5523090a817b7aa86d2111241fdd4f66d1e27782b44160e6aa63b357ecb2d
+      options: --platform linux/amd64 --cpus 2 --memory 6g
+    services:
+      mariadb:
+        image: mariadb:10.11.14@sha256:3a7d3cbc8b6fddf66433d80dc124c1e4e75a73ebab9c6e137529cc270bdadfc0
+        options: >-
+          --platform linux/amd64 --cpus 2 --memory 2g
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s --health-timeout 5s --health-retries 24
+        env:
+          MARIADB_ROOT_PASSWORD: w0-${{ github.run_id }}-${{ github.run_attempt }}-synthetic-only
+          MARIADB_ROOT_HOST: '%'
+        # No host port, host mount or durable volume. This network still permits egress.
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: 'true'
+      NEXT_TELEMETRY_DISABLED: '1'
+      DATABASE_URL: mysql://dummy:dummy@127.0.0.1:1/offline_install_only
+      DOTENV_CONFIG_PATH: /dev/null
+    steps:
+      - name: Checkout test candidate by event commit (never merge ref)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Checkout immutable W0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 5321f28673eeee11ed8f913c78c7cdcb38896f9e
+          path: source
+          persist-credentials: false
+      - name: Checkout immutable reusable harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: f4c8fda177a81f96e13a05fa8a856128371835ad
+          path: reusable
+          persist-credentials: false
+      - name: Checkout independent old schema/client
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 5e6b14f006453da7f9b1554c210e9ad85a9f8c0c
+          path: baseline
+          persist-credentials: false
+      - name: Check versions and immutable inputs before install
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          test "$(node -p 'process.versions.node.split(".")[0]')" = '22'
+          node --input-type=module <<'NODE'
+          import {verifyCheckout,loadReusable} from './candidate/scripts/cms-w0-db-validation/run.mjs';
+          import {resolve} from 'node:path';
+          verifyCheckout(resolve('candidate'), process.env.CANDIDATE_SHA);
+          verifyCheckout(resolve('source'), '5321f28673eeee11ed8f913c78c7cdcb38896f9e');
+          verifyCheckout(resolve('baseline'), '5e6b14f006453da7f9b1554c210e9ad85a9f8c0c');
+          await loadReusable(resolve('reusable'));
+          NODE
+      - name: Prepare independent clients (no database operation)
+        run: |
+          set -euo pipefail
+          for root in source baseline; do
+            (cd "$root" && npm ci --ignore-scripts --no-audit --no-fund && node node_modules/prisma/build/index.js generate)
+          done
+      - name: Locked W0 runner (future reviewed authority wiring required)
+        env:
+          W0_SYNTHETIC_BOOTSTRAP: w0-${{ github.run_id }}-${{ github.run_attempt }}-synthetic-only
+        run: |
+          set -euo pipefail
+          node candidate/scripts/cms-w0-db-validation/run.mjs
+      # Evidence collection is deliberately explicit; never upload private-work, raw logs or env.
+      # Future authority wiring must bind outputRoot to RUNNER_TEMP/w0-evidence.
+      - name: Verify bounded evidence files
+        id: evidence
+        if: ${{ always() }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {lstatSync,readFileSync,appendFileSync} from 'node:fs';
+          import {join} from 'node:path';
+          import {createHash} from 'node:crypto';
+          const root=join(process.env.RUNNER_TEMP,'w0-evidence');
+          const names=['manifest.json','results.json','metadata.json','history.json','journal.jsonl'];
+          const stats=names.map(n=>{try{return lstatSync(join(root,n));}catch(e){if(e.code==='ENOENT')return null;throw new Error('W0_EVIDENCE_REFUSED');}});
+          if(stats.every(s=>s===null)){appendFileSync(process.env.GITHUB_OUTPUT,'present=false\n');}
+          else{
+            if(stats.some(s=>!s||!s.isFile()||s.isSymbolicLink())||stats.reduce((n,s)=>n+s.size,0)>25*1024*1024)throw new Error('W0_EVIDENCE_REFUSED');
+            const manifest=JSON.parse(readFileSync(join(root,'manifest.json'),'utf8'));
+            for(const [key,name] of [['results','results.json'],['metadata','metadata.json'],['history','history.json'],['journal','journal.jsonl']]){
+              if(createHash('sha256').update(readFileSync(join(root,name))).digest('hex')!==manifest.hashes[key])throw new Error('W0_EVIDENCE_REFUSED');
+            }
+            appendFileSync(process.env.GITHUB_OUTPUT,'present=true\n');
+          }
+          NODE
+      - name: Upload sanitized evidence only
+        if: ${{ always() && steps.evidence.outputs.present == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: w0-db-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/w0-evidence/manifest.json
+            ${{ runner.temp }}/w0-evidence/results.json
+            ${{ runner.temp }}/w0-evidence/metadata.json
+            ${{ runner.temp }}/w0-evidence/history.json
+            ${{ runner.temp }}/w0-evidence/journal.jsonl
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: false
