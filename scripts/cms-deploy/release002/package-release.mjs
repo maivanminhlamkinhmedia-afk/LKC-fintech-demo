@@ -27,6 +27,23 @@ function exact(value, keys, code = 'INVALID_METADATA') {
   need(value && !Array.isArray(value) && typeof value === 'object'
     && Object.keys(value).length === keys.length && keys.every(k => Object.hasOwn(value, k)), code);
 }
+const typedArrayLength = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'length').get;
+const typedArraySet = Uint8Array.prototype.set;
+const bufferHooks = ['length', 'byteLength', 'byteOffset', 'buffer', 'offset', 'parent',
+  'valueOf', 'toString', 'toJSON', 'constructor', Symbol.toPrimitive, Symbol.iterator, Symbol.toStringTag];
+function copyInertBuffer(value, limit, limitCode, remaining = Infinity) {
+  need(!types.isProxy(value) && types.isUint8Array(value)
+    && Object.getPrototypeOf(value) === Buffer.prototype, 'UNSAFE_OBJECT');
+  // Inspect descriptors without reading shadowed metadata or conversion hooks.
+  // Do not enumerate byte-index properties: archives may contain 128 MiB.
+  for (const key of bufferHooks) need(!Object.getOwnPropertyDescriptor(value, key), 'UNSAFE_OBJECT');
+  const length = Reflect.apply(typedArrayLength, value, []);
+  need(length <= limit, limitCode); need(length <= remaining, 'TAR_LIMIT');
+  const bytes = Buffer.alloc(length);
+  // The intrinsic typed-array source path copies internal byte storage; it does
+  // not consult value.length, valueOf, Symbol.iterator or Buffer.from hooks.
+  Reflect.apply(typedArraySet, bytes, [value]); return bytes;
+}
 // Snapshot only own inert data. Buffers are copied before hashing; proxies and
 // accessors are rejected without calling their traps/getters/toJSON hooks.
 function snapshot(input) {
@@ -39,11 +56,12 @@ function snapshot(input) {
       textBytes += Buffer.byteLength(v); need(textBytes <= PROFILE.manifest * 2, 'METADATA_LIMIT'); return v;
     }
     need(v && typeof v === 'object' && !types.isProxy(v) && !seen.has(v), 'UNSAFE_OBJECT');
-    if (Buffer.isBuffer(v)) {
-      need(Object.getPrototypeOf(v) === Buffer.prototype && v.length <= PROFILE.file, 'FILE_LIMIT');
-      binaryBytes += v.length; need(binaryBytes <= PROFILE.tar, 'TAR_LIMIT'); return Buffer.from(v);
+    const proto = Object.getPrototypeOf(v);
+    if (proto === Buffer.prototype) {
+      const bytes = copyInertBuffer(v, PROFILE.file, 'FILE_LIMIT', PROFILE.tar - binaryBytes);
+      binaryBytes += bytes.length; return bytes;
     }
-    const array = Array.isArray(v), proto = Object.getPrototypeOf(v);
+    const array = Array.isArray(v);
     need(array ? proto === Array.prototype : proto === Object.prototype || proto === null, 'UNSAFE_OBJECT');
     const ds = Object.getOwnPropertyDescriptors(v), keys = Reflect.ownKeys(ds);
     need(keys.length <= 15001 && keys.every(k => typeof k === 'string'
@@ -371,9 +389,8 @@ export function verifySyntheticPackage(candidate, expectations) {
     const descriptors = Object.getOwnPropertyDescriptors(candidate);
     need(Reflect.ownKeys(descriptors).length === 2 && ['archive', 'manifest'].every(k => descriptors[k] && Object.hasOwn(descriptors[k], 'value')), 'UNSAFE_OBJECT');
     const raw = descriptors.archive.value, meta = descriptors.manifest.value;
-    need(Buffer.isBuffer(raw) && !types.isProxy(raw) && raw.length <= PROFILE.gzip, 'GZIP_LIMIT');
-    need(Buffer.isBuffer(meta) && !types.isProxy(meta) && meta.length <= PROFILE.manifest, 'MANIFEST_LIMIT');
-    const archive = Buffer.from(raw), manifest = Buffer.from(meta), expected = snapshot(expectations);
+    const archive = copyInertBuffer(raw, PROFILE.gzip, 'GZIP_LIMIT');
+    const manifest = copyInertBuffer(meta, PROFILE.manifest, 'MANIFEST_LIMIT'), expected = snapshot(expectations);
     exact(expected, ['sourceSha', 'sourceTree', 'buildId', 'toolingSha256', 'inputSha256', 'planSha256', 'manifestSha256', 'tarSha256', 'gzipSha256']);
     need(expected.sourceSha === SOURCE.sha && expected.sourceTree === SOURCE.tree, 'SOURCE_IDENTITY');
     need(digest(archive) === expected.gzipSha256 && digest(manifest) === expected.manifestSha256, 'ARTIFACT_DIGEST_MISMATCH');

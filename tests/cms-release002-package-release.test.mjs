@@ -415,6 +415,64 @@ test('P15 verifier hostile accessor is never evaluated', () => {
   denied(verifySyntheticPackage({ get archive() { calls++; throw new Error('secret'); }, manifest: c.manifest }, c.binding), 'UNSAFE_OBJECT'); assert.equal(calls, 0);
 });
 
+for (const [hook, form] of [['length', 'get'], ['valueOf', 'value'], ['valueOf', 'get'],
+  ['buffer', 'get'], ['byteOffset', 'get'], ['byteLength', 'get'],
+  [Symbol.toPrimitive, 'get'], [Symbol.toPrimitive, 'value'], [Symbol.iterator, 'get']]) {
+  for (const entry of ['snapshot', 'archive', 'manifest']) test(`P15 Buffer rejects own ${String(hook)} ${form} at ${entry} without callbacks`, () => {
+    const r = fixture(), expectations = expected(r), c = ok(build());
+    const buffer = entry === 'snapshot' ? r.entries.find(e => e.type === 'file').bytes : c[entry];
+    let calls = 0;
+    const callback = () => { calls++; throw new Error('untrusted Buffer callback'); };
+    Object.defineProperty(buffer, hook, { [form]: callback });
+    const result = entry === 'snapshot' ? buildSyntheticPackage(r, expectations)
+      : verifySyntheticPackage({ archive: c.archive, manifest: c.manifest }, c.binding);
+    assert.equal(calls, 0, `${entry} executed caller's ${String(hook)}`);
+    denied(result, 'UNSAFE_OBJECT');
+    assert.equal(result.mode, 'OFFLINE_SYNTHETIC');
+    assert.equal(result.realRuntimeClosure, 'NOT_VERIFIED');
+  });
+}
+
+for (const kind of ['proxy', 'fake-brand', 'custom-prototype']) {
+  for (const entry of ['snapshot', 'archive', 'manifest']) test(`P15 Buffer rejects ${kind} at ${entry} without traps`, () => {
+    const r = fixture(), expectations = expected(r), c = ok(build());
+    const file = r.entries.find(e => e.type === 'file'), original = entry === 'snapshot' ? file.bytes : c[entry];
+    let calls = 0;
+    const callback = () => { calls++; throw new Error('untrusted Buffer trap'); };
+    let hostile;
+    if (kind === 'proxy') hostile = new Proxy(original, { getPrototypeOf: callback, get: callback, getOwnPropertyDescriptor: callback });
+    else if (kind === 'fake-brand') hostile = Object.create(Buffer.prototype, { length: { get: callback } });
+    else hostile = Object.setPrototypeOf(original, Object.create(Buffer.prototype, { length: { get: callback } }));
+    if (entry === 'snapshot') file.bytes = hostile; else c[entry] = hostile;
+    const result = entry === 'snapshot' ? buildSyntheticPackage(r, expectations)
+      : verifySyntheticPackage({ archive: c.archive, manifest: c.manifest }, c.binding);
+    assert.equal(calls, 0); denied(result, 'UNSAFE_OBJECT');
+  });
+}
+
+test('P15 Buffer ordinary byte compatibility baseline', t => {
+  // A fixed synthetic tooling pin permits before/after byte comparison even
+  // though this patch changes the actual source fingerprint used by fixture().
+  const r = fixture(); r.tooling.sha256 = 'a'.repeat(64);
+  const expectations = { ...expected(r), toolingSha256: r.tooling.sha256 };
+  const c = ok(buildSyntheticPackage(r, expectations)); ok(verified(c));
+  t.diagnostic(JSON.stringify(c.binding));
+  const view = fixture(); view.tooling.sha256 = r.tooling.sha256;
+  for (const e of view.entries) if (e.type === 'file') {
+    const storage = Buffer.concat([Buffer.from('prefix'), e.bytes, Buffer.from('suffix')]);
+    e.bytes = storage.subarray(6, storage.length - 6);
+  }
+  const copied = ok(buildSyntheticPackage(view, expectations));
+  assert.deepEqual(copied.archive, c.archive); assert.deepEqual(copied.manifest, c.manifest);
+  const sliced = Object.fromEntries(['archive', 'manifest'].map(key => {
+    const storage = Buffer.concat([Buffer.from('prefix'), c[key], Buffer.from('suffix')]);
+    return [key, storage.subarray(6, storage.length - 6)];
+  }));
+  ok(verifySyntheticPackage(sliced, c.binding));
+  add(view, 'public/empty.txt', Buffer.alloc(0));
+  ok(verified(ok(buildSyntheticPackage(view, { ...expected(view), toolingSha256: view.tooling.sha256 }))));
+});
+
 test('P15 collector reads only marked isolated synthetic target and preserves input bytes', () => {
   const root = diskFixture(), before = sha(fs.readFileSync(path.join(root, 'public', 'note.txt'))), r = ok(collectSyntheticFixture(scratch, root));
   assert.deepEqual(r.entries.map(e => e.path), ['public', 'public/note.txt']); assert.equal(r.entries[1].bytes.toString(), 'synthetic');
