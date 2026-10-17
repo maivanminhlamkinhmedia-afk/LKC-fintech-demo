@@ -21,6 +21,7 @@ const source = () => ({ id: 'source-a', articleId: 'article-a', createdById: act
 function scenario(overrides = {}) {
   state = { session: { user: copy(actor) }, freshActor: copy(actor), calls: [], logs: [], inTransaction: false,
     article: { id: 'article-a', title: 'Bài viết', slug: 'bai-viet', excerpt: '', articleType: 'NEWS', authorId: actor.id, status: 'DRAFT',
+      accessMode: null, _count: { products: 0 },
       contentJson: copy(doc), contentText: 'Nội dung tiếng Việt', editorSchemaVersion: 1, updatedAt: new Date(base), categoryId: null,
       editorId: 'editor-original', coverMediaId: 'cover-original', seoTitle: 'SEO', publishedAt: null, createdAt: new Date(base) },
     categories: [term('category-a'), term('category-b')], topics: [term('topic-a'), term('topic-b')], tags: [term('tag-a'), term('tag-b')],

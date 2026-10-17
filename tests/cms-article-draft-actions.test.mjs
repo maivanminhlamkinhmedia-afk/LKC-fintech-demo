@@ -45,8 +45,14 @@ const adapter = {
   prisma: {
     async $transaction(callback, options) {
       record('transaction', options)
+      // Serialize the test adapter only; this does not prove database isolation.
+      const previous = current.transactionTail
+      let release
+      current.transactionTail = new Promise(resolve => { release = resolve })
+      await previous
       const before = clone(current.article)
       current.inTransaction = true
+      let committed = false
       const tx = {
         user: { async findUnique(args) {
           record('actor', args)
@@ -71,7 +77,8 @@ const adapter = {
           async updateMany(args) {
             record('update', args)
             if (current.writeError) throw current.writeError
-            const count = current.updateCount ?? 1
+            const cas = args.where.AND.find(part => part.updatedAt).updatedAt
+            const count = current.updateCount ?? (current.article.updatedAt.getTime() === cas.getTime() ? 1 : 0)
             if (count === 1) {
               current.article = { ...current.article, ...clone(args.data),
                 ...(current.persistedUpdatedAt ? { updatedAt: clone(current.persistedUpdatedAt) } : {}) }
@@ -85,12 +92,14 @@ const adapter = {
         const result = await callback(tx)
         if (current.commitError) throw current.commitError
         record('commit')
+        committed = true
+        if (current.lostCommitAck) throw new Error('PRIVATE lost commit acknowledgement')
         return result
       } catch (error) {
-        current.article = before
-        record('rollback')
+        if (!committed) { current.article = before; record('rollback') }
+        else record('unknownCommitAck')
         throw error
-      } finally { current.inTransaction = false }
+      } finally { current.inTransaction = false; release() }
     },
     article: {
       async findFirst(args) {
@@ -148,6 +157,7 @@ const input = overrides => ({ title: '  Bài viết mới  ', slug: '  Đầu t�
 const updateInput = overrides => input({ expectedUpdatedAt: timestamp.toISOString(), ...overrides })
 function article(overrides = {}) {
   return { id: 'article-a', title: 'Original title', slug: 'original-slug', excerpt: '', articleType: 'NEWS',
+    accessMode: null, _count: { products: 0 }, activeReviewVersionId: null, activeApprovalVersionId: null,
     authorId: creator.id, status: 'DRAFT', editorSchemaVersion: 1, contentJson: document('Nội dung cũ'), contentText: 'Nội dung cũ',
     updatedAt: new Date(timestamp), createdAt: new Date('2026-09-01T00:00:00Z'), editorId: 'editor-a', categoryId: 'category-a',
     featured: true, publishedAt: null, scheduledAt: null, approvedAt: null, submittedAt: null, ...overrides }
@@ -155,7 +165,7 @@ function article(overrides = {}) {
 function scenario(actor = creator, overrides = {}) {
   current = {
     session: { user: { id: actor.id, role: actor.role } }, freshActor: clone(actor), article: article(),
-    queryArticle: article(), total: 41, rows: [], calls: [], logs: [], inTransaction: false, ...overrides,
+    queryArticle: article(), total: 41, rows: [], calls: [], logs: [], inTransaction: false, transactionTail: Promise.resolve(), ...overrides,
   }
   return current
 }
@@ -256,7 +266,7 @@ test('EDIT-04/16: each eligible role creates only its own DRAFT, with server-der
     assert.deepEqual(calls('actor')[0].args, { where: { id: actor.id }, select: { id: true, role: true, status: true } })
     assert.deepEqual(calls('create')[0].args, { data: {
       title: 'Bài viết mới', slug: 'dau-tu-viet-nam', excerpt: 'Tóm tắt', articleType: 'NEWS',
-      contentJson: document('Nội dung tiếng Việt'), contentText: 'Nội dung tiếng Việt', authorId: actor.id, status: 'DRAFT', editorSchemaVersion: 1,
+      contentJson: document('Nội dung tiếng Việt'), contentText: 'Nội dung tiếng Việt', authorId: actor.id, status: 'DRAFT', editorSchemaVersion: 1, accessMode: null,
     }, select: { id: true, slug: true, updatedAt: true } })
     assert.deepEqual(calls('transaction')[0].args, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
     assert.deepEqual(calls('revalidate').map(call => call.args), ['/creator', '/creator/articles', '/creator/articles/created-article/edit'])
@@ -293,7 +303,7 @@ test('EDIT-08/09: creator own and admin cross-owner updates retain owner/status 
         { id: original.id }, expectedScope(actor), { status: { in: ['DRAFT', 'CHANGES_REQUESTED'] } },
         { updatedAt: timestamp }, { authorId: original.authorId, status, editorSchemaVersion: 1 },
       ] })
-      assert.deepEqual(Object.keys(write.data).sort(), ['title', 'slug', 'excerpt', 'articleType', 'contentJson', 'contentText', 'updatedAt'].sort())
+      assert.deepEqual(Object.keys(write.data).sort(), ['title', 'slug', 'excerpt', 'articleType', 'contentJson', 'contentText', 'updatedAt', 'activeReviewVersionId', 'activeApprovalVersionId'].sort())
       for (const field of ['authorId', 'status', 'editorId', 'categoryId', 'featured', 'editorSchemaVersion', 'createdAt',
         'publishedAt', 'scheduledAt', 'approvedAt', 'submittedAt']) assert.deepEqual(current.article[field], original[field], field)
       assert.equal(current.article.contentText, 'Nội dung tiếng Việt')
@@ -446,7 +456,7 @@ test('editor query preserves scope and returns only editable fields with an ISO 
     scenario(actor)
     const result = await getArticleDraftForEdit(actor, 'article-a')
     assert.equal(result.ok, true)
-    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'title', 'slug', 'excerpt', 'articleType', 'contentJson', 'updatedAt'].sort())
+    assert.deepEqual(Object.keys(result.data).sort(), ['id', 'title', 'slug', 'excerpt', 'articleType', 'contentJson', 'updatedAt', 'audience'].sort())
     assert.equal(result.data.updatedAt, timestamp.toISOString())
     assert.deepEqual(calls('queryEditor')[0].args.where, { AND: [{ id: 'article-a' }, expectedScope(actor)] })
     assert.equal(Object.hasOwn(calls('queryEditor')[0].args.select, 'contentText'), false)
@@ -492,7 +502,7 @@ for (const [name, buildNode, expectedText] of persistedDocumentCases) {
     assertPlainDto(result.data)
     assert.deepEqual(result.data, {
       id: 'article-a', title: 'Original title', slug: 'original-slug', excerpt: '', articleType: 'NEWS',
-      contentJson: persistedJson, updatedAt: timestamp.toISOString(),
+      contentJson: persistedJson, updatedAt: timestamp.toISOString(), audience: { accessMode: null, productIds: [] },
     })
     assert.equal(JSON.stringify(result.data.contentJson), JSON.stringify(persistedJson))
     const reopened = schema.nodeFromJSON(result.data.contentJson)
@@ -555,4 +565,218 @@ test('read/list storage errors cannot expose raw diagnostics', async () => {
   errorCode(await getArticleDraftForEdit(creator, 'article-a'), 'INTERNAL_ERROR')
   await assert.rejects(getArticleDraftList(creator, '1'), error => !error.message.includes('PRIVATE') && error.cause === undefined)
   assert.equal(JSON.stringify(current.logs).includes('PRIVATE'), false)
+})
+
+const audience = accessMode => ({ accessMode, productIds: [] })
+const sameContent = row => ({ title: row.title, slug: row.slug, excerpt: row.excerpt,
+  articleType: row.articleType, contentJson: clone(row.contentJson), expectedUpdatedAt: row.updatedAt.toISOString() })
+
+// W0 execution uses real writer/query/validators with the existing Prisma I/O
+// adapter. The CAS predicate, rollback model and lost-ACK injection below are
+// argument/control-flow regressions, not MariaDB isolation/rollback evidence.
+test('W0-01/02: legacy, explicit-null and PUBLIC create persist one draft with no Product writes', async () => {
+  for (const fields of [{}, { audience: audience(null) }, { audience: audience('PUBLIC') }]) {
+    scenario(creator, { article: null })
+    const result = await createArticleDraft(input(fields))
+    assert.equal(result.ok, true)
+    assert.equal(current.article.accessMode, fields.audience?.accessMode ?? null)
+    assert.equal(calls('create').length, 1)
+    assert.equal(calls('transaction').length, 1)
+    assert.equal(calls('commit').length, 1)
+    assert.equal(calls('update').length, 0)
+    assert.deepEqual(Object.keys(calls('create')[0].args.data).sort(), [
+      'title', 'slug', 'excerpt', 'articleType', 'contentJson', 'contentText',
+      'authorId', 'status', 'editorSchemaVersion', 'accessMode',
+    ].sort())
+    current.queryArticle = clone(current.article)
+    const reopened = await getArticleDraftForEdit(creator, result.data.id)
+    assert.equal(reopened.ok, true)
+    assert.deepEqual(reopened.data.audience, audience(current.article.accessMode))
+  }
+})
+
+test('W0-02/03: old update omission preserves null/PUBLIC; explicit null and PUBLIC share the content CAS', async () => {
+  for (const from of [null, 'PUBLIC']) {
+    scenario(creator, { article: article({ accessMode: from }) })
+    assert.equal((await updateArticleDraft('article-a', updateInput())).ok, true)
+    assert.equal(current.article.accessMode, from)
+    assert.equal(Object.hasOwn(calls('update')[0].args.data, 'accessMode'), false)
+    const before = clone(current.article)
+    const to = from === null ? 'PUBLIC' : null
+    const result = await updateArticleDraft('article-a', { ...sameContent(before), audience: audience(to) })
+    assert.equal(result.ok, true)
+    assert.equal(current.article.accessMode, to)
+    assert.ok(current.article.updatedAt > before.updatedAt)
+    assert.equal(result.data.updatedAt, current.article.updatedAt.toISOString())
+    current.queryArticle = clone(current.article)
+    const reopened = await getArticleDraftForEdit(creator, 'article-a')
+    assert.equal(reopened.ok, true)
+    assert.deepEqual(reopened.data.audience, audience(to))
+    assert.deepEqual(calls('lookup')[0].args.select._count, { select: { products: true } })
+    assert.deepEqual(calls('queryEditor')[0].args.select._count, { select: { products: true } })
+  }
+})
+
+test('W0-01/03: malformed and unpaid-authority PAID payloads fail before opening a transaction', async () => {
+  const cases = [
+    [null, 'VALIDATION_ERROR'], [{ accessMode: 'PUBLIC' }, 'VALIDATION_ERROR'],
+    [{ accessMode: null, productIds: ['product-a'] }, 'VALIDATION_ERROR'],
+    [{ accessMode: 'PUBLIC', productIds: ['product-a'] }, 'VALIDATION_ERROR'],
+    [{ accessMode: 'PAID_PRODUCT', productIds: ['product-a'] }, 'POLICY_UNRESOLVED'],
+    [{ accessMode: 'PUBLIC', productIds: [], approved: true }, 'VALIDATION_ERROR'],
+  ]
+  for (const [value, code] of cases) {
+    for (const run of [() => createArticleDraft(input({ audience: value })),
+      () => updateArticleDraft('article-a', updateInput({ audience: value }))]) {
+      scenario()
+      const before = clone(current.article)
+      errorCode(await run(), code)
+      assert.deepEqual(current.article, before)
+      assert.equal(calls('transaction').length, 0)
+      noWrite()
+    }
+  }
+})
+
+test('W0-03: paid, inconsistent and missing persisted audience evidence cannot be overwritten or opened', async () => {
+  for (const [state, code] of [
+    [{ accessMode: 'PAID_PRODUCT', _count: { products: 1 } }, 'POLICY_UNRESOLVED'],
+    [{ accessMode: 'PUBLIC', _count: { products: 1 } }, 'INTERNAL_ERROR'],
+    [{ accessMode: null, _count: { products: 1 } }, 'INTERNAL_ERROR'],
+    [{ accessMode: 'FUTURE_MODE', _count: { products: 0 } }, 'INTERNAL_ERROR'],
+    [{ accessMode: undefined }, 'INTERNAL_ERROR'],
+    [{ _count: undefined }, 'INTERNAL_ERROR'], [{ _count: {} }, 'INTERNAL_ERROR'],
+  ]) {
+    for (const fields of [{}, { audience: audience(null) }, { audience: audience('PUBLIC') }]) {
+      const row = article(state)
+      scenario(creator, { article: row, queryArticle: clone(row), productEdges: [{ articleId: row.id, productId: 'product-a' }] })
+      const before = clone(current.article), edges = clone(current.productEdges)
+      errorCode(await updateArticleDraft(row.id, updateInput(fields)), code)
+      assert.deepEqual(current.article, before)
+      assert.deepEqual(current.productEdges, edges)
+      noWrite()
+      errorCode(await getArticleDraftForEdit(creator, row.id), code)
+    }
+  }
+})
+
+test('W0-02/04: meaningful content or audience edits invalidate only active pointers in the same conditional write', async () => {
+  for (const change of [
+    { title: 'Changed title' }, { slug: 'changed-slug' }, { excerpt: 'Changed excerpt' },
+    { articleType: 'RESEARCH' }, { contentJson: document('Changed content') },
+    { audience: audience('PUBLIC') },
+  ]) {
+    const row = article({ status: 'CHANGES_REQUESTED', activeReviewVersionId: 'version-old',
+      activeApprovalVersionId: 'version-approved', approvedAt: new Date(timestamp.getTime() - 1) })
+    const historical = { versions: [{ id: 'version-old', title: 'Immutable old snapshot' }],
+      reviews: [{ id: 'review-a', versionId: 'version-approved', decision: 'APPROVE' }] }
+    scenario(creator, { article: row, historical: clone(historical) })
+    const result = await updateArticleDraft(row.id, { ...sameContent(row), ...change })
+    assert.equal(result.ok, true)
+    assert.equal(current.article.activeReviewVersionId, null)
+    assert.equal(current.article.activeApprovalVersionId, null)
+    assert.deepEqual(current.historical, historical)
+    for (const key of ['status', 'authorId', 'editorId', 'submittedAt', 'approvedAt', 'publishedAt', 'scheduledAt']) {
+      assert.deepEqual(current.article[key], row[key], key)
+    }
+    const data = calls('update')[0].args.data
+    assert.equal(data.activeReviewVersionId, null)
+    assert.equal(data.activeApprovalVersionId, null)
+    assert.equal(calls('update').length, 1)
+    assert.equal(calls('transaction')[0].args.isolationLevel, 'Serializable')
+    assert.ok(current.calls.findIndex(call => call.kind === 'actor') < current.calls.findIndex(call => call.kind === 'lookup'))
+    assert.ok(current.calls.findIndex(call => call.kind === 'update') < current.calls.findIndex(call => call.kind === 'commit'))
+  }
+})
+
+test('W0-04: no-op normalized draft saves retain active pointers and never synthesize review/version writes', async () => {
+  for (const mode of [null, 'PUBLIC']) {
+    const row = article({ accessMode: mode, activeReviewVersionId: 'version-a', activeApprovalVersionId: 'version-a' })
+    scenario(creator, { article: row })
+    const result = await updateArticleDraft(row.id, { ...sameContent(row), title: `  ${row.title}  `, audience: audience(mode) })
+    assert.equal(result.ok, true)
+    for (const key of ['activeReviewVersionId', 'activeApprovalVersionId']) {
+      assert.equal(current.article[key], row[key])
+      assert.equal(Object.hasOwn(calls('update')[0].args.data, key), false)
+    }
+    assert.ok(current.article.updatedAt > row.updatedAt, 'existing ACK token semantics preserved even for no-op manual save')
+  }
+})
+
+test('W0-02: audience versus content saves compete on one token in both directions', async () => {
+  for (const audienceFirst of [false, true]) {
+    scenario()
+    const row = clone(current.article)
+    const content = { ...sameContent(row), title: 'Concurrent content' }
+    const access = { ...sameContent(row), audience: audience('PUBLIC') }
+    assert.equal((await updateArticleDraft(row.id, audienceFirst ? access : content)).ok, true)
+    const winner = clone(current.article)
+    errorCode(await updateArticleDraft(row.id, audienceFirst ? content : access), 'EDIT_CONFLICT')
+    assert.deepEqual(current.article, winner)
+    assert.equal(calls('update').length, 1)
+    assert.equal(calls('commit').length, 1)
+    assert.equal(current.article.accessMode, audienceFirst ? 'PUBLIC' : null)
+    assert.equal(current.article.title, audienceFirst ? row.title : 'Concurrent content')
+  }
+})
+
+test('W0-02/04: conditional CAS or commit failure rolls back content/audience/pointers together in the adapter', async () => {
+  for (const failure of [{ updateCount: 0 }, { commitError: new Error('PRIVATE commit failure') },
+    { versionError: new Error('PRIVATE reread failure') }]) {
+    const row = article({ activeReviewVersionId: 'version-old', activeApprovalVersionId: 'version-approved' })
+    scenario(creator, { article: row, ...failure })
+    const before = clone(row)
+    errorCode(await updateArticleDraft(row.id, updateInput({ audience: audience('PUBLIC') })),
+      failure.updateCount === 0 ? 'EDIT_CONFLICT' : 'INTERNAL_ERROR')
+    assert.deepEqual(current.article, before)
+    assert.equal(calls('rollback').length, 1)
+    assert.equal(calls('revalidate').length, 0)
+    assert.equal(calls('transaction').length, 1)
+  }
+})
+
+test('W0-03: audience edits retain authorization, scoped lookup and non-editable status gates', async () => {
+  for (const [state, code] of [
+    [{ freshActor: { ...creator, status: 'DISABLED' } }, 'FORBIDDEN'],
+    [{ lookupMissing: true }, 'NOT_FOUND'],
+    [{ article: article({ status: 'PUBLISHED' }) }, 'NOT_EDITABLE'],
+    [{ article: article({ authorId: 'foreign-owner' }) }, 'NOT_EDITABLE'],
+    [{ lookupError: new Error('PRIVATE audience reference read failure') }, 'INTERNAL_ERROR'],
+  ]) {
+    scenario(creator, state)
+    const before = clone(current.article)
+    errorCode(await updateArticleDraft('article-a', updateInput({ audience: audience('PUBLIC') })), code)
+    assert.deepEqual(current.article, before)
+    assert.equal(calls('revalidate').length, 0)
+    noWrite()
+  }
+})
+
+test('W0-02/05: lost commit ACK does not claim success, retry mutation or discard persisted audience', async () => {
+  scenario(creator, { lostCommitAck: true })
+  const result = await updateArticleDraft('article-a', updateInput({ audience: audience('PUBLIC') }))
+  errorCode(result, 'INTERNAL_ERROR')
+  assert.equal(current.article.accessMode, 'PUBLIC', 'adapter models committed write with lost response')
+  assert.equal(calls('commit').length, 1)
+  assert.equal(calls('unknownCommitAck').length, 1)
+  assert.equal(calls('rollback').length, 0)
+  assert.equal(calls('update').length, 1)
+  assert.equal(calls('revalidate').length, 0)
+  assert.equal(calls('transaction').length, 1)
+})
+
+test('W0-02: simultaneous content and audience dispatches have one winner under the adapter CAS', async () => {
+  scenario()
+  const row = clone(current.article)
+  const results = await Promise.all([
+    updateArticleDraft(row.id, { ...sameContent(row), audience: audience('PUBLIC') }),
+    updateArticleDraft(row.id, { ...sameContent(row), title: 'Competing content' }),
+  ])
+  assert.equal(results.filter(result => result.ok).length, 1)
+  errorCode(results.find(result => !result.ok), 'EDIT_CONFLICT')
+  assert.equal(current.article.accessMode, 'PUBLIC')
+  assert.equal(current.article.title, row.title)
+  assert.equal(calls('update').length, 1)
+  assert.equal(calls('commit').length, 1)
+  assert.equal(calls('rollback').length, 1)
 })
