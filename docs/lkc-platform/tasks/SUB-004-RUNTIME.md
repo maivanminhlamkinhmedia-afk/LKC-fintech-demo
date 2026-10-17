@@ -1,24 +1,26 @@
 # SUB-004 Runtime — R0 contract draft and implementation slot plan
 
-Ngày: 14/10/2026 (Asia/Saigon). Task hiện tại: `CODEX2B_R0_CONTRACT_DRAFT_AUTHORING`.
-Trạng thái: **R0_DRAFT_FOR_REVIEW / ALL_RUNTIME_SLOTS_HOLD**.
-Integrator-of-record: ChatGPT / LKC Integrator coordination. Writer R0 được giao: Codex 2B. Independent reviewer: Claude 2B.
+Baseline: 14/10/2026. Delta: 17/10/2026 (Asia/Bangkok). Task hiện tại: `LKC-C4-R1-R0-DELTA-CORRECTION-001`.
+Trạng thái: **WAITING_CLAUDE4_REVIEW / R1_IMPLEMENTATION_HOLD / ALL_RUNTIME_SLOTS_HOLD**.
+Integrator-of-record: ChatGPT / LKC Integrator coordination. PO xác nhận Codex 4 tương ứng Codex 2B, writer lịch sử #69, và cấp quyền chuẩn bị worktree riêng + MODIFY cục bộ đúng ba tài liệu. Independent reviewer delta: Claude 4. Không stage/commit/push; không source grant R1.
 
 ## 1. Checkpoint và provenance
 
 | Checkpoint | Exact identity |
 |---|---|
 | Repository | maivanminhlamkinhmedia-afk/LKC-fintech-demo |
-| Provisional local integration base | 1b941b3d855e3d422147ec61dbc25bb2795561c6 |
+| Historical integration authoring base | 1b941b3d855e3d422147ec61dbc25bb2795561c6 |
 | Base tree | 99a477edb585c2036136a85cd43ddc46644ca4c2 |
 | First parent, PR #27 | bd903b784976eb0a147844cac72fd7295a79c00b |
 | Second parent, PR #31 | a0e8e6d7f4b41ba417783e751f6d13daee90992c |
 | Common main ancestor | 5e6b14f006453da7f9b1554c210e9ad85a9f8c0c |
 | Dedicated draft branch | feature/m2-sub004-r0-contract-draft |
-| Draft worktree | E:\LKC-Portal\worktrees\m2-sub004-r0-contract-draft |
+| Historical draft worktree | E:\LKC-Portal\worktrees\m2-sub004-r0-contract-draft |
+| Published baseline, PR #69 | 7744a89e5053e7838ea93069f1affb969ccaa783 |
+| Current documentation worktree | D:\LKC-M2\codex2b-subscriptions-r0-r1-docs-7744a89; detached HEAD tại baseline #69 |
 | Pure C02 reference, PR #67 | 6b27993cb76f52a307dfdcbf8fd09ab017a14b7a |
 
-PO supplied Claude 2B PASS cho exact integration base/tree; Codex preflight kiểm lại complete-tree union. Integration local-only; #27/#31 vẫn OPEN/DRAFT, unmerged tại preflight 14/10/2026. Base authoring không phê duyệt merge các PR vào main. Runtime proposal/REV1 được review từ nội dung nguyên văn qua conversation; không gán chúng cho unverified local report path. Ba docs này là draft mới, **PENDING_CLAUDE2B_REVIEW**, không tự đóng RT-00..04.
+[PR #69](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/pull/69) đã công bố baseline và ghi integration, R0 draft source, commit provenance, publication review PASS do PO chuyển; đây không phải GitHub-authenticated approval hoặc runtime owner ACK. Local-only/PENDING_CLAUDE2B_REVIEW là mốc authoring cũ. #27/#31 OPEN/DRAFT tại preflight 14/10/2026 là lịch sử, không phải current PR audit. Delta này chưa có commit riêng, vẫn WAITING_CLAUDE4_REVIEW; không tự đóng RT-00..04. Runtime proposal/REV1 trước đây là nội dung PO chuyển, không gán cho unverified report path.
 
 Đọc cùng [C02 v0.2 draft](../contracts/C02-PRODUCT-ACCESS-v0.2.md), [C05 v0.1 draft](../contracts/C05-BILLING-ENTITLEMENT-v0.1.md), [C01 v0.1](../contracts/C01-PRODUCT-CATALOG-v0.1.md), [C02 v0.1](../contracts/C02-PRODUCT-ACCESS-v0.1.md), [roadmap](../ROADMAP.md), [CMS integration](../CMS-INTEGRATION.md), [REC modes](../REC-PRODUCT-MODES-ADDENDUM.md) và [coordination](../COORDINATION.md). Base registry là snapshot lịch sử; semantic ACK hiện hữu theo registry e855d1e được bảo toàn, runtime delta cần ACK riêng.
 
@@ -26,20 +28,24 @@ PR #67 không thuộc integration ancestry chỉ vì được dùng làm referen
 
 ## 2. Minimal R0 subset và owner ACK
 
-R0 do Integrator sở hữu. PO chỉ giao Codex 2B writer cho đúng ba docs hiện tại. Không tự nhận shared runtime/application, schema, Billing, CMS hoặc REC ownership.
+R0 do Integrator sở hữu. Grant PO lần này chỉ cho Codex 4 sửa ba tài liệu, không nhận shared runtime/application, schema, Billing, CMS hoặc REC ownership và không tạo source claim SUB-004.
 
-Minimal subset đề nghị xét duyệt gồm: stable Product identity/OR/ba nhóm và sale-vs-entitlement separation; trust boundaries actor/store/clock/policy; published version/audience consumption; fail-closed/unresolved behavior; R0-CONS-01..07; C05 verified provenance/idempotent effect; protected serialization/delivery obligations; ownership/dependency gates. Đây là **candidate minimal subset**, chưa APPROVED.
+**Candidate minimal R1 subset, chưa APPROVED:** supplied read facts, policy prerequisites của operation và unresolved propagation theo [C02 §2a](../contracts/C02-PRODUCT-ACCESS-v0.2.md). #67 giữ nguyên Product IDs/OR, ba nhóm, period evaluator, fail-closed và hypothetical-only decision. R1 chỉ thêm biểu diễn nhu cầu policy và truyền `POLICY_UNRESOLVED`; không sao chép evaluator/parser/tests hoặc giả runtime signature. Commercial policies còn mở không được đổi thành defaults; đủ supplied facts không cấp quyền đọc.
 
-| Owner | ACK runtime delta cần có trên exact revision/subset | Current status |
-|---|---|---|
-| Product | Product/Plan/benefit references, reader validation, stopped-sale/retirement boundary | PENDING_OWNER_ACK |
-| Billing | Verified producer, order effect scope, duplicate/conflict/lost ACK, mutation/audit boundary | PENDING_OWNER_ACK |
-| CMS | C03/C06 published version/audience/body/media, safe consumption và cache/delivery | PENDING_OWNER_ACK |
-| REC | Same-Product ba nhóm/OR, publish/history, linked content và source/delivery isolation | PENDING_OWNER_ACK |
-| Integrator | Exact minimal subset, source/dependency commits, claims, shared-file owners và slot order | PENDING_INTEGRATOR_ACK |
-| PO | Relevant policies và riêng từng implementation/activation slot | POLICY_UNRESOLVED / IMPLEMENTATION_HOLD |
+F2 follow-up `LKC-C4-R1-R0-DELTA-F2-FIX-002`: ma trận operation → prerequisites và thứ tự phối hợp tại [C02 §2a](../contracts/C02-PRODUCT-ACCESS-v0.2.md) là **CANDIDATE_FOR_OWNER_ACK**. R1 đứng độc lập, không import hoặc triển khai lại #67; integration boundary tương lai được duyệt mới kiểm prerequisites trước khi dùng #67. Thiếu policy cần thiết hoặc facts mâu thuẫn giữ `POLICY_UNRESOLVED`, kể cả #67 trả EXPIRED hay hypothetical ALLOW; luôn giữ `runtimeAuthorized: false`.
 
-ACK cần owner/role, exact document commit/revision, accepted subset, exclusions, OPEN items và evidence provenance. Hiện docs untracked/unstaged, chưa có publication commit: **PENDING_COMMIT**. C01/C02 semantic ACK lịch sử, Linux CI #67 và quyền viết draft không phải runtime ACK. Không yêu cầu toàn bộ commercial policies đóng mới review được R0; phần phụ thuộc policy mở vẫn unresolved. R1 chỉ được triển khai sau minimal subset được ACK trên exact document commit và PO authorization riêng, với relevant policy boundary rõ ràng.
+R0-CONS-01..07, C05 verified provenance/idempotent effect, server composition và protected delivery vẫn là yêu cầu runtime ở C02/C05 và các slot sau. Không bắt pure R1 triển khai các phần đó hoặc chờ mọi commercial policy được chốt.
+
+| Owner | ACK giới hạn R1 trên exact revision/accepted subset | Không bao gồm | Current status |
+|---|---|---|---|
+| Product | Supplied Product IDs hợp lệ, unknown IDs fail-closed; selectable-list không là read authorization | ProductPlan/benefit implementation, live catalog/read authority, retirement defaults | PENDING_OWNER_ACK |
+| Billing | R1 không sử dụng payment/order provenance, không grant/revoke, không thay C05 runtime | Verified producer, business-key, refund/chargeback/renewal hoặc mutation protocol approval | PENDING_OWNER_ACK |
+| CMS | Pure nội bộ chưa có consumer; không cấp quyền publish/read/body/media | C03/C06, reader/cache/delivery implementation hoặc activation | PENDING_OWNER_ACK |
+| REC | Pure nội bộ chưa có consumer/quyền phát hành; giữ semantic Product OR/ba nhóm đã ACK | Published/history reader, source integration hoặc linked-content delivery | PENDING_OWNER_ACK |
+| Integrator | Pin accepted subset, compatible source base, dependencies, exclusions và single-writer claim trước first write | Tự nhận ACK owner, composite SHA hoặc quyền merge/activation | PENDING_INTEGRATOR_ACK |
+| PO | Scoped source implementation R1 riêng sau ACK và claim hợp lệ | Grant tài liệu hiện tại không cấp source/runtime/publication rights | R1_IMPLEMENTATION_HOLD |
+
+ACK cần owner/role, exact document commit/revision, accepted subset, exclusions, OPEN items và evidence provenance. Baseline đã công bố tại `7744a89e5053e7838ea93069f1affb969ccaa783`; delta cục bộ này chưa có commit/review/ACK riêng. Claude 4 review exact diff/fingerprints trước; sau grant publication riêng phải pin revision mới cho owner ACK, không nhận ACK delta trên SHA baseline. C01/C02 semantic ACK lịch sử được bảo toàn nhưng không thay ACK phạm vi R1 mới. Không Codex nào ký thay owner. Policy chưa duyệt giữ POLICY_UNRESOLVED và chỉ chặn operation phụ thuộc; R1 vẫn cần scoped PO source grant riêng.
 
 ## 3. Dependency inventory
 
@@ -59,13 +65,25 @@ ACK cần owner/role, exact document commit/revision, accepted subset, exclusion
 
 PR statuses là snapshot preflight, không bảo đảm tương lai. PENDING_COMMIT là gap trong inventory đã khảo sát, không khẳng định mọi local developer đều không có source. Trước từng slot phải pin actual compatible commits, verify merge bases/scopes/claims và target security baseline. Không tự cherry-pick/reference code vào R0 hoặc tự sửa source để giải quyết dependency drift.
 
+### 3a. F1 — Compatible dependency base, proposal cho Integrator
+
+Đối chiếu Git: #67 `6b27993cb76f52a307dfdcbf8fd09ab017a14b7a` có parent `5e6b14f006453da7f9b1554c210e9ad85a9f8c0c`; #69 `7744a89e5053e7838ea93069f1affb969ccaa783` có parent `1b941b3d855e3d422147ec61dbc25bb2795561c6`. Merge-base là `5e6b14f006453da7f9b1554c210e9ad85a9f8c0c`; không head nào là ancestor của head kia. Reference tới #67 không đưa source đó vào tree #69. Đây là phân kỳ ancestry; chưa kết luận có textual merge conflict.
+
+Phương án ancestry-preserving, **PENDING_INTEGRATOR_APPROVAL**:
+
+1. Sửa/review tài liệu trên #69; publication sau grant riêng tạo revision tài liệu mới là descendant của `7744a89…`. Không gán trước commit SHA.
+2. Trong slot integration riêng được duyệt, Integrator đề xuất base bắt đầu từ exact #67, merge exact revision tài liệu đã duyệt để giữ ancestry cả hai phía. Không cherry-pick, squash/rebase hoặc copy source để giả quan hệ ancestor; không merge vào main hay đổi target #69 trong task này.
+3. Trước khi cấp R1, xác minh actual parents/ancestry/tree, source/test blobs #67 nguyên vẹn, delta và mọi conflict resolution đã review, dependency #27/#31 được chấp nhận trong base và claims không trùng. Pin SHA kết quả thực tế cùng accepted document revision trong grant; nếu không tương thích thì STOP để Integrator quyết định lại.
+
+**Compatible R1 base: NOT_CREATED / NOT_APPROVED.** Không có composite SHA trong lượt này. Worktree tài liệu hiện tại chỉ dùng #69; worktree/source #67 không thay đổi. R1 không được bắt đầu bằng cách coi một trong hai head riêng lẻ đã chứa đủ cả source và contract delta.
+
 ## 4. R0–R10 dependency DAG và slot order
 
 Risk B/C dưới đây là planning labels: B cho shared/public integration surface; C cho authority/persistence/financial correctness. Integrator phải xác nhận risk/owner tại grant; không phải slot assignment hiện hữu. Runtime slots đều HOLD.
 
 ```mermaid
 flowchart TD
-  R0["R0 minimal subset ACK + exact commit"] --> R1["R1 private read policy"]
+  R0["R0 ACK theo từng slot + exact revision"] --> R1["R1 pure subset ACK + base + claim + PO grant"]
   R0 --> R2["R2 schema foundation"]
   R0 --> R4["R4 server context"]
   R2 --> R3["R3 authoritative store"]
@@ -88,19 +106,19 @@ Mỗi edge chỉ là prerequisite, không cấp quyền thực thi. R2 còn ch�
 
 ### R0 — Contracts/task draft; Integrator-owned
 
-Risk B/C về semantic scope; writer duy nhất Codex 2B cho grant hiện tại. CREATE đúng:
+Baseline #69 đã CREATE ba tài liệu. Grant correction hiện tại cho Codex 4 (Codex 2B) chỉ MODIFY đúng:
 
 - `docs/lkc-platform/contracts/C02-PRODUCT-ACCESS-v0.2.md`
 - `docs/lkc-platform/contracts/C05-BILLING-ENTITLEMENT-v0.1.md`
 - `docs/lkc-platform/tasks/SUB-004-RUNTIME.md`
 
-MODIFY/DELETE 0. Deliver untracked/unstaged fingerprints, independent review, owner ACK. Stage/commit/publication cần grant khác; R0 completion không đồng nghĩa runtime ready.
+CREATE/DELETE 0; MODIFY 3, giữ unstaged và index rỗng. Bàn giao exact diff/fingerprints cho Claude 4; delta chưa kế thừa review/ACK baseline. Stage/commit/publication cần grant riêng; source/runtime vẫn HOLD.
 
-### R1 — Lane-private read contract/policy; proposed Codex 2B; risk C
+### R1 — Lane-private read contract/policy; proposed Codex 4 (Codex 2B); risk C
 
 Candidate CREATE: `src/features/subscriptions/entitlement-read-contract.ts`, `src/features/subscriptions/entitlement-read-policy.ts`, `tests/subscription-entitlement-read-policy.test.mjs`. MODIFY/DELETE 0.
 
-After approved R0 minimal subset, exact acknowledged doc commit và PO slot grant. Pure logic/supplied facts only; unresolved operations stay unresolved. No shared port, server adapter, DB or synthetic runtime authorization. Import/reference PR #67 phải theo compatible approved dependency base; không sửa ba pure files.
+Ba paths trên **chưa claim/reserve**. Source implementation chỉ sau minimal R1 subset §2 được ACK trên exact revision, compatible base §3a được pin, Integrator ghi single-writer claim và PO cấp scoped source grant riêng. Phần mới là supplied read facts/policy prerequisites/unresolved propagation ở C02 §2a; Product OR/period evaluator #67 được giữ nguyên, không tái triển khai. Không shared port, server adapter, DB, Billing integration, consumer hoặc live ALLOW. Không chờ verified Billing/ProductPlan/C07/published readers để xét pure subset; không dựng mock thay các producer đó. Meaningful validation sau source grant chỉ cho behavior mới và regressions có căn cứ; không chạy lại tests #67 chỉ để tạo báo cáo.
 
 ### R2 — Persistence foundation; Integrator-assigned single schema writer; risk B/C
 
@@ -157,6 +175,10 @@ Candidate CREATE: `src/features/recommendations/recommendation-reader-query.ts`,
 After R5 + REC-002 published/version/history source. Giữ Product OR/ba nhóm, publication/source separation; linked CMS article phải check riêng. Public API/RSC entrypoints và additional exports/delivery chưa có exact manifest: **PENDING_OWNER_SCOPE**, không implicit allowlist hoặc quyền tái dựng REC-001.
 
 ## 5. Shared ownership và collision recheck
+
+F4/F5: grant PO trong conversation ngày 17/10/2026 xác nhận identity Codex 4 = Codex 2B và docs writer, không là registry claim cho source SUB-004/R1. Pre-edit đã xác minh worktree riêng sạch tại #69, đúng ba baseline blobs; PR #69 đúng head/base, OPEN/DRAFT và không có comment claim mới. Kiểm các worktree local được Git liệt kê không thấy bản ba docs ở worktree khác hoặc ba candidate R1 paths; không suy kết quả này thành bằng chứng mọi máy/owner đều không có việc local.
+
+**R1_SINGLE_WRITER_CLAIM_NOT_VERIFIED / R1_PATHS_UNCLAIMED.** Integrator phải kiểm registry và direct owner claims, ghi actor/task/base/allowlist/dependencies/exclusions và single writer có hiệu lực. Recheck collision tại slot grant và ngay trước first source write, kể cả khi lần kiểm này không thấy path. Nếu thiếu claim, có path/owner mới hoặc source drift thì STOP; không tự tạo reservation/đổi tên/đổi CREATE sang MODIFY. Registry không nằm trong allowlist sửa của task tài liệu này.
 
 Đặc biệt R4/R5: tại slot grant và ngay trước first write, Integrator/implementer phải kiểm active registry, direct owner claims, tất cả local worktrees/changes/branches, relevant remote refs và tất cả PR states. Không có PR không chứng minh không có local owner. Kiểm exact candidate paths và related application/contracts namespace, planned concurrent deltas, consumer import boundaries, source commits/tree và schema ordering.
 
@@ -223,12 +245,12 @@ PO chốt policy theo exact version, operation và effect; fixtures không thàn
 
 ## 9. Review, CI và activation gates
 
-1. R0: draft content/fingerprints → Claude 2B independent review → owner subset ACK → Integrator sequencing → PO quyết định slot/commit/publication. Hiện chưa có quyền stage/commit/push/PR.
+1. Delta hiện tại: exact local diff/fingerprints → Claude 4 review → grant publication riêng và pin revision mới → owner ACK đúng minimal R1 subset → Integrator pin base/claim → PO scoped source grant R1. Baseline review/semantic ACK không tự chuyển sang delta. Dừng tại WAITING_CLAUDE4_REVIEW; chưa stage/commit/push/PR hoặc source implementation.
 2. Mỗi implementation slot: pinned dependency tree, fresh claims/collision check, exact allowlist và separate PO authorization. Review actual changed source/tests; meaningful focused Node 22/24, scoped ESLint/strict TypeScript và applicable regressions khi slot được cấp. Pure source unchanged không cần giả reviewer chạy lại author gates.
 3. CI: phải xét actual workflow triggers và synthetic merge SHA khác PR head. CI của future slots NOT_RUN; không manual dispatch/rerun/cancel hoặc tạo PR từ draft grant. Prior #67 Linux CI PASS chỉ là pure-source evidence, không MariaDB/auth/paid-reader proof.
 4. Target evidence: real DB/concurrency, provider/auth/store, reader/HTTP/RSC/cache/media/delivery tests cần separate approved target/test scope. Không chạy migration/DB/staging để làm đẹp report docs.
 5. Staging/activation: separate authorization, reviewed deployment/security baseline, policy/owner ACK, audit/observability/rollback và QA-PAID evidence. Không bật real checks/grant/revoke/readers hoặc payment bằng cách đổi runtimeAuthorized trong pure DTO.
 
-Draft local validation chỉ chứng minh exact three CREATE paths, unchanged base/tracked source, empty staged diff, UTF-8/Markdown/cross-references và fingerprints. Không gọi document validation là runtime integration PASS. Integrator quyết định shared sequencing; Claude 2B review không thay PO execution authorization.
+Local documentation validation chỉ kiểm exact ba MODIFY paths, không CREATE/DELETE, source/config còn nguyên, index rỗng, UTF-8/Markdown/cross-references và fingerprints; giữ nguyên worktree #67. Không chạy app tests/build hoặc gọi document validation là runtime integration PASS. Integrator quyết định shared sequencing; Claude 4 review không thay owner ACK hoặc PO execution authorization.
 
-**Gate: R0_DRAFT_AUTHORING_GO / STAGE_HOLD / COMMIT_HOLD / PUSH_HOLD / PR_HOLD / CI_DISPATCH_HOLD / C02_RUNTIME_HOLD / DB_HOLD / STAGING_HOLD / PRODUCTION_NO_GO / MERGE_MAIN_HOLD.**
+**Gate: WAITING_CLAUDE4_REVIEW / PENDING_OWNER_ACK / R1_IMPLEMENTATION_HOLD / STAGE_HOLD / COMMIT_HOLD / PUSH_HOLD / PR_HOLD / CI_DISPATCH_HOLD / C02_RUNTIME_HOLD / DB_HOLD / STAGING_HOLD / PRODUCTION_NO_GO / MERGE_MAIN_HOLD.**

@@ -1,16 +1,24 @@
 # C05 — Billing to Entitlement v0.1 — R0 semantic contract draft
 
-Ngày: 14/10/2026 (Asia/Saigon). Task: `CODEX2B_R0_CONTRACT_DRAFT_AUTHORING`.
-Trạng thái: **DRAFT_FOR_OWNER_ACK / BILLING_AND_C02_RUNTIME_HOLD**.
-Integrator-of-record: ChatGPT / LKC Integrator coordination. Authorized writer: Codex 2B. Reviewer: Claude 2B.
+Baseline: 14/10/2026. Delta: 17/10/2026 (Asia/Bangkok), task `LKC-C4-R1-R0-DELTA-CORRECTION-001`.
+Trạng thái delta: **WAITING_CLAUDE4_REVIEW / PENDING_OWNER_ACK / BILLING_AND_C02_RUNTIME_HOLD**.
+Integrator-of-record: ChatGPT / LKC Integrator coordination. PO xác nhận Codex 4 là Codex 2B, writer lịch sử #69, chỉ được sửa cục bộ ba tài liệu. Reviewer delta: Claude 4.
 
 ## 1. Provenance và giới hạn
 
 Soạn trên provisional local integration commit `1b941b3d855e3d422147ec61dbc25bb2795561c6`, tree `99a477edb585c2036136a85cd43ddc46644ca4c2`. Ordered parents: PR #27 `bd903b784976eb0a147844cac72fd7295a79c00b`, rồi PR #31 `a0e8e6d7f4b41ba417783e751f6d13daee90992c`; common ancestor `5e6b14f006453da7f9b1554c210e9ad85a9f8c0c`.
 
-PO chuyển Claude 2B integration review PASS cho exact base/tree. Điều này không phải review PASS cho draft mới. #27/#31 vẫn OPEN/DRAFT, unmerged tại preflight 14/10/2026; base local-only, không cho phép merge main. Proposal/REV1 trước đây được review từ nội dung nguyên văn qua conversation, không khẳng định có local artifact chưa kiểm chứng.
+Baseline đã công bố tại [PR #69](https://github.com/maivanminhlamkinhmedia-afk/LKC-fintech-demo/pull/69), SHA `7744a89e5053e7838ea93069f1affb969ccaa783`. PR ghi integration, R0 draft source, commit provenance và publication review PASS do PO chuyển; không phải GitHub-authenticated approval hoặc C05 runtime ACK. Local-only là mốc authoring cũ; #27/#31 OPEN/DRAFT tại preflight 14/10/2026 là lịch sử. Delta hiện tại vẫn WAITING_CLAUDE4_REVIEW; không cho merge main. Proposal/REV1 trước đây do PO chuyển qua conversation, không gán cho unverified local artifact.
 
 Đối chiếu [C02 v0.2 draft](C02-PRODUCT-ACCESS-v0.2.md), [C01 v0.1](C01-PRODUCT-CATALOG-v0.1.md), [architecture C05/C07](../ARCHITECTURE-CONTRACTS.md), [roadmap](../ROADMAP.md) và [runtime task](../tasks/SUB-004-RUNTIME.md). C01/C02 semantic ACK lịch sử được bảo toàn; Billing runtime delta cần ACK riêng. Không định nghĩa approved exported API, payment adapter, schema, queue, grant/revoke service hoặc live policy.
+
+### 1a. Billing ACK giới hạn cho candidate R1
+
+Minimal R1 tại [C02 §2a](C02-PRODUCT-ACCESS-v0.2.md) và [task §2](../tasks/SUB-004-RUNTIME.md) chỉ xử lý supplied read facts, policy prerequisites và `POLICY_UNRESOLVED` trong pure domain. R1 không sử dụng payment/order provenance, không callback/receipt verification, không tạo grant/revoke, period hoặc durable effect; không thay thế C05 runtime.
+
+Billing được đề nghị ACK đúng exclusion này trên revision delta đã review, không phải ký duyệt verified producer, business-key/idempotency, reconciliation hoặc mutation protocol. Các contract runtime bên dưới tiếp tục PENDING_OWNER_ACK. Thiếu Billing producer/ProductPlan/C07 không cần được lấp bằng mock để soạn hoặc xét pure R1; chúng vẫn là dependency của các slot runtime tương ứng.
+
+Renewal, refund, chargeback và mọi commercial/transition policy chưa duyệt giữ `POLICY_UNRESOLVED`; khi operation cần policy đó, R1 chỉ truyền unresolved. Không chọn default, không chuyển receipt thành quyền, không replay để phục hồi grant. Đủ prerequisite facts không tạo live ALLOW. ACK scope/exclusions không phải approval cho implementation R1; PO cấp source grant riêng sau ACK.
 
 ## 2. Authority và source facts tối thiểu
 
@@ -104,6 +112,8 @@ Real tests cần MariaDB version/config/isolation/constraints khớp approved ta
 
 ## 7. ACK và dependencies
 
+Ma trận này dành cho C05 runtime; ACK Billing giới hạn R1 ở §1a không đóng các gate dưới đây.
+
 | Owner | Minimal ACK cần bổ sung | Status |
 |---|---|---|
 | Billing | Verified source, event vs business key, accepted one-order scope, conflicts/lost ACK/reconciliation và mutation protocol | PENDING_OWNER_ACK |
@@ -113,7 +123,7 @@ Real tests cần MariaDB version/config/isolation/constraints khớp approved ta
 | Integrator | C05 producer owner, C07/store boundaries, minimal subset/exact dependency revision và slot claims | PENDING_INTEGRATOR_ACK |
 | PO | Relevant commercial/transition policies và implementation/activation scope | POLICY_UNRESOLVED / IMPLEMENTATION_HOLD |
 
-ACK phải chỉ rõ actor/role, exact document commit/revision, accepted subset/exclusions, OPEN decisions và nguồn evidence. Draft này chưa có committed document revision: **PENDING_COMMIT / PENDING_CLAUDE2B_REVIEW**. Không coi semantic ACK C01/C02 hoặc grant viết docs là ACK C05 runtime.
+ACK phải chỉ rõ actor/role, exact document commit/revision, accepted subset/exclusions, OPEN decisions và nguồn evidence. Baseline đã công bố tại `7744a89e5053e7838ea93069f1affb969ccaa783`; delta này chưa commit và đang **WAITING_CLAUDE4_REVIEW**. Sau review cần grant publication riêng và pin revision mới trước owner ACK; không gán SHA/review baseline cho delta. Không coi semantic ACK C01/C02 hoặc grant viết docs là ACK C05 runtime. Các PENDING_COMMIT trong dependency inventory là gaps riêng, không được đóng bằng publication của #69.
 
 Product persistence #36 `0bbbd3ef768e3f44a3cb9d061744526316d535d7` và C01 #42 `6bd8b7222180dce82ed2d13c813606efed94e046` là dependency candidates, Draft/unmerged tại preflight; không chứng minh ProductPlan/Billing producer đã merge. R6/R7 theo task chỉ là proposed slots sau schema/consistency, C05/C07 và policy approval; không được thực thi từ R0.
 
