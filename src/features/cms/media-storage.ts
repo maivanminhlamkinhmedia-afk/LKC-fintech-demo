@@ -28,7 +28,8 @@ function within(parent: string, target: string) {
 function mediaRootPath(): string {
   const value = process.env.CMS_MEDIA_ROOT
   if (!value || !path.isAbsolute(value)) throw new MediaError('MEDIA_STORAGE_UNAVAILABLE')
-  const root = path.resolve(value), repo = path.resolve(process.cwd())
+  // Runtime containment boundary, not a build-time asset directory. Keep cwd validation.
+  const root = path.resolve(value), repo = path.resolve(/* turbopackIgnore: true */ process.cwd())
   const inside = within(repo, root) || root === repo
   const mode = process.env.CMS_MEDIA_ROOT_MODE
   const stagingBase = process.env.CMS_E2E_WORKSPACE ? path.join(path.resolve(process.env.CMS_E2E_WORKSPACE), '.next', 'cms-e2e-media') : path.join(repo, '.next', 'cms-e2e-media')
@@ -68,7 +69,8 @@ export async function provisionMediaRoot(root: string): Promise<MediaRoot> {
   const identity = randomBytes(16).toString('hex')
   try {
     await mkdir(root, { recursive: false, mode: 0o700 })
-    for (const name of folders) await mkdir(path.join(root, name), { mode: 0o700 })
+    // Private runtime directories are provisioned explicitly, never copied into standalone.
+    for (const name of folders) await mkdir(path.join(/* turbopackIgnore: true */ root, name), { mode: 0o700 })
     const handle = await open(path.join(root, markerName), 'wx', 0o600)
     try { await handle.writeFile(JSON.stringify({ version: 1, identity, purpose: 'cms-media' })); await handle.sync() } finally { await handle.close() }
     return await openMediaRoot()
@@ -186,8 +188,9 @@ export async function storageInventory(root: MediaRoot) {
   const result: Record<Folder, string[]> = { objects: [], tmp: [], operations: [], locks: [] }
   for (const name of folders) {
     const dir = await folder(root.path, name)
-    for (const entry of await readdir(dir)) {
-      const target = path.join(dir, entry)
+    // Inventory is runtime data from the checked private root, not deployment assets.
+    for (const entry of await readdir(/* turbopackIgnore: true */ dir)) {
+      const target = path.join(/* turbopackIgnore: true */ dir, entry)
       const info = await lstat(target)
       if (name === 'locks' ? !info.isDirectory() || info.isSymbolicLink() : !info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new MediaError('MEDIA_STORAGE_UNAVAILABLE')
       result[name].push(entry)
