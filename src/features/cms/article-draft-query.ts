@@ -9,12 +9,15 @@ import {
   mapDraftError,
   parseArticleId,
   parseArticlePage,
+  readStoredDraftAudience,
+  type DraftAudience,
   type DraftFailure,
   type NormalizedDraftData,
 } from '@/features/cms/article-draft'
 import { validateStoredEditorDocument } from '@/features/cms/editor-schema'
 
 export type DraftEditorData = Pick<NormalizedDraftData, 'title' | 'slug' | 'excerpt' | 'articleType' | 'contentJson'> & {
+  audience: DraftAudience
   id: string
   updatedAt: string
 }
@@ -40,13 +43,15 @@ export async function getArticleDraftForEdit(actor: CMSUser, articleId: unknown)
       select: {
         id: true, authorId: true, status: true, updatedAt: true, title: true, slug: true,
         excerpt: true, articleType: true, contentJson: true, editorSchemaVersion: true,
+        accessMode: true, _count: { select: { products: true } },
       },
     })
     if (!article) throw new ArticleDraftError('NOT_FOUND')
     if (!canEditArticleDraft(actor, article)) throw new ArticleDraftError('NOT_EDITABLE')
     const document = validateStoredEditorDocument(article.contentJson, article.editorSchemaVersion)
+    const audience = readStoredDraftAudience(article.accessMode, article._count.products)
     return { ok: true, data: {
-      id: article.id, title: article.title, slug: article.slug, excerpt: article.excerpt,
+      audience, id: article.id, title: article.title, slug: article.slug, excerpt: article.excerpt,
       articleType: article.articleType, contentJson: document.contentJson, updatedAt: article.updatedAt.toISOString(),
     } }
   } catch (error) {

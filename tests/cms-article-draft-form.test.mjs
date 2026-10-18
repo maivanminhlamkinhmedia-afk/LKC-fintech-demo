@@ -271,6 +271,7 @@ for (const [name, node, expectedNode] of fixtures) {
       if (edit) assert.equal(call.id, 'article-form')
       plainJson(call.payload)
       assert.deepEqual(call.payload, { ...header, ...(edit ? { title: header.title.trim(), excerpt: header.excerpt.trim() } : {}), contentJson: { type: 'doc', content: [expectedNode] },
+        audience: { accessMode: null, productIds: [] },
         ...(edit ? { expectedUpdatedAt: originalToken } : {}) })
       assert.equal(form.status(), 'Đã lưu')
       assert.equal(form.error(), undefined)
@@ -518,7 +519,7 @@ test('known offline prevents all dispatches; online event schedules one latest d
   assert.equal(form.state.calls[0].payload.title, 'Ngoại tuyến S2')
 })
 
-for (const code of ['EDIT_CONFLICT', 'FORBIDDEN', 'NOT_FOUND', 'NOT_EDITABLE', 'UNSUPPORTED_DOCUMENT']) {
+for (const code of ['EDIT_CONFLICT', 'FORBIDDEN', 'NOT_FOUND', 'NOT_EDITABLE', 'UNSUPPORTED_DOCUMENT', 'POLICY_UNRESOLVED']) {
   test(`${code} retains the form, blocks manual/auto updates and never refreshes its token`, async () => {
     const form = editForm({ action: () => ({ ok: false, error: { code, message: 'Lỗi an toàn.' } }) })
     form.change('article-title', 'Bản đang nhập phải giữ')
@@ -676,4 +677,113 @@ test('TAX-24: classification is persisted-only and its link preserves debounce a
   pending.resolve(ack(form.state.calls[0].payload)); await flush(); await clock.tick(5000)
   assert.equal(form.state.calls.length, 1)
   assert.equal(form.input('article-title').props.value, 'Bản chưa gửi sau request')
+})
+
+for (const accessMode of [null, 'PUBLIC']) {
+  test(`W0 new form sends explicit ${accessMode ?? 'unconfigured'} audience with its real create payload`, async () => {
+    const form = mount(documentFor(paragraph('Nội dung nháp')))
+    const audience = form.input('article-audience')
+    assert.deepEqual(nodes(audience.props.children).filter(node => node.type === 'option').map(node => node.props.value), ['', 'PUBLIC'])
+    assert.equal(audience.props.value, '', 'No audience defaults to unconfigured, never PUBLIC')
+    if (accessMode) form.change('article-audience', accessMode)
+    await clock.tick(5000)
+    assert.equal(form.state.calls.length, 0, 'Create remains manual')
+    await form.submit(); form.render()
+    assert.equal(form.state.calls.length, 1)
+    assert.equal(form.state.calls[0].kind, 'create')
+    assert.deepEqual(form.state.calls[0].payload.audience, { accessMode, productIds: [] })
+    assert.equal(form.state.calls[0].payload.contentJson.content[0].content[0].text, 'Nội dung nháp')
+    assert.equal(form.status(), 'Đã lưu')
+  })
+
+  test(`W0 remount displays persisted ${accessMode ?? 'unconfigured'} audience without a mount/revalidation write`, async () => {
+    const persisted = { ...editInitial, audience: { accessMode, productIds: [] } }
+    const form = editForm({ initial: persisted })
+    assert.equal(form.input('article-audience').props.value, accessMode ?? '')
+    form.replayEffects()
+    await clock.tick(5000); await form.submit()
+    assert.equal(form.state.calls.length, 0)
+    assert.equal(form.unload(), false)
+    form.change('article-audience', accessMode === 'PUBLIC' ? '' : 'PUBLIC')
+    assert.equal(form.status(), 'Chưa lưu')
+    form.rerenderInitial({ ...persisted, updatedAt: nextToken })
+    assert.equal(form.input('article-audience').props.value, accessMode === 'PUBLIC' ? '' : 'PUBLIC', 'Revalidation must not discard local audience')
+    form.unmount()
+    // A real remount receives the server query projection; persistence itself is
+    // tested at the action/query boundary, not by this React scheduling adapter.
+    const reopened = editForm({ initial: persisted })
+    assert.equal(reopened.input('article-audience').props.value, accessMode ?? '')
+    await clock.tick(5000)
+    assert.equal(reopened.state.calls.length, 0)
+  })
+}
+
+test('W0 form audience-only save stays pending until ACK; queued content/audience share its next token', async () => {
+  const hold = deferred()
+  const form = editForm({ initial: { ...editInitial, audience: { accessMode: null, productIds: [] } }, action: () => hold.promise })
+  form.change('article-audience', 'PUBLIC')
+  await clock.tick(1999); assert.equal(form.state.calls.length, 0)
+  await clock.tick(1)
+  assert.equal(form.state.calls.length, 1)
+  assert.deepEqual(form.state.calls[0].payload.audience, { accessMode: 'PUBLIC', productIds: [] })
+  assert.equal(form.status(), 'Đang lưu…')
+  assert.equal(form.unload(), true)
+  assert.equal(form.locked().fields, false)
+  form.change('article-audience', '')
+  form.change('article-title', 'Bản mới cùng quyền chưa cấu hình')
+  await clock.tick(2000)
+  assert.equal(form.state.calls.length, 1)
+  const second = deferred()
+  form.state.action = () => second.promise
+  hold.resolve(ack(form.state.calls[0].payload)); await flush(); await clock.tick(0)
+  assert.equal(form.state.calls.length, 2)
+  assert.equal(form.state.calls[1].payload.expectedUpdatedAt, nextToken)
+  assert.deepEqual(form.state.calls[1].payload.audience, { accessMode: null, productIds: [] })
+  assert.equal(form.state.calls[1].payload.title, 'Bản mới cùng quyền chưa cấu hình')
+  assert.equal(form.input('article-audience').props.value, '')
+  assert.equal(form.status(), 'Đang lưu…', 'The first ACK cannot mark queued audience as saved')
+  second.resolve(ack(form.state.calls[1].payload)); await flush(); form.render()
+  assert.equal(form.status(), 'Đã lưu')
+  assert.equal(form.unload(), false)
+  await clock.tick(5000); await form.submit()
+  assert.equal(form.state.calls.length, 2)
+})
+
+test('W0 audience edit survives offline and uncertain transport without an automatic resubmit', async () => {
+  const form = editForm({ initial: { ...editInitial, audience: { accessMode: null, productIds: [] } },
+    action: () => { throw new Error('SYNTHETIC_SECRET') } })
+  form.online(false)
+  form.change('article-audience', 'PUBLIC')
+  await clock.tick(5000); await form.submit()
+  assert.equal(form.state.calls.length, 0)
+  assert.equal(form.input('article-audience').props.value, 'PUBLIC')
+  assert.equal(form.status(), 'Mất kết nối — thay đổi chưa được lưu')
+  form.online(true); await clock.tick(2000)
+  assert.equal(form.state.calls.length, 1)
+  assert.deepEqual(form.state.calls[0].payload.audience, { accessMode: 'PUBLIC', productIds: [] })
+  assert.equal(form.error()?.props['data-error-code'], 'INTERNAL_ERROR')
+  form.online(false); form.online(true); await clock.tick(5000)
+  assert.equal(form.state.calls.length, 1)
+  assert.equal(form.unload(), true)
+  form.state.action = () => ({ ok: false, error: { code: 'EDIT_CONFLICT', message: 'Bài đã thay đổi.' } })
+  await form.submit(); form.render()
+  assert.equal(form.state.calls[1].payload.expectedUpdatedAt, originalToken)
+  assert.deepEqual(form.state.calls[1].payload.audience, { accessMode: 'PUBLIC', productIds: [] })
+  assert.equal(form.input('article-audience').props.value, 'PUBLIC')
+  assert.equal(form.error()?.props['data-error-code'], 'EDIT_CONFLICT')
+  assert.equal(form.locked().save, true)
+})
+
+test('W0 late audience ACK after accepted navigation cannot confirm or send queued state', async () => {
+  const hold = deferred()
+  const form = editForm({ initial: { ...editInitial, audience: { accessMode: null, productIds: [] } }, action: () => hold.promise })
+  form.change('article-audience', 'PUBLIC'); await clock.tick(2000)
+  form.change('article-audience', '')
+  form.change('article-title', 'Giữ bản nhập sau ACK trễ')
+  assert.equal(form.navigate(true), false)
+  hold.resolve(ack(form.state.calls[0].payload)); await flush(); await clock.tick(5000)
+  assert.equal(form.state.calls.length, 1)
+  assert.equal(form.input('article-audience').props.value, '')
+  assert.equal(form.input('article-title').props.value, 'Giữ bản nhập sau ACK trễ')
+  assert.equal(form.unload(), false)
 })
