@@ -1,18 +1,18 @@
 name: Deploy to cPanel
 
-# Tự động build + đẩy lên VinaHost cPanel mỗi khi có code mới trên nhánh main.
+# F1: reserve a manual entrypoint; all jobs remain disabled pending a reviewed release gate.
 on:
-  push:
-    branches: [main]
-  workflow_dispatch: {} # cho phép bấm chạy tay trong tab Actions
+  workflow_dispatch: {}
 
-# Không cho 2 lần deploy chạy chồng nhau; lần mới hủy lần cũ đang chạy.
+# Do not cancel an in-progress deploy: remote state may be UNKNOWN.
 concurrency:
   group: deploy-cpanel
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
+    # Inputs, labels, commit messages, and environment names are not PO approval.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source

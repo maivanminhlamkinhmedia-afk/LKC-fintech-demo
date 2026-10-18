@@ -1,15 +1,48 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, unlinkSync } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, readlinkSync, readSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const project = process.cwd()
 const bundle = resolve(project, '.next', 'standalone')
 if (!bundle.startsWith(resolve(project, '.next') + sep)) throw new Error('CMS_MEDIA_STANDALONE_PATH_INVALID')
 if (!existsSync(bundle) || !lstatSync(bundle).isDirectory()) throw new Error('CMS_MEDIA_STANDALONE_MISSING')
+const samePath = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+function checkedDirectory(root, target, create = false) {
+  const rel = relative(root, target)
+  if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) throw new Error('CMS_MEDIA_SOURCE_PATH_INVALID')
+  let current = root
+  for (const part of ['', ...rel.split(sep).filter(Boolean)]) {
+    if (part) current = join(current, part)
+    let info
+    try { info = lstatSync(current) } catch (error) {
+      if (!create || error.code !== 'ENOENT') throw new Error('CMS_MEDIA_SOURCE_PATH_INVALID')
+      mkdirSync(current); info = lstatSync(current)
+    }
+    if (!info.isDirectory() || info.isSymbolicLink() || !samePath(realpathSync(current), current)) throw new Error('CMS_MEDIA_SOURCE_PATH_INVALID')
+  }
+}
+function regularSource(file) {
+  const info = lstatSync(file)
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || !samePath(realpathSync(file), file)) throw new Error('CMS_MEDIA_RAW_SOURCE_INVALID')
+  return info
+}
+function sourceBytes(file) {
+  const before = regularSource(file)
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+  try {
+    const opened = fstatSync(fd)
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev || opened.ino !== before.ino) throw new Error('CMS_MEDIA_RAW_SOURCE_INVALID')
+    return readFileSync(fd)
+  } finally { closeSync(fd) }
+}
+checkedDirectory(project, bundle)
 function servers(directory) {
   const found = []
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (entry.name === 'node_modules' || entry.name === '.git') continue
     const path = join(directory, entry.name)
+    if (entry.isSymbolicLink()) throw new Error('CMS_MEDIA_SOURCE_PATH_INVALID')
     if (entry.isDirectory()) found.push(...servers(path))
     else if (entry.isFile() && entry.name === 'server.js') found.push(path)
   }
@@ -19,6 +52,586 @@ const entrypoints = servers(bundle)
 if (entrypoints.length !== 1) throw new Error('CMS_MEDIA_STANDALONE_ENTRYPOINT_INVALID')
 const runtimeBundle = dirname(entrypoints[0])
 if (runtimeBundle !== bundle && !runtimeBundle.startsWith(bundle + sep)) throw new Error('CMS_MEDIA_STANDALONE_PATH_INVALID')
+if (relative(bundle, runtimeBundle).split(sep).some(part => part === 'public' || part === 'static')) throw new Error('CMS_MEDIA_SOURCE_PATH_INVALID')
+checkedDirectory(project, runtimeBundle)
+regularSource(entrypoints[0])
+
+// Dynamic operations-directory tracing can capture these repository runbooks.
+// Prune only these exact, byte-verified copies; unknown inventory fails closed.
+// Never recursively delete a docs tree or follow a link during release assembly.
+const operationArtifacts = [
+  'cms004-staging-cleanup.cjs',
+  'cms009-candidate-artifact.md',
+  'cms009-media-storage.md',
+  'cms009-production-storage-release.md',
+].map(name => `docs/cms/operations/${name}`)
+const runtimeSources = new Set(['media-storage.ts', 'media-contract.ts', 'media-codec-worker.cjs']
+  .map(name => `src/features/cms/${name}`))
+const nextFiles = new Set(['BUILD_ID', 'package.json', 'app-path-routes-manifest.json', 'build-manifest.json',
+  'prerender-manifest.json', 'required-server-files.json', 'routes-manifest.json'])
+const nextDirectory = rel => ['.next/server', '.next/node_modules', '.next/static'].some(root => rel === root || rel.startsWith(`${root}/`))
+const portable = path => path.split(sep).join('/')
+// Diagnostic-only: never use these classifications as permission to copy a link.
+// Emit known structural names only. Unknown names may contain customer/secret data.
+function diagnosticBundlePath(path) {
+  const rel = portable(relative(bundle, path))
+  if (!rel || rel.length > 240 || isAbsolute(rel) || /[\x00-\x20\x7f-\uffff]/u.test(rel)
+    || rel.split('/').some(part => part === '..' || part === '.' || !part)) return '[REDACTED]'
+  const names = new Set(['.next', 'isolated-build', 'node_modules', '.bin', '@prisma', 'client',
+    'runtime', 'pngjs', 'jpeg-js', 'index.js', 'client.js', 'package.json'])
+  return rel.split('/').map((part, index, parts) => names.has(part)
+    || (parts[index - 1] === '@prisma' && /^client-[a-f0-9]{16}$/u.test(part)) ? part : '[REDACTED]').join('/')
+}
+function diagnosticDependency(target) {
+  // Only the existing assembler-owned dependencies can receive this classification.
+  // Name/version metadata verification is diagnostic evidence, not a runtime permit.
+  for (const name of ['@prisma/client', 'pngjs', 'jpeg-js']) {
+    const root = resolve(project, 'node_modules', name)
+    const rel = relative(root, target)
+    if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) continue
+    try {
+      checkedDirectory(project, root)
+      const packageFile = join(root, 'package.json'), lockFile = join(project, 'package-lock.json')
+      if (regularSource(packageFile).size > 65536 || regularSource(lockFile).size > 4 * 1024 * 1024) return false
+      const metadata = JSON.parse(sourceBytes(packageFile).toString('utf8'))
+      const lock = JSON.parse(sourceBytes(lockFile).toString('utf8'))
+      return metadata.name === name && typeof metadata.version === 'string' && metadata.version.length > 0
+        && metadata.version === lock.packages?.[`node_modules/${name}`]?.version
+    } catch { return false }
+  }
+  return false
+}
+// BEGIN Prisma identity diagnostic. Evidence only: no return value grants acceptance.
+function prismaIdentityDiagnostic(path) {
+  const record = {
+    bundlePath: diagnosticBundlePath(path), chainComplete: false, hops: [], canonicalTargetPath: null,
+    targetIsDirectory: false, lockVersionMatches: false, sourceMetadataMatches: false,
+    targetMetadataMatches: false, safeInventory: false, targetFilesMatchSource: false,
+    exactInventoryMatch: false, sourceFileCount: null, targetFileCount: null,
+    sourceInventorySha256: null, targetInventorySha256: null, status: 'UNVERIFIED',
+  }
+  const fail = code => { throw new Error(code) }
+  const inside = (root, value) => {
+    const rel = relative(root, value)
+    return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)
+  }
+  const structural = value => {
+    if (!inside(bundle, value)) fail('PATH_UNSAFE')
+    const safe = diagnosticBundlePath(value)
+    if (safe.includes('[REDACTED]')) fail('PATH_UNSAFE')
+    return safe
+  }
+  // Resolve each component, including symlinks before '..'; never read outside bundle.
+  // Native realpath is a final cross-check, not a substitute for this bounded walk.
+  function chain(start, hops) {
+    checkedDirectory(bundle, bundle)
+    let pending = relative(bundle, start).split(sep), current = bundle, operations = 0
+    const seen = new Set()
+    while (pending.length) {
+      if (++operations > 256) fail('CHAIN_LIMIT')
+      const part = pending.shift()
+      if (!part || part === '.') continue
+      if (part === '..') {
+        current = dirname(current)
+        if (!inside(bundle, current)) fail('PATH_UNSAFE')
+        continue
+      }
+      const next = join(current, part)
+      structural(next)
+      const info = lstatSync(next)
+      if (info.isSymbolicLink()) {
+        if (seen.has(next) || hops.length >= 16) fail('CHAIN_LIMIT')
+        seen.add(next)
+        let raw = readlinkSync(next)
+        if (process.platform === 'win32' && raw.startsWith(String.fromCharCode(92, 92, 63, 92))) raw = raw.slice(4)
+        if (process.platform === 'win32') raw = raw.replaceAll('/', sep)
+        if (!raw || raw.length > 1024 || /[\x00-\x1f\x7f-\uffff]/u.test(raw)) fail('PATH_UNSAFE')
+        // Only structural paths are reportable. This lexical path is NOT the final canonical target.
+        const lexicalTargetPath = structural(resolve(current, raw))
+        hops.push({ linkPath: structural(next), lexicalTargetPath })
+        if (isAbsolute(raw)) {
+          if (raw.split(sep).some(p => p === '.' || p === '..')) fail('PATH_UNSAFE')
+          if (!inside(bundle, raw)) fail('PATH_UNSAFE')
+          pending = relative(bundle, raw).split(sep).concat(pending); current = bundle
+        } else pending = raw.split(sep).concat(pending)
+      } else {
+        if (!info.isDirectory()) fail('TARGET_NOT_DIRECTORY')
+        current = next
+      }
+    }
+    checkedDirectory(bundle, current)
+    if (!samePath(realpathSync(start), current)) fail('CHAIN_CHANGED')
+    return current
+  }
+  function bytes(file, limit) {
+    const before = regularSource(file)
+    if (before.size > limit) fail('BYTE_LIMIT')
+    const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    try {
+      const opened = fstatSync(fd)
+      if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev || opened.ino !== before.ino
+        || opened.size !== before.size) fail('FILE_CHANGED')
+      // Bounded reads even if a concurrent writer grows the file after lstat.
+      const value = Buffer.alloc(before.size + 1)
+      let count = 0, size
+      while (count < value.length && (size = readSync(fd, value, count, value.length - count, null)) > 0) count += size
+      const after = fstatSync(fd)
+      if (count !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs
+        || after.ctimeMs !== before.ctimeMs || after.nlink !== 1) fail('FILE_CHANGED')
+      return value.subarray(0, count)
+    } finally { closeSync(fd) }
+  }
+  const unsafeName = name => name.startsWith('.') || forbiddenEntry(name) || !/^[A-Za-z0-9_@.+-]{1,160}$/u.test(name)
+    || /(?:secret|credential|password|private|token|id_rsa|id_ed25519|\.pem$|\.key$|\.pfx$|\.p12$)/iu.test(name)
+  function inventory(root) {
+    const rows = []; let entries = 0, total = 0
+    function walk(dir, depth) {
+      if (depth > 24) fail('TREE_LIMIT')
+      checkedDirectory(root, dir)
+      // opendir bounds enumeration; no unbounded readdir allocation on an untrusted tree.
+      const handle = opendirSync(dir)
+      try {
+        let entry
+        while ((entry = handle.readSync()) !== null) {
+          if (++entries > 8192) fail('TREE_LIMIT')
+          if (unsafeName(entry.name)) fail('UNSAFE_ENTRY')
+          const file = join(dir, entry.name), info = lstatSync(file)
+          if (info.isSymbolicLink()) fail('NESTED_LINK')
+          if (info.isDirectory()) walk(file, depth + 1)
+          else {
+            if (!info.isFile() || info.nlink !== 1) fail('UNSAFE_ENTRY')
+            if (rows.length >= 4096) fail('TREE_LIMIT')
+            const value = bytes(file, Math.min(16 * 1024 * 1024, 128 * 1024 * 1024 - total))
+            total += value.length
+            rows.push([portable(relative(root, file)), value.length, createHash('sha256').update(value).digest('hex')])
+          }
+        }
+      } finally { handle.closeSync() }
+    }
+    walk(root, 0)
+    rows.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+    return rows
+  }
+  try {
+    if (!lstatSync(path).isSymbolicLink()) fail('CHAIN_CHANGED')
+    const target = chain(path, record.hops)
+    if (record.hops.length === 0) fail('CHAIN_CHANGED')
+    record.chainComplete = true; record.canonicalTargetPath = structural(target); record.targetIsDirectory = true
+    const source = resolve(project, 'node_modules', '@prisma', 'client')
+    checkedDirectory(project, source)
+    const lock = JSON.parse(bytes(join(project, 'package-lock.json'), 4 * 1024 * 1024).toString('utf8'))
+    const sourceMetadata = JSON.parse(bytes(join(source, 'package.json'), 65536).toString('utf8'))
+    const targetMetadata = JSON.parse(bytes(join(target, 'package.json'), 65536).toString('utf8'))
+    record.lockVersionMatches = lock.packages?.['node_modules/@prisma/client']?.version === '7.8.0'
+    const matches = value => value?.name === '@prisma/client' && value?.version === '7.8.0'
+    record.sourceMetadataMatches = matches(sourceMetadata); record.targetMetadataMatches = matches(targetMetadata)
+    if (!record.lockVersionMatches || !record.sourceMetadataMatches || !record.targetMetadataMatches) fail('METADATA_MISMATCH')
+    const sourceRows = inventory(source), targetRows = inventory(target)
+    const again = []
+    if (!samePath(chain(path, again), target) || JSON.stringify(again) !== JSON.stringify(record.hops)) fail('CHAIN_CHANGED')
+    const sourceMap = new Map(sourceRows.map(row => [row[0], JSON.stringify(row)]))
+    record.safeInventory = true
+    record.sourceFileCount = sourceRows.length; record.targetFileCount = targetRows.length
+    record.targetFilesMatchSource = targetRows.length > 0 && targetRows.every(row => sourceMap.get(row[0]) === JSON.stringify(row))
+    record.exactInventoryMatch = record.targetFilesMatchSource && sourceRows.length === targetRows.length
+    // Never publish a digest of unverified target bytes or per-file names/hashes.
+    if (!record.targetFilesMatchSource) fail('CONTENT_MISMATCH')
+    record.sourceInventorySha256 = createHash('sha256').update(JSON.stringify(sourceRows)).digest('hex')
+    record.targetInventorySha256 = createHash('sha256').update(JSON.stringify(targetRows)).digest('hex')
+    record.status = 'OBSERVED_MATCH_NOT_AUTHORIZATION'
+  } catch (error) {
+    const safeCodes = new Set(['PATH_UNSAFE', 'CHAIN_LIMIT', 'TARGET_NOT_DIRECTORY', 'CHAIN_CHANGED',
+      'BYTE_LIMIT', 'FILE_CHANGED', 'TREE_LIMIT', 'UNSAFE_ENTRY', 'NESTED_LINK', 'METADATA_MISMATCH', 'CONTENT_MISMATCH'])
+    record.status = safeCodes.has(error?.message) ? error.message : error?.code === 'ENOENT' ? 'MISSING_ENTRY' : 'UNVERIFIED'
+  }
+  return record
+}
+function emitPrismaIdentityDiagnostic(path) {
+  if (portable(relative(runtimeBundle, path)) !== '.next/node_modules/@prisma/client-2c3a283f134fdcb6') return
+  // Called only on an existing rejection path. Never pass this result to inventory acceptance.
+  console.error(`CMS_PRISMA_IDENTITY_DIAGNOSTIC ${JSON.stringify(prismaIdentityDiagnostic(path))}`)
+}
+// END Prisma identity diagnostic.
+
+function inventoryLinkError(path) {
+  let linkType = 'unresolvable', targetClass = 'UNRESOLVED'
+  try {
+    const target = realpathSync(path), info = lstatSync(target)
+    linkType = info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'unresolvable'
+    const rel = relative(bundle, target)
+    targetClass = !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)
+      ? 'INSIDE_BUNDLE' : diagnosticDependency(target) ? 'VERIFIED_CHECKOUT_DEPENDENCY' : 'OUTSIDE_SCOPE'
+  } catch (error) {
+    // Never forward native error messages, raw targets, or absolute filesystem paths.
+    linkType = error?.code === 'ENOENT' ? 'dangling' : 'unresolvable'
+  }
+  let bundlePath = '[REDACTED]'
+  try { bundlePath = diagnosticBundlePath(path) } catch { /* Diagnostics stay fail-closed. */ }
+  console.error(`CMS_RELEASE_LINK_DIAGNOSTIC ${JSON.stringify({ bundlePath, linkType, targetClass })}`)
+  emitPrismaIdentityDiagnostic(path)
+  const error = new Error('CMS_RELEASE_INVENTORY_LINK')
+  // The ordinary Node stack would expose the checkout's absolute host path.
+  error.stack = 'Error: CMS_RELEASE_INVENTORY_LINK'
+  return error
+}
+function inventoryRealpath(path) {
+  try { return realpathSync(path) } catch { throw inventoryLinkError(path) }
+}
+
+function forbiddenEntry(path) {
+  return path.split('/').some(part => /^\.env/iu.test(part) || /^(?:AGENTS|CLAUDE)\.md$/iu.test(part)
+    || /\.xlsx$/iu.test(part) || /(?:runbook|staging[-_]cleanup)/iu.test(part)
+    || ['.git', '.journal', '.cms-media-root.json'].includes(part.toLowerCase()))
+    || /(?:^|\/)docs\/cms\/operations(?:\/|$)/iu.test(path)
+}
+function regularTree(root, directory = root) {
+  checkedDirectory(root, directory)
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (forbiddenEntry(portable(relative(root, path)))) throw new Error('CMS_RELEASE_INVENTORY_FORBIDDEN')
+    if (entry.isSymbolicLink()) throw inventoryLinkError(path)
+    if (entry.isDirectory()) regularTree(root, path)
+    else regularSource(path)
+  }
+}
+// A separate verifier builds an internal, byte-backed plan. Diagnostic records are
+// never permits. Only the observed single-hop alias -> canonical bundle package is eligible.
+const prismaSubsetAlias = '.next/node_modules/@prisma/client-2c3a283f134fdcb6'
+function subsetError() {
+  const error = new Error('CMS_PRISMA_SUBSET_CHANGED_OR_INVALID')
+  error.stack = 'Error: CMS_PRISMA_SUBSET_CHANGED_OR_INVALID'
+  return error
+}
+function subsetStamp(info) {
+  return [info.dev, info.ino, info.mode, info.isDirectory() ? '' : info.nlink, info.isDirectory() ? '' : info.size,
+    info.isDirectory() ? '' : info.mtimeNs, info.isDirectory() ? '' : info.ctimeNs].map(String).join(':')
+}
+function capturePrismaSubset(path) {
+  try {
+    const target = resolve(runtimeBundle, 'node_modules/@prisma/client')
+    const source = resolve(project, 'node_modules/@prisma/client')
+    const stamps = new Map(), files = new Map(), directories = []
+    const remember = (file, info = lstatSync(file, { bigint: true })) => {
+      const value = subsetStamp(info)
+      if (stamps.has(file) && stamps.get(file) !== value) throw subsetError()
+      stamps.set(file, value)
+      return info
+    }
+    function directory(root, dir) {
+      checkedDirectory(root, dir)
+      let current = root
+      remember(current)
+      for (const part of relative(root, dir).split(sep).filter(Boolean)) {
+        current = join(current, part); remember(current)
+      }
+    }
+    function read(file, limit) {
+      const before = remember(file)
+      if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size > BigInt(limit)) throw subsetError()
+      const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+      try {
+        if (subsetStamp(fstatSync(fd, { bigint: true })) !== subsetStamp(before)) throw subsetError()
+        const value = Buffer.alloc(Number(before.size) + 1)
+        let count = 0, size
+        while (count < value.length && (size = readSync(fd, value, count, value.length - count, null)) > 0) count += size
+        if (count !== Number(before.size) || subsetStamp(fstatSync(fd, { bigint: true })) !== subsetStamp(before)) throw subsetError()
+        if (subsetStamp(lstatSync(file, { bigint: true })) !== subsetStamp(before)) throw subsetError()
+        return value.subarray(0, count)
+      } finally { closeSync(fd) }
+    }
+    if (portable(relative(runtimeBundle, path)) !== prismaSubsetAlias) throw subsetError()
+    directory(bundle, dirname(path)); directory(bundle, target); directory(project, source)
+    const link = remember(path)
+    if (!link.isSymbolicLink()) throw subsetError()
+    const rawLink = readlinkSync(path)
+    let raw = rawLink
+    if (process.platform === 'win32' && raw.startsWith(String.fromCharCode(92, 92, 63, 92))) raw = raw.slice(4)
+    if (process.platform === 'win32') raw = raw.replaceAll('/', sep)
+    if (!raw || raw.length > 1024 || /[\x00-\x1f\x7f-\uffff]/u.test(raw)) throw subsetError()
+    // All components in the one observed hop must be real directories. Reject a
+    // second symlink, even when native realpath would eventually reach the same target.
+    let current = dirname(path), parts = raw.split(sep)
+    if (isAbsolute(raw)) {
+      const rel = relative(bundle, raw)
+      if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)
+        || parts.some(part => part === '.' || part === '..')) throw subsetError()
+      current = bundle; parts = rel.split(sep)
+    }
+    if (parts.length > 64) throw subsetError()
+    for (const part of parts) {
+      if (!part || part === '.') continue
+      current = part === '..' ? dirname(current) : join(current, part)
+      directory(bundle, current)
+    }
+    if (!samePath(current, target) || !samePath(realpathSync(path), target)) throw subsetError()
+    const lockBytes = read(join(project, 'package-lock.json'), 4 * 1024 * 1024)
+    const lock = JSON.parse(lockBytes.toString('utf8'))
+    const sourcePackage = read(join(source, 'package.json'), 65536)
+    const targetPackage = read(join(target, 'package.json'), 65536)
+    const matches = value => value?.name === '@prisma/client' && value?.version === '7.8.0'
+    if (lock.packages?.['node_modules/@prisma/client']?.version !== '7.8.0'
+      || !matches(JSON.parse(sourcePackage.toString('utf8')))
+      || !matches(JSON.parse(targetPackage.toString('utf8'))) || !sourcePackage.equals(targetPackage)) throw subsetError()
+    let entries = 0, total = 0
+    function walk(dir, depth) {
+      if (depth > 24) throw subsetError()
+      directory(target, dir)
+      const relDir = portable(relative(target, dir))
+      directories.push(relDir)
+      directory(source, resolve(source, relDir))
+      const handle = opendirSync(dir)
+      try {
+        let entry
+        while ((entry = handle.readSync()) !== null) {
+          if (++entries > 8192 || entry.name.startsWith('.') || forbiddenEntry(entry.name)
+            || !/^[A-Za-z0-9_@.+-]{1,160}$/u.test(entry.name)
+            || /(?:secret|credential|password|private|token|id_rsa|id_ed25519|\.pem$|\.key$|\.pfx$|\.p12$)/iu.test(entry.name)) throw subsetError()
+          const file = join(dir, entry.name), info = remember(file)
+          if (info.isSymbolicLink()) throw subsetError()
+          if (info.isDirectory()) walk(file, depth + 1)
+          else {
+            if (!info.isFile() || info.nlink !== 1n || files.size >= 4096) throw subsetError()
+            const rel = portable(relative(target, file)), original = resolve(source, rel)
+            directory(source, dirname(original))
+            const bytes = read(file, Math.min(16 * 1024 * 1024, 128 * 1024 * 1024 - total))
+            const sourceBytes = read(original, bytes.length)
+            if (!bytes.equals(sourceBytes)) throw subsetError()
+            total += bytes.length; files.set(rel, bytes)
+          }
+        }
+      } finally { handle.closeSync() }
+    }
+    walk(target, 0)
+    // These entries were recovered from the observed 3-file aggregate digest. A
+    // smaller target would drop an observed entrypoint/runtime module, not preserve it.
+    for (const required of ['package.json', 'default.js', 'runtime/client.js']) if (!files.has(required)) throw subsetError()
+    const resolution = []
+    for (const [entry, dependency] of [['default.js', '.prisma/client/default'], ['runtime/client.js', '@prisma/client-runtime-utils']]) {
+      const before = createRequire(join(target, entry)).resolve(dependency)
+      const after = createRequire(join(path, entry)).resolve(dependency)
+      if (!samePath(before, after)) throw subsetError()
+      directory(bundle, dirname(before)); regularSource(before); remember(before)
+      resolution.push({ entry, dependency, file: before })
+    }
+    // Close the preflight read window: no changed inode, byte metadata, link or parent.
+    for (const [file, stamp] of stamps) if (subsetStamp(lstatSync(file, { bigint: true })) !== stamp) throw subsetError()
+    if (readlinkSync(path) !== rawLink || !samePath(realpathSync(path), target)) throw subsetError()
+    return { path, target, source, rawLink, stamps, files, directories: directories.sort(), resolution }
+  } catch { throw subsetError() }
+}
+function recheckPrismaSubset(plan) {
+  try {
+    const current = capturePrismaSubset(plan.path)
+    if (current.rawLink !== plan.rawLink || current.stamps.size !== plan.stamps.size
+      || current.files.size !== plan.files.size || JSON.stringify(current.directories) !== JSON.stringify(plan.directories)) throw subsetError()
+    for (const [path, stamp] of plan.stamps) if (current.stamps.get(path) !== stamp) throw subsetError()
+    for (const [rel, bytes] of plan.files) if (!current.files.get(rel)?.equals(bytes)) throw subsetError()
+  } catch { throw subsetError() }
+}
+function materializePrismaSubset(plan) {
+  try {
+    // Revalidate immediately before changing the alias. Never copy from a live link.
+    recheckPrismaSubset(plan)
+    unlinkSync(plan.path) // Exact verified alias only; never remove the canonical target.
+    mkdirSync(plan.path, { mode: 0o700 }) // Exclusive directory creation, no recursive overwrite.
+    const created = new Map([[plan.path, subsetStamp(lstatSync(plan.path, { bigint: true }))]]), createdFiles = new Map()
+    function ownedDirectory(dir) {
+      checkedDirectory(bundle, dir)
+      for (const [path, stamp] of created) if (subsetStamp(lstatSync(path, { bigint: true })) !== stamp) throw subsetError()
+    }
+    for (const rel of plan.directories.filter(Boolean).sort((a, b) => a.split('/').length - b.split('/').length)) {
+      const dir = resolve(plan.path, rel)
+      ownedDirectory(dirname(dir)); mkdirSync(dir, { mode: 0o700 })
+      created.set(dir, subsetStamp(lstatSync(dir, { bigint: true })))
+    }
+    for (const [rel, bytes] of plan.files) {
+      const file = resolve(plan.path, rel)
+      ownedDirectory(dirname(file))
+      const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600)
+      try {
+        const opened = fstatSync(fd, { bigint: true })
+        if (!opened.isFile() || opened.nlink !== 1n) throw subsetError()
+        writeFileSync(fd, bytes)
+        const after = fstatSync(fd, { bigint: true }), named = lstatSync(file, { bigint: true })
+        if (after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== 1n
+          || subsetStamp(after) !== subsetStamp(named) || after.size !== BigInt(bytes.length)) throw subsetError()
+        createdFiles.set(file, subsetStamp(after))
+      } finally { closeSync(fd) }
+      ownedDirectory(dirname(file))
+    }
+    // Same rows, same bytes, regular entries only; verify the target/source stayed intact.
+    const copied = []
+    function verify(dir) {
+      ownedDirectory(dir)
+      const handle = opendirSync(dir)
+      try {
+        let entry
+        while ((entry = handle.readSync()) !== null) {
+          const file = join(dir, entry.name), rel = portable(relative(plan.path, file))
+          if (entry.isSymbolicLink()) throw subsetError()
+          if (entry.isDirectory()) {
+            if (!plan.directories.includes(rel)) throw subsetError()
+            verify(file)
+          } else {
+            const expected = plan.files.get(rel)
+            if (!expected || copied.length >= plan.files.size) throw subsetError()
+            const before = lstatSync(file, { bigint: true })
+            if (!before.isFile() || before.nlink !== 1n || createdFiles.get(file) !== subsetStamp(before)) throw subsetError()
+            const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+            try {
+              if (subsetStamp(fstatSync(fd, { bigint: true })) !== subsetStamp(before)) throw subsetError()
+              const bytes = Buffer.alloc(expected.length + 1)
+              let count = 0, size
+              while (count < bytes.length && (size = readSync(fd, bytes, count, bytes.length - count, null)) > 0) count += size
+              if (count !== expected.length || !bytes.subarray(0, count).equals(expected)
+                || subsetStamp(fstatSync(fd, { bigint: true })) !== subsetStamp(before)
+                || subsetStamp(lstatSync(file, { bigint: true })) !== subsetStamp(before)) throw subsetError()
+            } finally { closeSync(fd) }
+            copied.push(rel)
+          }
+        }
+      } finally { handle.closeSync() }
+    }
+    verify(plan.path)
+    if (copied.length !== plan.files.size) throw subsetError()
+    for (const [file, stamp] of plan.stamps) {
+      if (file !== plan.path && subsetStamp(lstatSync(file, { bigint: true })) !== stamp) throw subsetError()
+    }
+    // Detect inserted/removed canonical-target entries during copy, not just changes
+    // to files that were present when the plan was captured. Never clean up on failure.
+    let targetFiles = 0, targetDirectories = 0
+    function checkTarget(dir) {
+      checkedDirectory(bundle, dir); targetDirectories++
+      const handle = opendirSync(dir)
+      try {
+        let entry
+        while ((entry = handle.readSync()) !== null) {
+          const file = join(dir, entry.name), rel = portable(relative(plan.target, file))
+          if (entry.isSymbolicLink()) throw subsetError()
+          if (entry.isDirectory()) {
+            if (!plan.directories.includes(rel)) throw subsetError()
+            checkTarget(file)
+          } else {
+            if (!plan.files.has(rel) || subsetStamp(lstatSync(file, { bigint: true })) !== plan.stamps.get(file)) throw subsetError()
+            targetFiles++
+          }
+        }
+      } finally { handle.closeSync() }
+    }
+    checkTarget(plan.target)
+    if (targetFiles !== plan.files.size || targetDirectories !== plan.directories.length) throw subsetError()
+    for (const { entry, dependency, file } of plan.resolution) {
+      if (!samePath(createRequire(join(plan.path, entry)).resolve(dependency), file)) throw subsetError()
+    }
+  } catch { throw subsetError() }
+}
+
+const prune = [], materialize = [], subsets = []
+function releaseInventory(directory, preflight) {
+  checkedDirectory(bundle, directory)
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    const rel = portable(relative(runtimeBundle, path))
+    // Next on Windows may emit this specific Prisma package junction. Materialize
+    // only a verified checkout package, retaining byte integrity and portability.
+    if (entry.isSymbolicLink()) {
+      // Preserve the existing nested-output codec junction handling below.
+      if (preflight && runtimeBundle !== bundle && rel === 'node_modules'
+        && samePath(inventoryRealpath(path), resolve(project, 'node_modules'))) continue
+      if (preflight && rel === prismaSubsetAlias
+        && samePath(inventoryRealpath(path), resolve(runtimeBundle, 'node_modules/@prisma/client'))) {
+        try { subsets.push(capturePrismaSubset(path)) } catch { throw inventoryLinkError(path) }
+        continue
+      }
+      const source = resolve(project, 'node_modules', '@prisma', 'client')
+      if (!preflight || !/^\.next\/node_modules\/@prisma\/client-[a-f0-9]{16}$/u.test(rel)
+        || !samePath(inventoryRealpath(path), source)) throw inventoryLinkError(path)
+      checkedDirectory(project, source)
+      const manifest = JSON.parse(sourceBytes(join(source, 'package.json')).toString('utf8'))
+      const lock = JSON.parse(sourceBytes(join(project, 'package-lock.json')).toString('utf8'))
+      if (manifest.name !== '@prisma/client' || !manifest.version
+        || manifest.version !== lock.packages?.['node_modules/@prisma/client']?.version)
+        throw new Error('CMS_RELEASE_DEPENDENCY_IDENTITY_INVALID')
+      regularTree(source)
+      materialize.push({ path, source })
+      continue
+    }
+    if (entry.isDirectory()) {
+      const structural = path === runtimeBundle || runtimeBundle.startsWith(path + sep)
+      const allowed = structural || ['.next', 'node_modules', 'src', 'src/features', 'src/features/cms', 'public'].includes(rel)
+        || nextDirectory(rel) || rel.startsWith('node_modules/') || rel.startsWith('public/')
+        || (preflight && ['docs', 'docs/cms', 'docs/cms/operations'].includes(rel))
+      if (!allowed || (forbiddenEntry(rel) && !(preflight && rel === 'docs/cms/operations')))
+        throw new Error('CMS_RELEASE_INVENTORY_FORBIDDEN')
+      releaseInventory(path, preflight)
+      continue
+    }
+    regularSource(path)
+    if (preflight && operationArtifacts.includes(rel)) {
+      const source = resolve(project, rel)
+      checkedDirectory(project, dirname(source))
+      if (!sourceBytes(path).equals(sourceBytes(source))) throw new Error('CMS_RELEASE_PRUNE_IDENTITY_MISMATCH')
+      prune.push(path)
+      continue
+    }
+    const allowed = ['server.js', 'package.json'].includes(rel) || runtimeSources.has(rel)
+      || nextDirectory(rel) || (rel.startsWith('.next/') && nextFiles.has(rel.slice(6)))
+      || rel.startsWith('node_modules/') || rel.startsWith('public/')
+    if (!allowed || forbiddenEntry(rel)) throw new Error('CMS_RELEASE_INVENTORY_FORBIDDEN')
+    // Public assets must be exact source assets, never an accidental source copy.
+    if (rel.startsWith('public/')) {
+      const source = resolve(project, rel)
+      checkedDirectory(project, dirname(source))
+      if (!sourceBytes(path).equals(sourceBytes(source))) throw new Error('CMS_RELEASE_PUBLIC_IDENTITY_MISMATCH')
+    }
+  }
+}
+// Complete inventory preflight before changing any release inventory.
+releaseInventory(bundle, true)
+for (const plan of subsets) recheckPrismaSubset(plan)
+for (const path of prune) {
+  checkedDirectory(bundle, dirname(path)); regularSource(path); unlinkSync(path)
+}
+for (const rel of ['docs/cms/operations', 'docs/cms', 'docs']) {
+  const path = resolve(runtimeBundle, rel)
+  if (existsSync(path)) {
+    checkedDirectory(runtimeBundle, path)
+    if (readdirSync(path).length !== 0) throw new Error('CMS_RELEASE_INVENTORY_FORBIDDEN')
+    rmdirSync(path) // Empty directories only; never recursive pruning.
+  }
+}
+for (const { path, source } of materialize) {
+  checkedDirectory(bundle, dirname(path))
+  if (!lstatSync(path).isSymbolicLink() || !samePath(inventoryRealpath(path), source)) throw inventoryLinkError(path)
+  unlinkSync(path) // Unlink the verified junction, never its target.
+  cpSync(source, path, { recursive: true, force: false, errorOnExist: true })
+  regularTree(path)
+  if (!sameTree(source, path)) throw new Error('CMS_RELEASE_DEPENDENCY_COPY_MISMATCH')
+}
+
+for (const plan of subsets) materializePrismaSubset(plan)
+
+// Offline standalone smoke consumes these exact raw modules. They used to arrive
+// accidentally through whole-project tracing; never restore that broad dependency.
+// Read both checked sources before copying anything. No env/private-media glob.
+const rawNames = ['media-storage.ts', 'media-contract.ts']
+const sourceDirectory = resolve(project, 'src', 'features', 'cms')
+checkedDirectory(project, sourceDirectory)
+const rawSources = rawNames.map(name => ({ name, bytes: sourceBytes(join(sourceDirectory, name)) }))
+const rawDestination = resolve(runtimeBundle, 'src', 'features', 'cms')
+checkedDirectory(runtimeBundle, rawDestination, true)
+for (const { name } of rawSources) {
+  const destination = join(rawDestination, name)
+  try { regularSource(destination) } catch (error) { if (error.code !== 'ENOENT') throw error }
+}
+for (const { name, bytes } of rawSources) {
+  const destination = join(rawDestination, name)
+  // Unlink only the checked exact regular entry; exclusive creation never follows
+  // a newly inserted symlink or overwrites another inode/hardlink target.
+  try { unlinkSync(destination) } catch (error) { if (error.code !== 'ENOENT') throw error }
+  writeFileSync(destination, bytes, { flag: 'wx', mode: 0o600 })
+  if (!sourceBytes(destination).equals(bytes)) throw new Error('CMS_MEDIA_RAW_SOURCE_COPY_MISMATCH')
+}
 
 function sameTree(source, destination) {
   const sourceFiles = readdirSync(source, { withFileTypes: true })
@@ -71,4 +684,5 @@ for (const [name, version] of [['pngjs', '7.0.0'], ['jpeg-js', '0.4.4']]) {
   const copied = JSON.parse(readFileSync(join(destination, 'package.json'), 'utf8'))
   if (copied.name !== name || copied.version !== version || !sameTree(source, destination)) throw new Error('CMS_MEDIA_CODEC_COPY_MISMATCH')
 }
+releaseInventory(bundle, false)
 console.log('CMS_MEDIA_STANDALONE_READY worker=1 codecs=2')
