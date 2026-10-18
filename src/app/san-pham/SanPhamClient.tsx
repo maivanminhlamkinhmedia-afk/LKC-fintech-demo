@@ -1,9 +1,11 @@
 'use client'
 
 import { ArrowRight } from 'lucide-react'
+import Link from 'next/link'
 import { Navbar } from '@/features/landing/components/Navbar'
 import { Footer } from '@/features/landing/components/Footer'
 import { SectionLabel } from '@/features/landing/components/SectionLabel'
+import { PaidResearchCatalogSection } from '@/features/landing/components/PaidResearchCatalogSection'
 import { PRODUCTS } from '@/features/landing/data'
 import { useInView } from '@/features/landing/hooks/useInView'
 
@@ -38,7 +40,7 @@ export default function SanPhamPage() {
             {PRODUCTS.map((p, i) => (
               <div key={p.title}
                 style={{ transitionDelay: productsIn ? `${i * 120}ms` : '0ms' }}
-                className={`p-6 rounded-2xl bg-white border border-slate-200 hover:border-[#0AACB5]/40 hover:shadow-lg transition-all group cursor-pointer ${productsIn ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-6 scale-95'}`}>
+                className={`p-6 rounded-2xl bg-white border border-slate-200 hover:border-[#0AACB5]/40 hover:shadow-lg transition-all group ${productsIn ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-6 scale-95'}`}>
                 <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-4" style={{ background: `${p.color}18` }}>
                   <p.icon size={24} style={{ color: p.color }} />
                 </div>
@@ -76,7 +78,7 @@ export default function SanPhamPage() {
           </div>
           <div className="grid md:grid-cols-2 gap-6">
             <div
-              className={`relative overflow-hidden rounded-2xl p-8 text-white cursor-pointer transition-all duration-700 ease-out ${flagshipIn ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-8'}`}
+              className={`relative overflow-hidden rounded-2xl p-8 text-white transition-all duration-700 ease-out motion-reduce:transition-none motion-reduce:transform-none motion-reduce:opacity-100 ${flagshipIn ? 'opacity-100 translate-x-0 translate-y-0' : 'opacity-0 translate-y-6 md:translate-y-0 md:-translate-x-8'}`}
               style={{ background: 'linear-gradient(135deg, #0891B2 0%, #0AACB5 60%, #0B9FA7 100%)' }}>
               <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full blur-3xl opacity-20 bg-white" />
               <span className="inline-block px-3 py-1 rounded-full bg-white/20 text-xs font-semibold mb-4">Sản phẩm nổi bật</span>
@@ -93,13 +95,13 @@ export default function SanPhamPage() {
                   </li>
                 ))}
               </ul>
-              <button className="h-10 px-6 rounded-full bg-white text-[#0891B2] font-semibold text-sm hover:bg-white/90 transition flex items-center gap-2 cursor-pointer">
-                Tham gia LKC Stock <ArrowRight size={14} />
-              </button>
+              <Link href="/nha-dau-tu" className="min-h-12 px-6 py-3 rounded-full bg-white text-[#0E7490] font-semibold text-sm hover:bg-white/90 transition inline-flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#0F172A]">
+                Tư vấn LKC Stock <ArrowRight size={14} aria-hidden="true" />
+              </Link>
             </div>
 
             <div
-              className={`relative overflow-hidden rounded-2xl p-8 text-white cursor-pointer transition-all duration-700 ease-out delay-150 ${flagshipIn ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-8'}`}
+              className={`relative overflow-hidden rounded-2xl p-8 text-white transition-all duration-700 ease-out delay-150 motion-reduce:transition-none motion-reduce:transform-none motion-reduce:opacity-100 ${flagshipIn ? 'opacity-100 translate-x-0 translate-y-0' : 'opacity-0 translate-y-6 md:translate-y-0 md:translate-x-8'}`}
               style={{ background: 'linear-gradient(135deg, #059669 0%, #10B981 60%, #0FCA9A 100%)' }}>
               <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full blur-3xl opacity-20 bg-white" />
               <span className="inline-block px-3 py-1 rounded-full bg-white/20 text-xs font-semibold mb-4">Sản phẩm mới</span>
@@ -116,13 +118,16 @@ export default function SanPhamPage() {
                   </li>
                 ))}
               </ul>
-              <button className="h-10 px-6 rounded-full bg-white text-[#059669] font-semibold text-sm hover:bg-white/90 transition flex items-center gap-2 cursor-pointer">
-                Tham gia LKC Crypto <ArrowRight size={14} />
-              </button>
+              <Link href="/nha-dau-tu" className="min-h-12 px-6 py-3 rounded-full bg-white text-[#047857] font-semibold text-sm hover:bg-white/90 transition inline-flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#0F172A]">
+                Tư vấn LKC Crypto <ArrowRight size={14} aria-hidden="true" />
+              </Link>
             </div>
           </div>
         </div>
       </section>
+
+      {/* No approved public catalogue source is connected yet. */}
+      <PaidResearchCatalogSection state={{ status: 'ready', products: [] }} />
 
       {/* CTA */}
       <section className="py-20 px-6">
@@ -132,11 +137,11 @@ export default function SanPhamPage() {
           <p className="text-[#475569] mb-8">Đội ngũ tư vấn LKC Fintech sẵn sàng hỗ trợ bạn chọn sản phẩm phù hợp</p>
           <div className="flex flex-wrap gap-4 justify-center">
             <a href="/nha-dau-tu"
-              className="h-12 px-8 rounded-full bg-gradient-to-r from-[#0891B2] to-[#10B981] text-white font-semibold hover:opacity-90 transition flex items-center gap-2 cursor-pointer">
+              className="h-12 px-8 rounded-full bg-gradient-to-r from-[#0891B2] to-[#10B981] text-white font-semibold hover:opacity-90 transition flex items-center gap-2 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#1B4FA0]">
               Liên hệ tư vấn <ArrowRight size={16} />
             </a>
             <a href="/goc-nhin"
-              className="h-12 px-8 rounded-full border border-[#0AACB5] text-[#0891B2] font-medium hover:bg-[#0AACB5]/10 transition flex items-center cursor-pointer">
+              className="h-12 px-8 rounded-full border border-[#0AACB5] text-[#0891B2] font-medium hover:bg-[#0AACB5]/10 transition flex items-center cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#1B4FA0]">
               Xem góc nhìn thị trường
             </a>
           </div>
