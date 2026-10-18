@@ -1,4 +1,5 @@
-import { closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, readlinkSync, readSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const project = process.cwd()
@@ -99,6 +100,158 @@ function diagnosticDependency(target) {
   }
   return false
 }
+// BEGIN Prisma identity diagnostic. Evidence only: no return value grants acceptance.
+function prismaIdentityDiagnostic(path) {
+  const record = {
+    bundlePath: diagnosticBundlePath(path), chainComplete: false, hops: [], canonicalTargetPath: null,
+    targetIsDirectory: false, lockVersionMatches: false, sourceMetadataMatches: false,
+    targetMetadataMatches: false, safeInventory: false, targetFilesMatchSource: false,
+    exactInventoryMatch: false, sourceFileCount: null, targetFileCount: null,
+    sourceInventorySha256: null, targetInventorySha256: null, status: 'UNVERIFIED',
+  }
+  const fail = code => { throw new Error(code) }
+  const inside = (root, value) => {
+    const rel = relative(root, value)
+    return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)
+  }
+  const structural = value => {
+    if (!inside(bundle, value)) fail('PATH_UNSAFE')
+    const safe = diagnosticBundlePath(value)
+    if (safe.includes('[REDACTED]')) fail('PATH_UNSAFE')
+    return safe
+  }
+  // Resolve each component, including symlinks before '..'; never read outside bundle.
+  // Native realpath is a final cross-check, not a substitute for this bounded walk.
+  function chain(start, hops) {
+    checkedDirectory(bundle, bundle)
+    let pending = relative(bundle, start).split(sep), current = bundle, operations = 0
+    const seen = new Set()
+    while (pending.length) {
+      if (++operations > 256) fail('CHAIN_LIMIT')
+      const part = pending.shift()
+      if (!part || part === '.') continue
+      if (part === '..') {
+        current = dirname(current)
+        if (!inside(bundle, current)) fail('PATH_UNSAFE')
+        continue
+      }
+      const next = join(current, part)
+      structural(next)
+      const info = lstatSync(next)
+      if (info.isSymbolicLink()) {
+        if (seen.has(next) || hops.length >= 16) fail('CHAIN_LIMIT')
+        seen.add(next)
+        let raw = readlinkSync(next)
+        if (process.platform === 'win32' && raw.startsWith(String.fromCharCode(92, 92, 63, 92))) raw = raw.slice(4)
+        if (process.platform === 'win32') raw = raw.replaceAll('/', sep)
+        if (!raw || raw.length > 1024 || /[\x00-\x1f\x7f-\uffff]/u.test(raw)) fail('PATH_UNSAFE')
+        // Only structural paths are reportable. This lexical path is NOT the final canonical target.
+        const lexicalTargetPath = structural(resolve(current, raw))
+        hops.push({ linkPath: structural(next), lexicalTargetPath })
+        if (isAbsolute(raw)) {
+          if (raw.split(sep).some(p => p === '.' || p === '..')) fail('PATH_UNSAFE')
+          if (!inside(bundle, raw)) fail('PATH_UNSAFE')
+          pending = relative(bundle, raw).split(sep).concat(pending); current = bundle
+        } else pending = raw.split(sep).concat(pending)
+      } else {
+        if (!info.isDirectory()) fail('TARGET_NOT_DIRECTORY')
+        current = next
+      }
+    }
+    checkedDirectory(bundle, current)
+    if (!samePath(realpathSync(start), current)) fail('CHAIN_CHANGED')
+    return current
+  }
+  function bytes(file, limit) {
+    const before = regularSource(file)
+    if (before.size > limit) fail('BYTE_LIMIT')
+    const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    try {
+      const opened = fstatSync(fd)
+      if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev || opened.ino !== before.ino
+        || opened.size !== before.size) fail('FILE_CHANGED')
+      // Bounded reads even if a concurrent writer grows the file after lstat.
+      const value = Buffer.alloc(before.size + 1)
+      let count = 0, size
+      while (count < value.length && (size = readSync(fd, value, count, value.length - count, null)) > 0) count += size
+      const after = fstatSync(fd)
+      if (count !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs
+        || after.ctimeMs !== before.ctimeMs || after.nlink !== 1) fail('FILE_CHANGED')
+      return value.subarray(0, count)
+    } finally { closeSync(fd) }
+  }
+  const unsafeName = name => name.startsWith('.') || forbiddenEntry(name) || !/^[A-Za-z0-9_@.+-]{1,160}$/u.test(name)
+    || /(?:secret|credential|password|private|token|id_rsa|id_ed25519|\.pem$|\.key$|\.pfx$|\.p12$)/iu.test(name)
+  function inventory(root) {
+    const rows = []; let entries = 0, total = 0
+    function walk(dir, depth) {
+      if (depth > 24) fail('TREE_LIMIT')
+      checkedDirectory(root, dir)
+      // opendir bounds enumeration; no unbounded readdir allocation on an untrusted tree.
+      const handle = opendirSync(dir)
+      try {
+        let entry
+        while ((entry = handle.readSync()) !== null) {
+          if (++entries > 8192) fail('TREE_LIMIT')
+          if (unsafeName(entry.name)) fail('UNSAFE_ENTRY')
+          const file = join(dir, entry.name), info = lstatSync(file)
+          if (info.isSymbolicLink()) fail('NESTED_LINK')
+          if (info.isDirectory()) walk(file, depth + 1)
+          else {
+            if (!info.isFile() || info.nlink !== 1) fail('UNSAFE_ENTRY')
+            if (rows.length >= 4096) fail('TREE_LIMIT')
+            const value = bytes(file, Math.min(16 * 1024 * 1024, 128 * 1024 * 1024 - total))
+            total += value.length
+            rows.push([portable(relative(root, file)), value.length, createHash('sha256').update(value).digest('hex')])
+          }
+        }
+      } finally { handle.closeSync() }
+    }
+    walk(root, 0)
+    rows.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+    return rows
+  }
+  try {
+    if (!lstatSync(path).isSymbolicLink()) fail('CHAIN_CHANGED')
+    const target = chain(path, record.hops)
+    if (record.hops.length === 0) fail('CHAIN_CHANGED')
+    record.chainComplete = true; record.canonicalTargetPath = structural(target); record.targetIsDirectory = true
+    const source = resolve(project, 'node_modules', '@prisma', 'client')
+    checkedDirectory(project, source)
+    const lock = JSON.parse(bytes(join(project, 'package-lock.json'), 4 * 1024 * 1024).toString('utf8'))
+    const sourceMetadata = JSON.parse(bytes(join(source, 'package.json'), 65536).toString('utf8'))
+    const targetMetadata = JSON.parse(bytes(join(target, 'package.json'), 65536).toString('utf8'))
+    record.lockVersionMatches = lock.packages?.['node_modules/@prisma/client']?.version === '7.8.0'
+    const matches = value => value?.name === '@prisma/client' && value?.version === '7.8.0'
+    record.sourceMetadataMatches = matches(sourceMetadata); record.targetMetadataMatches = matches(targetMetadata)
+    if (!record.lockVersionMatches || !record.sourceMetadataMatches || !record.targetMetadataMatches) fail('METADATA_MISMATCH')
+    const sourceRows = inventory(source), targetRows = inventory(target)
+    const again = []
+    if (!samePath(chain(path, again), target) || JSON.stringify(again) !== JSON.stringify(record.hops)) fail('CHAIN_CHANGED')
+    const sourceMap = new Map(sourceRows.map(row => [row[0], JSON.stringify(row)]))
+    record.safeInventory = true
+    record.sourceFileCount = sourceRows.length; record.targetFileCount = targetRows.length
+    record.targetFilesMatchSource = targetRows.length > 0 && targetRows.every(row => sourceMap.get(row[0]) === JSON.stringify(row))
+    record.exactInventoryMatch = record.targetFilesMatchSource && sourceRows.length === targetRows.length
+    // Never publish a digest of unverified target bytes or per-file names/hashes.
+    if (!record.targetFilesMatchSource) fail('CONTENT_MISMATCH')
+    record.sourceInventorySha256 = createHash('sha256').update(JSON.stringify(sourceRows)).digest('hex')
+    record.targetInventorySha256 = createHash('sha256').update(JSON.stringify(targetRows)).digest('hex')
+    record.status = 'OBSERVED_MATCH_NOT_AUTHORIZATION'
+  } catch (error) {
+    const safeCodes = new Set(['PATH_UNSAFE', 'CHAIN_LIMIT', 'TARGET_NOT_DIRECTORY', 'CHAIN_CHANGED',
+      'BYTE_LIMIT', 'FILE_CHANGED', 'TREE_LIMIT', 'UNSAFE_ENTRY', 'NESTED_LINK', 'METADATA_MISMATCH', 'CONTENT_MISMATCH'])
+    record.status = safeCodes.has(error?.message) ? error.message : error?.code === 'ENOENT' ? 'MISSING_ENTRY' : 'UNVERIFIED'
+  }
+  return record
+}
+function emitPrismaIdentityDiagnostic(path) {
+  if (portable(relative(runtimeBundle, path)) !== '.next/node_modules/@prisma/client-2c3a283f134fdcb6') return
+  // Called only on an existing rejection path. Never pass this result to inventory acceptance.
+  console.error(`CMS_PRISMA_IDENTITY_DIAGNOSTIC ${JSON.stringify(prismaIdentityDiagnostic(path))}`)
+}
+// END Prisma identity diagnostic.
+
 function inventoryLinkError(path) {
   let linkType = 'unresolvable', targetClass = 'UNRESOLVED'
   try {
@@ -114,6 +267,7 @@ function inventoryLinkError(path) {
   let bundlePath = '[REDACTED]'
   try { bundlePath = diagnosticBundlePath(path) } catch { /* Diagnostics stay fail-closed. */ }
   console.error(`CMS_RELEASE_LINK_DIAGNOSTIC ${JSON.stringify({ bundlePath, linkType, targetClass })}`)
+  emitPrismaIdentityDiagnostic(path)
   const error = new Error('CMS_RELEASE_INVENTORY_LINK')
   // The ordinary Node stack would expose the checkout's absolute host path.
   error.stack = 'Error: CMS_RELEASE_INVENTORY_LINK'

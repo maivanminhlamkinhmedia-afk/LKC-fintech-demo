@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import * as nativeFs from 'node:fs'
+import * as nativePath from 'node:path'
+import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { link, lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, link, lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, posix } from 'node:path'
 import { runInNewContext } from 'node:vm'
@@ -8,7 +11,7 @@ import { test } from 'node:test'
 
 const script = resolve('scripts/cms-media/assemble-standalone.mjs')
 const rawNames = ['media-storage.ts', 'media-contract.ts']
-const rawBytes = name => Buffer.from(`// synthetic ${name}\r\nexport const value = "Tiếng Việt";\r\n`, 'utf8')
+const rawBytes = name => Buffer.from(`// synthetic ${name}\r\nexport const value = "TiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¿ng ViÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡t";\r\n`, 'utf8')
 async function seedRaw(scratch) {
   for (const name of rawNames) await writeFile(join(scratch, 'src', 'features', 'cms', name), rawBytes(name))
 }
@@ -414,7 +417,7 @@ async function diagnosticModel({ path, target = '/checkout/.next/standalone/node
   assert.ok(helper.includes('function inventoryLinkError('))
   const output = [], metadataReads = []
   const context = {
-    project: '/checkout', bundle: '/checkout/.next/standalone', sep: '/',
+    project: '/checkout', bundle: '/checkout/.next/standalone', runtimeBundle: '/checkout/.next/standalone', sep: '/',
     relative: posix.relative, resolve: posix.resolve, join: posix.join, isAbsolute: posix.isAbsolute,
     portable: value => value, console: { error: value => output.push(value) },
     realpathSync: () => {
@@ -454,7 +457,7 @@ for (const [name, target, kind, errorCode, expected] of [
     assert.deepEqual(metadataReads, []) // Never read target contents or arbitrary package metadata.
   })
 }
-for (const [caseIndex, name] of ['secret-token-abc', '.env.production', 'customer@example.com', 'secret\nforged-log', 'secret\u001b[31m', 'secret\u202etxt', 'x'.repeat(300), '../outside'].entries()) {
+for (const [caseIndex, name] of ['secret-token-abc', '.env.production', '.npmrc', 'customer@example.com', 'secret\nforged-log', 'secret\u001b[31m', 'secret\u202etxt', 'x'.repeat(300), '../outside'].entries()) {
   test(`diagnostic path privacy model case ${caseIndex + 1}`, async () => {
     const { value } = await diagnosticModel({ path: `/checkout/.next/standalone/node_modules/${name}` })
     assert.ok(value.bundlePath.includes('[REDACTED]'))
@@ -462,3 +465,212 @@ for (const [caseIndex, name] of ['secret-token-abc', '.env.production', 'custome
     assert.doesNotMatch(value.bundlePath, /[\x00-\x20\x7f-\uffff]/u)
   })
 }
+
+
+async function identityFixture(t, nested = false) {
+  const f = await fixture(t)
+  if (nested) {
+    const runtime = join(f.runtime, '.next/isolated-build')
+    await mkdir(runtime, { recursive: true })
+    await rename(join(f.runtime, 'server.js'), join(runtime, 'server.js'))
+    f.runtime = runtime
+  }
+  const source = join(f.scratch, 'node_modules/@prisma/client')
+  await put(source, 'package.json', JSON.stringify({ name: '@prisma/client', version: '7.8.0' }))
+  await put(source, 'runtime/client.js', 'synthetic-prisma-runtime')
+  await put(f.scratch, 'package-lock.json', JSON.stringify({ packages: { 'node_modules/@prisma/client': { version: '7.8.0' } } }))
+  const target = join(f.runtime, 'node_modules/@prisma/client')
+  await cp(source, target, { recursive: true })
+  const path = join(f.runtime, '.next/node_modules/@prisma/client-2c3a283f134fdcb6')
+  await mkdir(dirname(path), { recursive: true })
+  // Actual relative Linux link; Windows uses an actual junction without needing ACL changes.
+  await symlink(process.platform === 'win32' ? target : '../../../node_modules/@prisma/client', path,
+    process.platform === 'win32' ? 'junction' : 'dir')
+  return { ...f, source, target, path }
+}
+function identityRecord(result, f) {
+  diagnostic(result, f.scratch) // Rejection and redaction are mandatory even on identity match.
+  const lines = result.stderr.split(/\r?\n/u).filter(line => line.startsWith('CMS_PRISMA_IDENTITY_DIAGNOSTIC '))
+  assert.equal(lines.length, 1)
+  assert.ok(lines[0].length < 12000)
+  const value = JSON.parse(lines[0].slice('CMS_PRISMA_IDENTITY_DIAGNOSTIC '.length))
+  assert.deepEqual(Object.keys(value).sort(), ['bundlePath', 'chainComplete', 'hops', 'canonicalTargetPath',
+    'targetIsDirectory', 'lockVersionMatches', 'sourceMetadataMatches', 'targetMetadataMatches', 'safeInventory',
+    'targetFilesMatchSource', 'exactInventoryMatch', 'sourceFileCount', 'targetFileCount',
+    'sourceInventorySha256', 'targetInventorySha256', 'status'].sort())
+  for (const hop of value.hops) assert.deepEqual(Object.keys(hop).sort(), ['lexicalTargetPath', 'linkPath'])
+  return value
+}
+for (const nested of [false, true]) {
+  test(`Prisma identity: matching in-bundle dependency (${nested ? 'nested' : 'root'}) remains rejected`, async t => {
+    const f = await identityFixture(t, nested), first = identityRecord(f.run(), f)
+    assert.equal(first.status, 'OBSERVED_MATCH_NOT_AUTHORIZATION')
+    assert.equal(first.canonicalTargetPath, `${nested ? '.next/isolated-build/' : ''}node_modules/@prisma/client`)
+    for (const field of ['chainComplete', 'targetIsDirectory', 'lockVersionMatches', 'sourceMetadataMatches',
+      'targetMetadataMatches', 'safeInventory', 'targetFilesMatchSource', 'exactInventoryMatch']) assert.equal(first[field], true, field)
+    assert.equal(first.hops.length, 1)
+    assert.equal(first.sourceFileCount, 2); assert.equal(first.targetFileCount, 2)
+    assert.match(first.targetInventorySha256, /^[a-f0-9]{64}$/u)
+    assert.equal(first.targetInventorySha256, first.sourceInventorySha256)
+    assert.deepEqual(identityRecord(f.run(), f), first) // Deterministic evidence, not mutation/replay.
+    assert.equal((await lstat(f.path)).isSymbolicLink(), true)
+    assert.deepEqual(await readFile(join(f.source, 'runtime/client.js')), await readFile(join(f.target, 'runtime/client.js')))
+  })
+}
+for (const variant of ['fake bytes', 'wrong name', 'wrong version', 'wrong lock version', 'wrong source metadata', 'missing metadata',
+  'nested link', 'hardlink', 'secret file', 'credential dotfile', 'unsafe filename', 'file byte limit', 'metadata byte limit', 'entry limit']) {
+  test(`Prisma identity: ${variant} cannot produce successful identity evidence`, async t => {
+    const f = await identityFixture(t)
+    if (variant === 'fake bytes') await put(f.target, 'runtime/client.js', 'PRIVATE-CONTENT-CANARY')
+    if (variant === 'wrong name') await put(f.target, 'package.json', JSON.stringify({ name: 'PRIVATE-PACKAGE-CANARY', version: '7.8.0' }))
+    if (variant === 'wrong version') await put(f.target, 'package.json', JSON.stringify({ name: '@prisma/client', version: '0.0.0' }))
+    if (variant === 'wrong lock version') await put(f.scratch, 'package-lock.json', JSON.stringify({ packages: { 'node_modules/@prisma/client': { version: '0.0.0' } } }))
+    if (variant === 'wrong source metadata') await put(f.source, 'package.json', JSON.stringify({ name: 'fake', version: '7.8.0' }))
+    if (variant === 'missing metadata') await rm(join(f.target, 'package.json'))
+    if (variant === 'nested link') await symlink(f.source, join(f.target, 'runtime/client'), process.platform === 'win32' ? 'junction' : 'dir')
+    if (variant === 'hardlink') await link(join(f.source, 'runtime/client.js'), join(f.target, 'runtime/extra.js'))
+    if (variant === 'secret file') await put(f.target, '.env.production', 'PRIVATE-CONTENT-CANARY')
+    if (variant === 'credential dotfile') await put(f.target, '.npmrc', 'PRIVATE-CONTENT-CANARY')
+    if (variant === 'unsafe filename') await put(f.target, 'customer@example.com', 'PRIVATE-CONTENT-CANARY')
+    if (variant === 'file byte limit') await truncate(join(f.target, 'runtime/client.js'), 16 * 1024 * 1024 + 1)
+    if (variant === 'metadata byte limit') await truncate(join(f.target, 'package.json'), 65537)
+    if (variant === 'entry limit') for (let i = 0; i < 4097; i++) await put(f.target, `runtime/file-${i}.js`, '')
+    const result = f.run(), value = identityRecord(result, f)
+    assert.notEqual(value.status, 'OBSERVED_MATCH_NOT_AUTHORIZATION')
+    assert.equal(value.targetFilesMatchSource, false)
+    assert.equal(value.targetInventorySha256, null)
+    assert.equal(value.sourceInventorySha256, null)
+    for (const secret of ['PRIVATE-CONTENT-CANARY', 'PRIVATE-PACKAGE-CANARY', '.env.production', '.npmrc', 'customer@example.com'])
+      assert.ok(!result.stderr.includes(secret))
+    assert.equal((await lstat(f.path)).isSymbolicLink(), true)
+  })
+}
+for (const variant of ['multi hop', 'existing checkout target', 'outside bundle', 'dangling', 'circular', 'unknown structural target', 'file target']) {
+  test(`Prisma identity chain: ${variant} preserves fail-closed assembly`, async t => {
+    const f = await identityFixture(t)
+    await rm(f.path)
+    let target = f.target
+    if (variant === 'multi hop') {
+      target = join(f.runtime, 'node_modules/@prisma/client-1111111111111111')
+      await symlink(f.target, target, process.platform === 'win32' ? 'junction' : 'dir')
+    }
+    if (variant === 'existing checkout target') target = f.source
+    if (variant === 'outside bundle') {
+      target = join(f.scratch, 'outside-prisma-canary'); await cp(f.source, target, { recursive: true })
+    }
+    if (variant === 'dangling') { await rename(f.target, `${f.target}-moved`) }
+    if (variant === 'circular') target = f.path
+    if (variant === 'unknown structural target') {
+      target = join(f.runtime, 'node_modules/private-secret-canary')
+      await cp(f.source, target, { recursive: true })
+    }
+    if (variant === 'file target') target = join(f.target, 'runtime/client.js')
+    // On Windows a junction to a file is unresolvable; this is still a refusal, not Linux file-link evidence.
+    await symlink(target, f.path, process.platform === 'win32' ? 'junction' : 'dir')
+    const result = f.run()
+    if (variant === 'existing checkout target') {
+      // The old, verified checkout-junction acceptance is deliberately untouched.
+      assert.equal(result.status, 0, result.stderr)
+      assert.ok(!result.stderr.includes('CMS_PRISMA_IDENTITY_DIAGNOSTIC'))
+      return
+    }
+    const value = identityRecord(result, f)
+    if (variant === 'multi hop') {
+      assert.equal(value.hops.length, 2); assert.equal(value.chainComplete, true)
+      assert.equal(value.status, 'OBSERVED_MATCH_NOT_AUTHORIZATION')
+    } else {
+      assert.notEqual(value.status, 'OBSERVED_MATCH_NOT_AUTHORIZATION')
+      assert.equal(value.targetInventorySha256, null)
+    }
+    assert.ok(!result.stderr.includes('private-secret-canary'))
+    assert.equal((await lstat(f.path)).isSymbolicLink(), true)
+  })
+}
+test('Prisma identity diagnostic is absent for other hash aliases', async t => {
+  const f = await identityFixture(t)
+  await rename(f.path, f.path.replace('2c3a283f134fdcb6', '1111111111111111'))
+  const result = f.run()
+  diagnostic(result, f.scratch)
+  assert.ok(!result.stderr.includes('CMS_PRISMA_IDENTITY_DIAGNOSTIC'))
+})
+test('Prisma identity distinguishes a safe traced subset from a complete package', async t => {
+  const f = await identityFixture(t)
+  await put(f.source, 'index.js', 'synthetic additional checkout file')
+  const value = identityRecord(f.run(), f)
+  assert.equal(value.targetFilesMatchSource, true); assert.equal(value.exactInventoryMatch, false)
+  assert.equal(value.sourceFileCount, 3); assert.equal(value.targetFileCount, 2)
+  assert.notEqual(value.targetInventorySha256, value.sourceInventorySha256)
+})
+
+// Fault-injected metadata controls use the real diagnostic functions and temporary
+// fixtures. These are deterministic unit tests, not Linux filesystem evidence.
+async function identityModel(f, overrides) {
+  const source = await readFile(script, 'utf8')
+  const helpers = source.slice(source.indexOf('const samePath'), source.indexOf('checkedDirectory(project, bundle)'))
+    + source.slice(source.indexOf('const portable'), source.indexOf('const prune ='))
+  const evaluate = runInNewContext(`${helpers}\nprismaIdentityDiagnostic`, {
+    ...nativeFs, ...nativePath, createHash, Buffer, process: { platform: process.platform },
+    project: f.scratch, bundle: f.runtime, runtimeBundle: f.runtime,
+    console: { error: () => assert.fail('Direct helper must not print') }, ...overrides,
+  })
+  return JSON.parse(JSON.stringify(evaluate(f.path)))
+}
+for (const kind of ['special file', 'hardlink metadata', 'changed open inode', 'changed file after read', 'changed chain', 'raw IO error']) {
+  test(`Prisma identity fault model: ${kind} is sanitized and cannot emit inventory digests`, async t => {
+    const f = await identityFixture(t), file = join(f.target, 'runtime/client.js')
+    const overrides = {}
+    if (kind === 'special file' || kind === 'hardlink metadata') overrides.lstatSync = path => {
+      const value = nativeFs.lstatSync(path)
+      if (path === file) {
+        if (kind === 'special file') value.isFile = () => false
+        else value.nlink = 2
+      }
+      return value
+    }
+    if (kind === 'changed open inode' || kind === 'changed file after read') {
+      let calls = 0
+      overrides.fstatSync = fd => {
+        const value = nativeFs.fstatSync(fd)
+        if (kind === 'changed open inode') value.ino = -1
+        else if (++calls % 2 === 0) value.size += 1
+        return value
+      }
+    }
+    if (kind === 'changed chain') {
+      let calls = 0
+      overrides.readlinkSync = path => ++calls === 1 ? nativeFs.readlinkSync(path) : join(f.runtime, 'node_modules/pngjs')
+    }
+    if (kind === 'raw IO error') overrides.opendirSync = () => { throw new Error('RAW-SECRET /private/host') }
+    const value = await identityModel(f, overrides)
+    assert.notEqual(value.status, 'OBSERVED_MATCH_NOT_AUTHORIZATION')
+    assert.equal(value.sourceInventorySha256, null); assert.equal(value.targetInventorySha256, null)
+    assert.ok(!JSON.stringify(value).includes('RAW-SECRET'))
+    assert.ok(!JSON.stringify(value).includes(f.scratch))
+  })
+}
+test('Prisma identity bounds tree depth without traversing a nested private link', async t => {
+  const f = await identityFixture(t)
+  await put(f.target, `${'runtime/'.repeat(25)}index.js`, 'synthetic depth control')
+  const value = identityRecord(f.run(), f)
+  assert.equal(value.status, 'TREE_LIMIT'); assert.equal(value.targetInventorySha256, null)
+})
+
+test('Prisma identity relative-link component model resolves each hop before dot-dot', async t => {
+  const f = await identityFixture(t)
+  const value = await identityModel(f, { readlinkSync: path => path === f.path
+    ? '../../../node_modules/@prisma/client'.split('/').join(nativePath.sep) : nativeFs.readlinkSync(path) })
+  assert.equal(value.chainComplete, true)
+  assert.equal(value.canonicalTargetPath, 'node_modules/@prisma/client')
+  assert.equal(value.status, 'OBSERVED_MATCH_NOT_AUTHORIZATION')
+})
+test('Prisma identity relative escape is rejected before reading outside the bundle', async t => {
+  const f = await identityFixture(t), touched = []
+  const value = await identityModel(f, {
+    readlinkSync: () => '../../../../../../outside-private-canary',
+    lstatSync: path => { touched.push(path); return nativeFs.lstatSync(path) },
+  })
+  assert.equal(value.status, 'PATH_UNSAFE')
+  assert.equal(value.targetInventorySha256, null)
+  assert.ok(!JSON.stringify(value).includes('outside-private-canary'))
+  assert.ok(touched.every(path => path === f.runtime || path.startsWith(f.runtime + nativePath.sep)))
+})
