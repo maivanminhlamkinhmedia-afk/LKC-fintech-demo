@@ -84,7 +84,50 @@ function snapshot(directory, names) {
   return result;
 }
 
-function fixture(t, { entries = bundle('new'), health = '200', fault = '', corrupt = false, baselineSrc = false, locked = false, closedStderr = false, existingRestart = false, payloadTransform = (payload) => payload } = {}) {
+// These values are synthetic offline fixtures, never production policy. The
+// production functions remain blocked until a separately approved integration
+// can supply effective account quota and operational/retention decisions.
+const fixturePolicy = {
+  capacity_policy_id: 'offline-fixture-policy',
+  reserve_bytes: 1_048_576,
+  reserve_inodes: 64,
+  scratch_bytes: 1_048_576,
+  scratch_inodes: 64,
+  retention_max_bytes: 1_000_000_000_000,
+  retention_max_inodes: 1_000_000_000,
+  retention_max_releases: 100,
+  quota_max_age_seconds: 60,
+};
+
+function shellValue(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function replaceFixtureFunction(payload, name, body) {
+  const definition = new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?^\\}`, 'gm');
+  assert.equal([...payload.matchAll(definition)].length, 1, `replace exactly one ${name} fixture provider`);
+  return payload.replace(definition, `${name}() {\n${body}\n}`);
+}
+
+let verifiedUtf8Locale;
+function utf8Locale() {
+  if (verifiedUtf8Locale) return verifiedUtf8Locale;
+  const env = { PATH: process.env.PATH ?? '', ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows' } : {}) };
+  const available = spawnSync(bash, ['-c', 'locale -a'], { env: { ...env, LC_ALL: 'C' }, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(available.error, undefined, available.error?.message);
+  assert.equal(available.status, 0, available.stderr);
+  verifiedUtf8Locale = available.stdout.split(/\r?\n/).find((name) => /^C\.utf-?8$/i.test(name))
+    ?? available.stdout.split(/\r?\n/).find((name) => /^en_US\.utf-?8$/i.test(name));
+  assert.ok(verifiedUtf8Locale, 'UTF-8 regression requires an installed C.UTF-8 or en_US.UTF-8 locale');
+  const probe = spawnSync(bash, ['-c', 'locale charmap'], { env: { ...env, LC_ALL: verifiedUtf8Locale, LANG: verifiedUtf8Locale }, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(probe.error, undefined, probe.error?.message);
+  assert.equal(probe.status, 0, probe.stderr);
+  assert.equal(probe.stderr, '', 'requested UTF-8 locale must load without a fallback warning');
+  assert.match(probe.stdout.trim(), /^UTF-8$/i);
+  return verifiedUtf8Locale;
+}
+
+function fixture(t, { entries = bundle('new'), health = '200', fault = '', corrupt = false, baselineSrc = false, locked = false, closedStderr = false, existingRestart = false, payloadTransform = (payload) => payload, capacity = {}, oldReleases = [], baselineExtraBytes = 0, locale } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'cms safe activation '));
   assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -105,13 +148,76 @@ function fixture(t, { entries = bundle('new'), health = '200', fault = '', corru
   writeFileSync(join(app, '.env'), 'DO_NOT_CHANGE_OR_LOG');
   writeFileSync(join(app, 'tmp', 'operator.txt'), 'keep operator state');
   writeFileSync(join(app, 'unrelated.txt'), 'keep unrelated file');
+  if (baselineExtraBytes) writeFileSync(join(app, 'public', 'large-existing.bin'), Buffer.alloc(baselineExtraBytes, 65));
   mkdirSync(join(directory, 'media'));
   writeFileSync(join(directory, 'media', 'upload.png'), 'keep persistent media');
   writeFileSync(archive, corrupt ? Buffer.from('not a gzip archive') : archiveBytes(entries));
   writeFileSync(eventLog, '');
+  for (const [index, status] of oldReleases.entries()) {
+    const release = join(state, `release.retained-${index}`);
+    mkdirSync(release);
+    writeFileSync(join(release, 'status'), status);
+    writeFileSync(join(release, 'backup.tar.gz'), `retained ${status} recovery archive`);
+    writeFileSync(join(release, 'backup.sha256'), `retained ${status} recovery digest`);
+    mkdirSync(join(release, 'restore'));
+    writeFileSync(join(release, 'restore', 'operator-evidence'), `retain every byte for ${status}`);
+  }
+  const retainedNames = readdirSync(state);
+  const retainedBaseline = snapshot(state, retainedNames);
   if (locked) {
     mkdirSync(join(state, 'activation.lock'));
     writeFileSync(join(state, 'activation.lock', 'owner'), 'another activation');
+  }
+
+  writeCommand(bin, 'df', `
+    stage=initial
+    for release in "$STATE_FIXTURE"/release.*; do
+      if [[ -f "$release/status" && "$(cat "$release/status")" == BACKUP_READY ]]; then stage=ready; fi
+      if [[ -f "$release/status" && "$(cat "$release/status")" == ROLLING_BACK ]]; then stage=rollback; fi
+    done
+    metric=bytes
+    [[ " $* " != *' --output=iavail '* ]] || metric=inodes
+    printf '%s:%s\\n' "$stage" "$metric" >> "$CAPACITY_PROBES"
+    if [[ "$metric" == bytes ]]; then
+      value=${shellValue(capacity.fsBytes ?? 1_000_000_000_000)}
+      [[ "$stage" != ready ]] || value=${shellValue(capacity.lateFsBytes ?? capacity.fsBytes ?? 1_000_000_000_000)}
+      [[ "$stage" != rollback ]] || value=${shellValue(capacity.rollbackFsBytes ?? capacity.fsBytes ?? 1_000_000_000_000)}
+    else
+      value=${shellValue(capacity.fsInodes ?? 1_000_000_000)}
+      [[ "$stage" != ready ]] || value=${shellValue(capacity.lateFsInodes ?? capacity.fsInodes ?? 1_000_000_000)}
+      [[ "$stage" != rollback ]] || value=${shellValue(capacity.rollbackFsInodes ?? capacity.fsInodes ?? 1_000_000_000)}
+    fi
+    [[ "$value" != unavailable ]] || exit 92
+    printf 'Available\\n%s\\n' "$value"
+  `);
+  writeCommand(bin, 'stat', `
+    if [[ " $* " == *' -f '* && " $* " == *' %S '* ]]; then
+      printf '%s\\n' ${shellValue(capacity.blockBytes ?? 4096)}
+      exit 0
+    fi
+    if [[ "${capacity.differentFilesystem ? 'yes' : 'no'}" == yes && " $* " == *' %d '* ]]; then
+      for arg in "$@"; do
+        if [[ "$arg" == "$STATE_FIXTURE" ]]; then
+          device=$(/usr/bin/stat -c %d -- "$APP_FIXTURE")
+          printf '%s\\n' "$((device + 1))"
+          exit 0
+        fi
+      done
+    fi
+    exec /usr/bin/stat "$@"
+  `);
+  // Physical allocation cannot be made portable on Windows. This one metric
+  // override models retained preallocation while all names/sizes/devices and
+  // preservation checks still operate on the real temporary fixture tree.
+  if (capacity.preallocatedRetainedBlocks !== undefined) {
+    writeCommand(bin, 'find', `
+      if [[ " $* " != *' %D %y %s %b %p'* ]]; then exec /usr/bin/find "$@"; fi
+      /usr/bin/find "$@" | while IFS= read -r -d '' record; do
+        read -r device kind size blocks path <<< "$record"
+        if [[ "$path" == "$STATE_FIXTURE/release.retained-0/backup.tar.gz" ]]; then blocks=${shellValue(capacity.preallocatedRetainedBlocks)}; fi
+        printf '%s %s %s %s %s\\0' "$device" "$kind" "$size" "$blocks" "$path"
+      done
+    `);
   }
 
   writeCommand(bin, 'curl', `
@@ -231,6 +337,36 @@ function fixture(t, { entries = bundle('new'), health = '200', fault = '', corru
     assert.equal(payload.split(original).length, 2, `replace exactly one production constant: ${original}`);
     payload = payload.replace(original, replacement);
   }
+  if (capacity.policy !== null) {
+    const policy = { ...fixturePolicy, ...capacity.policy };
+    payload = replaceFixtureFunction(payload, 'load_capacity_policy', Object.entries(policy).map(([key, value]) => `  ${key}=${shellValue(value)}`).join('\n'));
+  }
+  if (capacity.topology !== null) {
+    payload = replaceFixtureFunction(payload, 'verify_capacity_topology', `
+  if [[ ${shellValue(capacity.rollbackTopology ?? 'verified')} != verified && -n "$run_dir" && "$(cat "$run_dir/status")" == ROLLING_BACK ]]; then return 1; fi
+  return 0
+`);
+  }
+  if (capacity.quota !== null) {
+    const quota = capacity.quota ?? {};
+    payload = replaceFixtureFunction(payload, 'read_effective_quota', `
+  quota_policy_id=${shellValue(quota.quota_policy_id ?? 'offline-fixture-policy')}
+  quota_uid=${quota.quota_uid === undefined ? '"$(id -u)"' : shellValue(quota.quota_uid)}
+  quota_device=${quota.quota_device === undefined ? '"$(stat -c %d -- "$APP")"' : shellValue(quota.quota_device)}
+  quota_sampled_at=${quota.quota_sampled_at === undefined ? '"$(date +%s)"' : shellValue(quota.quota_sampled_at)}
+  quota_available_bytes=${shellValue(quota.quota_available_bytes ?? 1_000_000_000_000)}
+  quota_available_inodes=${shellValue(quota.quota_available_inodes ?? 1_000_000_000)}
+  if [[ -n "$run_dir" && -f "$run_dir/status" && "$(cat "$run_dir/status")" == BACKUP_READY ]]; then
+    quota_available_bytes=${shellValue(capacity.lateQuotaBytes ?? quota.quota_available_bytes ?? 1_000_000_000_000)}
+    quota_available_inodes=${shellValue(capacity.lateQuotaInodes ?? quota.quota_available_inodes ?? 1_000_000_000)}
+  fi
+  if [[ -n "$run_dir" && -f "$run_dir/status" && "$(cat "$run_dir/status")" == ROLLING_BACK ]]; then
+    if [[ ${shellValue(capacity.rollbackQuotaUnavailable ?? false)} == true ]]; then return 1; fi
+    quota_available_bytes=${shellValue(capacity.rollbackQuotaBytes ?? quota.quota_available_bytes ?? 1_000_000_000_000)}
+    quota_available_inodes=${shellValue(capacity.rollbackQuotaInodes ?? quota.quota_available_inodes ?? 1_000_000_000)}
+  fi
+`);
+  }
   assert.doesNotMatch(payload, /\/home\/edpmjmha|https:\/\/lkcfintech\.com\.vn/);
   const baseline = snapshot(app, roots);
   const completeBaseline = snapshot(app, readdirSync(app));
@@ -244,8 +380,10 @@ function fixture(t, { entries = bundle('new'), health = '200', fault = '', corru
     CURL_COUNT: toBashPath(join(directory, 'curl-count')),
     FAULT_SEEN: toBashPath(join(directory, 'fault-seen')),
     BACKUP_READY_SEEN: toBashPath(join(directory, 'backup-ready-seen')),
+    CAPACITY_PROBES: toBashPath(join(directory, 'capacity-probes')),
     HEALTH_PLAN: health,
     FAULT: fault,
+    ...(locale ? { LC_ALL: locale, LANG: locale } : {}),
     ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows' } : {}),
   };
   // Production sends this literal payload to bash -s on stdin. A script-file
@@ -255,14 +393,16 @@ function fixture(t, { entries = bundle('new'), health = '200', fault = '', corru
   const result = spawnSync(bash, ['-c', launch, 'offline-activation-test', toBashPath(bin)], { input: payloadTransform(payload), cwd: directory, env, encoding: 'utf8', timeout: 30_000 });
   assert.equal(result.error, undefined, result.error?.message);
   const events = readFileSync(eventLog, 'utf8').trim().split(/\r?\n/).filter(Boolean);
-  const releases = readdirSync(state).filter((name) => name.startsWith('release.')).map((name) => join(state, name));
+  const releases = readdirSync(state).filter((name) => name.startsWith('release.') && !retainedNames.includes(name)).map((name) => join(state, name));
   const receipt = releases.length ? readFileSync(join(releases[0], 'status'), 'utf8').trim() : undefined;
   assert.equal(releases.length <= 1, true);
+  assert.deepEqual(snapshot(state, retainedNames), retainedBaseline, 'old release evidence must never be pruned or changed');
   assert.deepEqual(snapshot(directory, ['deploy/.env', 'deploy/tmp/operator.txt', 'deploy/unrelated.txt', 'media']), preserved);
   assert.ok(!events.some((event) => /FORBIDDEN:|MUTATION_WITHOUT_BACKUP/.test(event)), events.join('\n'));
   assert.doesNotMatch(result.stdout + result.stderr, /DO_NOT_CHANGE_OR_LOG/);
   if (result.status !== 0) assert.doesNotMatch(result.stdout, /LKC_RELEASE_HEALTHY_V1/);
-  return { result, events, app, archive, state, releases, receipt, baseline, completeBaseline };
+  const probes = existsSync(join(directory, 'capacity-probes')) ? readFileSync(join(directory, 'capacity-probes'), 'utf8').trim().split(/\r?\n/) : [];
+  return { result, events, app, archive, state, releases, receipt, baseline, completeBaseline, probes };
 }
 
 function truncateAt(marker, offset = marker.length) {
@@ -297,7 +437,7 @@ for (const [label, payloadTransform, mayExitZero = false] of [
   ['after lock acquisition', truncateAt('lock_owned=1\n')],
   ['after release setup', truncateAt('record_state PREPARING\n')],
   ['after candidate copy', truncateAt('cp -- "$ARCHIVE" "$run_dir/candidate.tar.gz"\n')],
-  ['after backup creation', truncateAt('tar -czf "$run_dir/backup.tar.gz" -C "$APP" -- "${previous[@]}"\n')],
+  ['after backup creation', truncateAt('tar --format=gnu --blocking-factor=20 -czf "$run_dir/backup.tar.gz" -C "$APP" -- "${previous[@]}"\n')],
   ['after backup verification', truncateAt('record_state BACKUP_READY\n')],
   ['after ACTIVATING receipt', truncateAt('record_state ACTIVATING\n')],
   ['after activation_started', truncateAt('activation_started=1\n')],
@@ -332,9 +472,9 @@ test('bash -s rejects a late syntax error before any earlier activation command 
 function assertUnchanged(run, expectedReceipt = 'PREPARING') {
   assert.notEqual(run.result.status, 0, run.result.stderr);
   assert.equal(run.receipt ?? null, expectedReceipt, `unexpected setup failure: ${run.result.stderr}`);
-  assert.deepEqual(snapshot(run.app, roots), run.baseline);
+  assert.deepEqual(snapshot(run.app, readdirSync(run.app)), run.completeBaseline);
   assert.ok(existsSync(run.archive), 'failed activation preserves the uploaded archive');
-  assert.equal(run.events.some((event) => /^(mv|rm):app|^curl/.test(event)), false, run.events.join('\n'));
+  assert.equal(run.events.some((event) => /^(mv|rm):app|^curl|^sleep:1$|^health:|^restart:/.test(event)), false, run.events.join('\n'));
 }
 
 function assertRestorePoint(run) {
@@ -384,6 +524,36 @@ test('complete bash -s input without a trailing newline keeps a restore point an
     assert.doesNotMatch(request, /<--location>|<-L>|<--insecure>|<-k>/);
   }
 });
+
+test('UTF-8 archive filename survives activation exactly and receives the final HEALTHY ACK', (t) => {
+  const name = 'public/ảnh-đẹp.png';
+  const contents = 'offline image fixture: ảnh đẹp';
+  const run = fixture(t, { locale: utf8Locale(), entries: [...bundle('new'), [name, contents]] });
+  assert.equal(run.result.status, 0, run.result.stderr);
+  assert.equal(run.receipt, 'HEALTHY');
+  assert.deepEqual(readdirSync(join(run.app, 'public')).sort(), ['asset.txt', 'ảnh-đẹp.png'].sort());
+  assert.deepEqual(readFileSync(join(run.app, name)), Buffer.from(contents, 'utf8'));
+  assert.equal(run.result.stdout.trimEnd().split(/\r?\n/).at(-1), 'LKC_RELEASE_HEALTHY_V1');
+  assert.equal(run.result.stdout.split(/\r?\n/).filter((line) => line === 'LKC_RELEASE_HEALTHY_V1').length, 1);
+  assert.equal(existsSync(join(run.state, 'activation.lock')), false);
+  assertRestorePoint(run);
+});
+
+for (const [label, unsafe, message] of [
+  ['parent traversal', ['public/ảnh/../outside.txt', 'escape'], /Unsafe archive member path/],
+  ['backslash', ['public/ảnh\\đẹp.png', 'unsafe separator'], /Unsafe archive member path/],
+  ['control character', ['public/ảnh\nđẹp.png', 'unsafe newline'], /Unsafe archive member path/],
+  ['symlink', ['public/liên-kết', '', '2', '../../outside.txt'], /Archive links and special files are not allowed/],
+  ['hardlink', ['public/liên-cứng', '', '1', 'server.js'], /Archive links and special files are not allowed/],
+  ['FIFO special file', ['public/đường-ống', '', '6'], /Archive links and special files are not allowed/],
+]) {
+  test(`UTF-8 mixed with ${label} remains rejected before mutation`, (t) => {
+    const run = fixture(t, { locale: utf8Locale(), entries: [...bundle('new'), unsafe] });
+    assertUnchanged(run);
+    assert.match(run.result.stderr, message);
+    assert.ok(!run.events.includes('backup:create'));
+  });
+}
 
 test('corrupt archive is rejected before backup or live mutation', (t) => {
   const run = fixture(t, { corrupt: true });
@@ -533,3 +703,184 @@ test('existing activation lock is never stolen or removed', (t) => {
   assert.equal(readFileSync(join(run.state, 'activation.lock', 'owner'), 'utf8'), 'another activation');
   assert.equal(run.releases.length, 0);
 });
+
+test('unmodified production capacity policy fails closed before lock or release creation', (t) => {
+  const run = fixture(t, { capacity: { policy: null } });
+  assertUnchanged(run, null);
+  assert.match(run.result.stderr, /CAPACITY_POLICY_BLOCKED/);
+  assert.deepEqual(readdirSync(run.state), []);
+  assert.deepEqual(run.events, []);
+});
+
+test('unmodified production quota provider fails closed instead of trusting filesystem df', (t) => {
+  const run = fixture(t, { capacity: { quota: null } });
+  assertUnchanged(run);
+  assert.match(run.result.stderr, /CAPACITY_POLICY_BLOCKED: Effective account quota is not verified/);
+  assert.ok(!run.events.includes('backup:create'));
+});
+
+test('matching device IDs cannot replace verified production mount topology', (t) => {
+  const run = fixture(t, { capacity: { topology: null } });
+  assertUnchanged(run);
+  assert.match(run.result.stderr, /CAPACITY_POLICY_BLOCKED/);
+  assert.ok(!run.events.includes('backup:create'));
+});
+
+test('quota provider omitting its policy binding fails closed with a capacity diagnostic', (t) => {
+  const run = fixture(t, { payloadTransform: (payload) => {
+    const assignment = "  quota_policy_id='offline-fixture-policy'\n";
+    assert.equal(payload.split(assignment).length, 2);
+    return payload.replace(assignment, '');
+  } });
+  assertUnchanged(run);
+  assert.match(run.result.stderr, /CAPACITY_POLICY_BLOCKED/);
+  assert.doesNotMatch(run.result.stderr, /unbound variable/);
+  assert.ok(!run.events.includes('backup:create'));
+});
+
+for (const field of ['reserve_bytes', 'reserve_inodes', 'scratch_bytes', 'scratch_inodes', 'retention_max_bytes', 'retention_max_inodes', 'retention_max_releases', 'quota_max_age_seconds']) {
+  for (const value of ['', 0, 'unapproved']) {
+    test(`unapproved capacity policy ${field}=${JSON.stringify(value)} fails before preparing APP`, (t) => {
+      const run = fixture(t, { capacity: { policy: { [field]: value } } });
+      assertUnchanged(run, null);
+      assert.match(run.result.stderr, new RegExp(`CAPACITY_POLICY_BLOCKED:.*${field}`));
+      assert.deepEqual(run.events, []);
+      assert.deepEqual(readdirSync(run.state), []);
+    });
+  }
+}
+
+for (const [label, capacity, message] of [
+  ['filesystem bytes full', { fsBytes: 0 }, /Filesystem free bytes are insufficient/],
+  ['filesystem inodes full', { fsInodes: 0 }, /Filesystem free inodes are insufficient/],
+  ['filesystem byte measurement unavailable', { fsBytes: 'unavailable' }, /Filesystem free-space probe failed/],
+  ['filesystem inode measurement unavailable', { fsInodes: 'unavailable' }, /Filesystem free-space probe failed/],
+  ['filesystem bytes nonnumeric', { fsBytes: 'unknown' }, /Unknown filesystem free-space or inode value/],
+  ['filesystem inodes unsupported', { fsInodes: '-' }, /Unknown filesystem free-space or inode value/],
+  ['effective quota bytes exhausted despite free filesystem', { quota: { quota_available_bytes: 0 } }, /Effective account quota bytes are insufficient/],
+  ['effective quota inodes exhausted despite free filesystem', { quota: { quota_available_inodes: 0 } }, /Effective account quota inodes are insufficient/],
+  ['effective quota bytes unknown', { quota: { quota_available_bytes: 'unknown' } }, /Unknown effective account quota field: quota_available_bytes/],
+  ['effective quota inodes unknown', { quota: { quota_available_inodes: '' } }, /Unknown effective account quota field: quota_available_inodes/],
+  ['effective quota bytes negative', { quota: { quota_available_bytes: -1 } }, /Unknown effective account quota field: quota_available_bytes/],
+  ['effective quota bytes overflow', { quota: { quota_available_bytes: '9223372036854775808' } }, /Unknown effective account quota field: quota_available_bytes/],
+  ['effective quota policy does not bind to approval', { quota: { quota_policy_id: 'another-policy' } }, /Quota evidence does not match policy, account or filesystem/],
+  ['effective quota belongs to another UID', { quota: { quota_uid: 987654321 } }, /Quota evidence does not match policy, account or filesystem/],
+  ['effective quota belongs to another filesystem', { quota: { quota_device: 987654321 } }, /Quota evidence does not match policy, account or filesystem/],
+  ['effective quota sample is stale', { quota: { quota_sampled_at: 1 } }, /Quota evidence is stale or future-dated/],
+  ['effective quota sample comes from the future', { quota: { quota_sampled_at: 4_102_444_800 } }, /Quota evidence is stale or future-dated/],
+  ['effective quota sample has no timestamp', { quota: { quota_sampled_at: '' } }, /Unknown effective account quota field: quota_sampled_at/],
+]) {
+  test(`${label} fails before backup or live mutation`, (t) => {
+    const run = fixture(t, { capacity });
+    assertUnchanged(run);
+    assert.ok(!run.events.includes('backup:create'));
+    assert.match(run.result.stderr, message);
+  });
+}
+
+test('APP and STATE_ROOT on different filesystems cannot start replacement', (t) => {
+  const run = fixture(t, { capacity: { differentFilesystem: true } });
+  assertUnchanged(run);
+  assert.match(run.result.stderr, /[Ff]ilesystem|[Dd]evice/);
+  assert.deepEqual(run.events, []);
+  assert.equal(existsSync(join(run.state, 'activation.lock')), false);
+});
+
+test('large existing APP requires backup and restore capacity even for a small candidate', (t) => {
+  const run = fixture(t, {
+    baselineExtraBytes: 4 * 1_048_576,
+    capacity: { fsBytes: 8 * 1_048_576, quota: { quota_available_bytes: 8 * 1_048_576 } },
+  });
+  assertUnchanged(run);
+  assert.ok(!run.events.includes('backup:create'));
+  assert.match(run.result.stderr, /[Cc]apacity|[Ss]pace|[Bb]ytes/);
+});
+
+test('large filesystem allocation units are included before admitting small artifact files', (t) => {
+  const run = fixture(t, { capacity: { blockBytes: 1_048_576, fsBytes: 32 * 1_048_576 } });
+  assertUnchanged(run);
+  assert.ok(!run.events.includes('backup:create'));
+  assert.match(run.result.stderr, /[Ff]ilesystem free bytes/);
+});
+
+test('retained preallocation counts against byte retention even when logical file sizes are tiny', (t) => {
+  const run = fixture(t, {
+    oldReleases: ['UNKNOWN'],
+    capacity: { preallocatedRetainedBlocks: 32768, policy: { retention_max_bytes: 8 * 1_048_576 } },
+  });
+  assertUnchanged(run);
+  assert.match(run.result.stderr, /[Rr]etained release byte budget/);
+  assert.ok(!run.events.includes('backup:create'));
+});
+
+for (const [label, capacity] of [
+  ['filesystem bytes consumed after backup', { lateFsBytes: 0 }],
+  ['filesystem inodes consumed after backup', { lateFsInodes: 0 }],
+  ['quota bytes consumed after backup', { lateQuotaBytes: 0 }],
+  ['quota inodes consumed after backup', { lateQuotaInodes: 0 }],
+]) {
+  test(`${label} is rechecked immediately before mutation`, (t) => {
+    const run = fixture(t, { capacity });
+    assertUnchanged(run, 'BACKUP_READY');
+    assert.ok(run.events.includes('backup:create'));
+    assert.ok(run.probes.some((probe) => probe.startsWith('ready:')), run.probes.join('\n'));
+    assertRestorePoint(run);
+  });
+}
+
+for (const [label, policy] of [
+  ['count', { retention_max_releases: 3 }],
+  ['bytes', { retention_max_bytes: 1 }],
+  ['inodes', { retention_max_inodes: 1 }],
+]) {
+  test(`retention ${label} budget cannot prune old HEALTHY or recovery evidence to permit activation`, (t) => {
+    const run = fixture(t, { oldReleases: ['HEALTHY', 'UNKNOWN', 'ROLLBACK_FAILED'], capacity: { policy } });
+    assertUnchanged(run);
+    assert.match(run.result.stderr, /Retained release .* budget is exhausted/);
+    assert.ok(!run.events.includes('backup:create'));
+    assert.equal(readdirSync(run.state).filter((name) => name.startsWith('release.retained-')).length, 3);
+  });
+}
+
+test('successful activation keeps old HEALTHY, UNKNOWN and ROLLBACK_FAILED releases unchanged', (t) => {
+  const run = fixture(t, { oldReleases: ['HEALTHY', 'UNKNOWN', 'ROLLBACK_FAILED'] });
+  assert.equal(run.result.status, 0, run.result.stderr);
+  assert.equal(run.receipt, 'HEALTHY');
+  assert.equal(readdirSync(run.state).filter((name) => name.startsWith('release.retained-')).length, 3);
+  assertRestorePoint(run);
+});
+
+test('stale activation lock and retained recovery evidence survive capacity exhaustion untouched', (t) => {
+  const run = fixture(t, { locked: true, oldReleases: ['UNKNOWN', 'ROLLBACK_FAILED'], capacity: { fsBytes: 0 } });
+  assertUnchanged(run, null);
+  assert.match(run.result.stderr, /Activation is locked/);
+  assert.equal(readFileSync(join(run.state, 'activation.lock', 'owner'), 'utf8'), 'another activation');
+  assert.deepEqual(run.events, []);
+  assert.equal(run.releases.length, 0);
+});
+
+for (const [label, capacity] of [
+  ['filesystem bytes exhausted', { rollbackFsBytes: 0 }],
+  ['filesystem inodes exhausted', { rollbackFsInodes: 0 }],
+  ['account quota bytes exhausted', { rollbackQuotaBytes: 0 }],
+  ['account quota inodes exhausted', { rollbackQuotaInodes: 0 }],
+  ['quota reader fails after activation', { rollbackQuotaUnavailable: true }],
+  ['mount topology becomes unverifiable', { rollbackTopology: 'unverified' }],
+]) {
+  test(`rollback ${label} preserves current APP, lock and untouched restore evidence`, (t) => {
+    const run = fixture(t, { capacity, health: Array(6).fill('503').join(',') });
+    assert.equal(run.result.status, 70, run.result.stderr);
+    assert.equal(run.receipt, 'ROLLBACK_FAILED');
+    assert.equal(existsSync(join(run.state, 'activation.lock')), true);
+    assert.equal(run.events.filter((event) => event.startsWith('rm:app')).length, roots.length, 'rollback must not delete any additional APP path');
+    assert.equal(run.events.filter((event) => event.startsWith('mv:app')).length, roots.length, 'rollback must not move any additional APP path');
+    for (const [name, contents, type] of bundle('new')) {
+      if (type === '5') assert.equal(statSync(join(run.app, name)).isDirectory(), true);
+      else assert.equal(readFileSync(join(run.app, name), 'utf8'), contents);
+    }
+    assert.deepEqual(snapshot(join(run.releases[0], 'restore'), roots), run.baseline);
+    assert.match(run.result.stderr, /CAPACITY_POLICY_BLOCKED/);
+    assert.equal(run.events.filter((event) => event.startsWith('health:')).length, 6);
+    assertRestorePoint(run);
+  });
+}
