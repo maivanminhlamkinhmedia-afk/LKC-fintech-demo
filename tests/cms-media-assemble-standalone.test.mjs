@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import * as nativeFs from 'node:fs'
 import * as nativePath from 'node:path'
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { cp, link, lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -11,7 +12,7 @@ import { test } from 'node:test'
 
 const script = resolve('scripts/cms-media/assemble-standalone.mjs')
 const rawNames = ['media-storage.ts', 'media-contract.ts']
-const rawBytes = name => Buffer.from(`// synthetic ${name}\r\nexport const value = "TiÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚ÂºÃƒâ€šÃ‚Â¿ng ViÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡t";\r\n`, 'utf8')
+const rawBytes = name => Buffer.from(`// synthetic ${name}\r\nexport const value = "TiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¿ng ViÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â»ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡t";\r\n`, 'utf8')
 async function seedRaw(scratch) {
   for (const name of rawNames) await writeFile(join(scratch, 'src', 'features', 'cms', name), rawBytes(name))
 }
@@ -673,4 +674,219 @@ test('Prisma identity relative escape is rejected before reading outside the bun
   assert.equal(value.targetInventorySha256, null)
   assert.ok(!JSON.stringify(value).includes('outside-private-canary'))
   assert.ok(touched.every(path => path === f.runtime || path.startsWith(f.runtime + nativePath.sep)))
+})
+
+
+async function subsetFixture(t, nested = false) {
+  const f = await identityFixture(t, nested)
+  for (const root of [f.source, f.target]) {
+    await put(root, 'default.js', 'module.exports = require(".prisma/client/default")\n')
+    await put(root, 'runtime/client.js', 'module.exports = require("@prisma/client-runtime-utils")\n')
+  }
+  // The observed target has three entries; the source package has 76. Never copy the other 73.
+  for (let i = 0; i < 73; i++) await put(f.source, `unused/file-${i}.js`, `source-only-${i}`)
+  await put(f.runtime, 'node_modules/.prisma/client/default.js', 'module.exports = {client:"synthetic-generated-client"}\n')
+  await put(f.runtime, 'node_modules/@prisma/client-runtime-utils/package.json', JSON.stringify({ name: '@prisma/client-runtime-utils', version: '7.8.0', main: 'index.js' }))
+  await put(f.runtime, 'node_modules/@prisma/client-runtime-utils/index.js', 'module.exports = {runtime:"synthetic-runtime-utils"}\n')
+  return f
+}
+async function treeSnapshot(root) {
+  const files = {}
+  async function visit(dir) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      assert.equal(entry.isSymbolicLink(), false)
+      if (entry.isDirectory()) await visit(path)
+      else {
+        assert.equal((await lstat(path)).nlink, 1)
+        files[nativePath.relative(root, path).split(nativePath.sep).join('/')] = (await readFile(path)).toString('base64')
+      }
+    }
+  }
+  await visit(root)
+  return files
+}
+function subsetModuleProbe(f) {
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e',
+    'import{createRequire}from"node:module";const r=createRequire(process.argv[1]);const d=r(process.argv[2]),u=r(process.argv[3]);console.log(JSON.stringify({client:d.client??null,runtime:u.runtime??null,defaultKeys:Object.keys(d).sort(),runtimeKeys:Object.keys(u).sort()}));',
+    join(f.runtime, 'server.js'), join(f.path, 'default.js'), join(f.path, 'runtime/client.js')],
+  { cwd: f.scratch, env: process.env, encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+  return JSON.parse(result.stdout)
+}
+for (const nested of [false, true]) {
+  test(`Prisma traced subset: exact 3-file alias materializes without expanding package (${nested ? 'nested' : 'root'})`, async t => {
+    const f = await subsetFixture(t, nested)
+    const sourceBefore = await treeSnapshot(f.source), targetBefore = await treeSnapshot(f.target)
+    assert.equal(Object.keys(sourceBefore).length, 76); assert.equal(Object.keys(targetBefore).length, 3)
+    const before = subsetModuleProbe(f)
+    const result = f.run()
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /CMS_MEDIA_STANDALONE_READY/)
+    assert.equal((await lstat(f.path)).isSymbolicLink(), false)
+    assert.deepEqual(await treeSnapshot(f.path), targetBefore)
+    assert.deepEqual(await treeSnapshot(f.target), targetBefore)
+    assert.deepEqual(await treeSnapshot(f.source), sourceBefore)
+    assert.deepEqual(subsetModuleProbe(f), before)
+    assert.equal(f.run().status, 0) // No second materialization or package expansion.
+    assert.deepEqual(await treeSnapshot(f.path), targetBefore)
+    await assertRaw(f.runtime)
+  })
+}
+for (const variant of ['wrong bytes', 'wrong metadata', 'wrong source version', 'wrong lock version', 'missing default',
+  'missing runtime', 'missing source file', 'nested link', 'hardlink', 'secret dotfile', 'unknown file', 'wrong target',
+  'additional hop', 'missing generated client', 'shadowed dependency']) {
+  test(`Prisma traced subset rejects ${variant} before replacing alias`, async t => {
+    const f = await subsetFixture(t)
+    if (variant === 'wrong bytes') await put(f.target, 'runtime/client.js', 'module.exports = "wrong"')
+    if (variant === 'wrong metadata') await put(f.target, 'package.json', JSON.stringify({ name: 'fake', version: '7.8.0' }))
+    if (variant === 'wrong source version') await put(f.source, 'package.json', JSON.stringify({ name: '@prisma/client', version: '0.0.0' }))
+    if (variant === 'wrong lock version') await put(f.scratch, 'package-lock.json', JSON.stringify({ packages: { 'node_modules/@prisma/client': { version: '0.0.0' } } }))
+    if (variant === 'missing default') await rm(join(f.target, 'default.js'))
+    if (variant === 'missing runtime') await rm(join(f.target, 'runtime/client.js'))
+    if (variant === 'missing source file') await rm(join(f.source, 'runtime/client.js'))
+    if (variant === 'nested link') await symlink(f.source, join(f.target, 'nested'), process.platform === 'win32' ? 'junction' : 'dir')
+    if (variant === 'hardlink') await link(join(f.source, 'default.js'), join(f.target, 'other.js'))
+    if (variant === 'secret dotfile') await put(f.target, '.env.private', 'DO-NOT-LOG-CANARY')
+    if (variant === 'unknown file') await put(f.target, 'other.js', 'DO-NOT-LOG-CANARY')
+    if (variant === 'wrong target' || variant === 'additional hop') {
+      await rm(f.path)
+      const alternative = join(f.runtime, 'node_modules/@prisma/client-1111111111111111')
+      if (variant === 'wrong target') await cp(f.target, alternative, { recursive: true })
+      else await symlink(f.target, alternative, process.platform === 'win32' ? 'junction' : 'dir')
+      await symlink(alternative, f.path, process.platform === 'win32' ? 'junction' : 'dir')
+    }
+    if (variant === 'missing generated client') await rm(join(f.runtime, 'node_modules/.prisma'), { recursive: true })
+    if (variant === 'shadowed dependency') await put(f.runtime, '.next/node_modules/.prisma/client/default.js', 'module.exports = {shadow:true}')
+    const sourceBefore = await readFile(join(f.source, 'package.json'))
+    const result = f.run()
+    refused(result)
+    assert.equal((await lstat(f.path)).isSymbolicLink(), true)
+    assert.deepEqual(await readFile(join(f.source, 'package.json')), sourceBefore)
+    assert.ok(!result.stderr.includes('DO-NOT-LOG-CANARY'))
+  })
+}
+async function subsetFunctions(f, overrides = {}) {
+  const source = await readFile(script, 'utf8')
+  const helpers = source.slice(source.indexOf('const samePath'), source.indexOf('checkedDirectory(project, bundle)'))
+    + source.slice(source.indexOf('const operationArtifacts'), source.indexOf('const prune ='))
+  return runInNewContext(`${helpers}\n({capturePrismaSubset, recheckPrismaSubset, materializePrismaSubset})`, {
+    ...nativeFs, ...nativePath, createHash, createRequire, Buffer, process: { platform: process.platform },
+    project: f.scratch, bundle: f.runtime, runtimeBundle: f.runtime,
+    console: { error: () => assert.fail('Core subset verifier must not emit native details') }, ...overrides,
+  })
+}
+for (const variant of ['link swap', 'same-byte target inode swap', 'target byte mutation', 'source inode swap', 'lockfile mutation', 'new target file']) {
+  test(`Prisma traced subset detects TOCTOU: ${variant} before mutation`, async t => {
+    const f = await subsetFixture(t), helpers = await subsetFunctions(f), plan = helpers.capturePrismaSubset(f.path)
+    if (variant === 'link swap') {
+      await rm(f.path); await symlink(f.source, f.path, process.platform === 'win32' ? 'junction' : 'dir')
+    }
+    if (variant === 'same-byte target inode swap' || variant === 'source inode swap') {
+      const path = join(variant === 'source inode swap' ? f.source : f.target, 'runtime/client.js')
+      const bytes = await readFile(path)
+      await rename(path, `${path}-old`); await writeFile(path, bytes)
+    }
+    if (variant === 'target byte mutation') await put(f.target, 'runtime/client.js', 'mutated')
+    if (variant === 'lockfile mutation') await put(f.scratch, 'package-lock.json', '{}')
+    if (variant === 'new target file') await put(f.target, 'new.js', 'unexpected')
+    let deleted = 0
+    const guarded = await subsetFunctions(f, { unlinkSync: () => { deleted++; assert.fail('No unlink on changed plan') } })
+    assert.throws(() => guarded.materializePrismaSubset(plan))
+    assert.equal(deleted, 0)
+    assert.equal((await lstat(f.path)).isSymbolicLink(), true)
+  })
+}
+test('Prisma traced subset special-file metadata fails before mutation', async t => {
+  const f = await subsetFixture(t)
+  const helpers = await subsetFunctions(f, { lstatSync: (path, options) => {
+    const stat = nativeFs.lstatSync(path, options)
+    if (path === join(f.target, 'runtime/client.js')) stat.isFile = () => false
+    return stat
+  } })
+  assert.throws(() => helpers.capturePrismaSubset(f.path))
+  assert.equal((await lstat(f.path)).isSymbolicLink(), true)
+})
+test('Prisma traced subset exclusive creation refuses an injected destination link without changing its target', async t => {
+  const f = await subsetFixture(t), outside = await put(f.scratch, 'outside-marker.txt', 'unchanged')
+  const helpers = await subsetFunctions(f, { openSync: (path, flags, mode) => {
+    if ((flags & nativeFs.constants.O_CREAT) !== 0) {
+      // Use a hardlink on Windows without symlink privilege; O_EXCL rejects either form.
+      nativeFs.linkSync(outside, path)
+    }
+    return nativeFs.openSync(path, flags, mode)
+  } })
+  const plan = helpers.capturePrismaSubset(f.path)
+  assert.throws(() => helpers.materializePrismaSubset(plan))
+  assert.equal(await readFile(outside, 'utf8'), 'unchanged')
+  assert.deepEqual(await readFile(join(f.target, 'package.json')), await readFile(join(f.source, 'package.json')))
+})
+
+test('Prisma observed real three-file payload preserves runtime module loading without opening a database', async t => {
+  const f = await subsetFixture(t)
+  const packageRoot = resolve('node_modules/@prisma/client')
+  // Actual pinned npm package code; the generated application client stays synthetic.
+  await rm(f.source, { recursive: true }); await cp(packageRoot, f.source, { recursive: true })
+  await rm(f.target, { recursive: true }); await mkdir(f.target, { recursive: true })
+  const observed = ['default.js', 'package.json', 'runtime/client.js']
+  for (const rel of observed) await put(f.target, rel, await readFile(join(packageRoot, rel)))
+  const utils = join(f.runtime, 'node_modules/@prisma/client-runtime-utils')
+  await rm(utils, { recursive: true })
+  await cp(resolve('node_modules/@prisma/client-runtime-utils'), utils, { recursive: true })
+  const rows = []
+  for (const rel of observed) {
+    const bytes = await readFile(join(f.target, rel))
+    rows.push([rel, bytes.length, createHash('sha256').update(bytes).digest('hex')])
+  }
+  assert.equal(createHash('sha256').update(JSON.stringify(rows)).digest('hex'),
+    'a8a851e099c688790b75c81888772e82dd51ac90b23383e41b75c8e809ccda29')
+  // Load the real generated module without constructing a client/adapter or querying DB.
+  const generated = join(f.runtime, 'node_modules/.prisma/client')
+  await rm(generated, { recursive: true })
+  await cp(resolve('node_modules/.prisma/client'), generated, { recursive: true })
+  function errorIdentityProbe() {
+    const probe = spawnSync(process.execPath, ['--input-type=module', '-e',
+      'import{createRequire}from"node:module";const r=createRequire(process.argv[1]),d=r(process.argv[2]),u=r(process.argv[3]);const names=["PrismaClientKnownRequestError","PrismaClientUnknownRequestError","PrismaClientInitializationError","PrismaClientValidationError","PrismaClientRustPanicError"];console.log(JSON.stringify(Object.fromEntries(names.map(n=>[n,d.Prisma[n]===u[n]]))));',
+      join(f.runtime, 'server.js'), join(f.path, 'default.js'), join(f.path, 'runtime/client.js')],
+    { cwd: f.scratch, env: process.env, encoding: 'utf8' })
+    assert.equal(probe.status, 0, probe.stderr)
+    return JSON.parse(probe.stdout)
+  }
+  const errorsBefore = errorIdentityProbe()
+  assert.ok(Object.values(errorsBefore).every(Boolean))
+  const before = subsetModuleProbe(f)
+  assert.ok(before.runtimeKeys.includes('getPrismaClient'))
+  const result = f.run(); assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(subsetModuleProbe(f), before)
+  assert.deepEqual(errorIdentityProbe(), errorsBefore)
+  assert.deepEqual(await treeSnapshot(f.path), await treeSnapshot(f.target))
+  assert.equal(Object.keys(await treeSnapshot(f.path)).length, 3)
+})
+
+test('Prisma traced subset detects new target entries inserted during copy and never removes canonical bytes', async t => {
+  const f = await subsetFixture(t)
+  let inserted = false
+  const helpers = await subsetFunctions(f, { writeFileSync: (file, bytes, options) => {
+    const result = nativeFs.writeFileSync(file, bytes, options)
+    if (!inserted) {
+      inserted = true
+      nativeFs.writeFileSync(join(f.target, 'injected.js'), 'unexpected')
+    }
+    return result
+  } })
+  const plan = helpers.capturePrismaSubset(f.path)
+  assert.throws(() => helpers.materializePrismaSubset(plan), /CMS_PRISMA_SUBSET_CHANGED_OR_INVALID/)
+  assert.equal(await readFile(join(f.target, 'injected.js'), 'utf8'), 'unexpected')
+  assert.deepEqual(await readFile(join(f.target, 'default.js')), await readFile(join(f.source, 'default.js')))
+})
+
+test('Prisma traced subset sanitizes native failures without leaking target or process details', async t => {
+  const f = await subsetFixture(t)
+  const helpers = await subsetFunctions(f, { readSync: () => { throw new Error('RAW-PRIVATE-CANARY /private/absolute/target') } })
+  assert.throws(() => helpers.capturePrismaSubset(f.path), error => {
+    assert.equal(error.message, 'CMS_PRISMA_SUBSET_CHANGED_OR_INVALID')
+    assert.equal(error.stack, 'Error: CMS_PRISMA_SUBSET_CHANGED_OR_INVALID')
+    return true
+  })
+  assert.equal((await lstat(f.path)).isSymbolicLink(), true)
 })
